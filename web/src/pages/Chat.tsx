@@ -8,6 +8,7 @@ import { Rich, StarNote } from '../components/StarNote';
 import { Skeleton, StarFace } from '../components/ui';
 import { mainStar, useAgent } from '../lib/agent';
 import { clockTime, dayLabel } from '../lib/format';
+import { href } from '../lib/router';
 import { useLiveEvents, useResource } from '../lib/hooks';
 
 export function Chat({ conversationId }: { conversationId?: string }) {
@@ -27,6 +28,9 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [thinking, setThinking] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // One draft for whichever composer is showing, so the switch to the welcome view keeps it.
+  const [draft, setDraft] = useState('');
+  const [gone, setGone] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const first = useRef(true);
 
@@ -34,7 +38,11 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     if (!activeId) return;
     setMessages(null);
     first.current = true;
-    api.listMessages(activeId).then(setMessages);
+    setGone(false);
+    api.listMessages(activeId).then(setMessages, (e: { status?: number }) => {
+      if (e.status === 404) setGone(true);
+      else setMessages([]);
+    });
   }, [activeId]);
 
   useEffect(() => {
@@ -108,6 +116,21 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const name = star?.name ?? settings?.agentName ?? 'Sky';
   const faceOf = (m: Message) => (m.starId && stars?.find((s) => s.id === m.starId)) || star;
 
+  if (gone || (conversationId && convs.data && !conv)) {
+    return (
+      <div className="scroll">
+        <div className="hero">
+          <h1>That chat is gone</h1>
+          <p className="t2" style={{ marginTop: -10 }}>The Star it belonged to may have been removed, or the chat was deleted on another device.</p>
+          <div className="row">
+            <a className="btn ink" href={href('chat')}>Back to {main?.name ?? 'Sky'}</a>
+            <a className="btn" href={href('stars')}>Your constellation</a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (messages && messages.length === 0 && notes.length === 0) {
     const sideChat = conv && !conv.main && !home;
     return (
@@ -116,7 +139,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
           {star && <StarFace star={star} size={104} track />}
           <h1>{sideChat ? 'What’s this side chat about?' : star && !star.main ? `What should ${name} take on?` : `What can I take off your plate${settings ? `, ${settings.userName}` : ''}?`}</h1>
           {star && !star.main && !sideChat && <p className="t2" style={{ marginTop: -10 }}>{star.role}</p>}
-          <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus />
+          <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus value={draft} onChange={setDraft} />
           {sendError && <p className="send-error" role="alert">{sendError}</p>}
           {(!star || star.main) && (
             <div className="ideas-row">
@@ -193,7 +216,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
       </div>
       <div className="dock">
         {sendError && <p className="send-error" role="alert">{sendError}</p>}
-        <Composer onSend={send} placeholder={conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} />
+        <Composer onSend={send} placeholder={conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} />
         <div className="hint">{name} keeps working after you close this tab, and asks before anything it can’t undo.</div>
       </div>
     </>

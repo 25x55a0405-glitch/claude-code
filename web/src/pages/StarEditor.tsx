@@ -82,8 +82,9 @@ export function StarEditor({ id }: { id: string }) {
       if (isNew) {
         const s = await api.createStar(body);
         upsertStar(s);
-        for (const text of newRules) await api.addRule(text, s.id).catch(() => {});
-        toast(`${s.name} joined your constellation`);
+        const failed: string[] = [];
+        for (const text of newRules) await api.addRule(text, s.id).catch(() => failed.push(text));
+        toast(failed.length ? `${s.name} joined, but ${failed.length === 1 ? 'a rule' : `${failed.length} rules`} didn’t save. Add ${failed.length === 1 ? 'it' : 'them'} again on its page.` : `${s.name} joined your constellation`);
         window.location.hash = starChat(s);
       } else {
         const s = await api.updateStar(id, body);

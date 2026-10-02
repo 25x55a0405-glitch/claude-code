@@ -16,9 +16,10 @@ const VERB: Record<ConstellationMessage['kind'], string> = { request: 'asked', r
 
 /** One Star talking to another: an ask, an answer, a hand-off or a heads-up. */
 export function StarNote({ m, stars }: { m: ConstellationMessage; stars: StarView[] }) {
-  const from = stars.find((s) => s.id === m.fromStarId);
-  const to = stars.find((s) => s.id === m.toStarId);
-  if (!from || !to) return null;
+  // A Star that has since been removed still shows, greyed, so the history reads right.
+  const gone = (id: string) => ({ id, name: 'A removed Star', avatar: { character: 'dot' as const, color: 'sky' as const }, status: { state: 'offline' as const, activity: null, taskId: null, activeTasks: 0, pendingApprovals: 0 } });
+  const from = stars.find((s) => s.id === m.fromStarId) ?? gone(m.fromStarId);
+  const to = stars.find((s) => s.id === m.toStarId) ?? gone(m.toStarId);
   return (
     <div className="cm" data-kind={m.kind}>
       <div className="cm-head">
