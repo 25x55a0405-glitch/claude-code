@@ -17,6 +17,7 @@ import { describeSchedule, nextRun, parseSchedule } from './schedule.ts';
 import { inWindow, localDateKey, localMinutes, parseHHMM } from './time.ts';
 import { findTool, toSpec } from './tools/index.ts';
 import type { RuntimeHooks, ToolContext } from './tools/types.ts';
+import type { BrowserManager } from '../browser/browser.ts';
 
 const WATCH_DEFAULT = 'every 3 hours';
 
@@ -49,13 +50,17 @@ export class Runtime implements RuntimeHooks {
   private lastResearch = 0;
   private briefingBusy = false;
 
-  constructor(store: Store, config: Config, brain: Brain, providers: Providers) {
+  browser?: BrowserManager;
+
+  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager) {
     this.store = store;
     this.config = config;
     this.brain = brain;
     this.providers = providers;
+    this.browser = browser;
     this.policy = new Policy(store, brain);
-    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this };
+    this.policy.browser = browser;
+    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this, browser };
     this.runner = new TaskRunner(deps);
     this.chat = new ChatAgent(deps);
     this.lastResearch = store.db.getKv<number>('lastResearch') ?? Date.now();
@@ -304,7 +309,7 @@ export class Runtime implements RuntimeHooks {
     }
   }
 
-  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
+  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds'>): Star {
     return this.store.createStar(input);
   }
 
@@ -441,7 +446,7 @@ export class Runtime implements RuntimeHooks {
 
   private async maybeResearch(now: Date) {
     const settings = this.store.settings();
-    if (!settings.proactiveResearch || this.brain.name !== 'claude' || !this.providers.isUsable('web')) return;
+    if (!settings.proactiveResearch || this.brain.name === 'scripted' || !this.providers.isUsable('web')) return;
     if (this.running || this.queue.length || this.inQuietHours(now) || Date.now() - this.lastResearch < this.config.researchEveryMs) return;
     const interests = this.store.listMemory().filter((m) => m.category === 'goal' || m.category === 'preference').slice(0, 20);
     if (!interests.length) return;

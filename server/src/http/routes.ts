@@ -5,6 +5,9 @@ import type { Store } from '../store.ts';
 import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, Star, TaskStatus, Tone } from '../types.ts';
 import { badRequest, firstLine, iso, uid } from '../util.ts';
 import type { Router } from './router.ts';
+import type { ModelRouter } from '../models/router.ts';
+import { PRESETS, type ProviderInput } from '../models/registry.ts';
+import type { BrowserManager, ViewInput } from '../browser/browser.ts';
 
 const TASK_STATUSES: TaskStatus[] = ['active', 'scheduled', 'waiting_approval', 'blocked', 'paused', 'done', 'failed'];
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 'style'];
@@ -33,7 +36,8 @@ const hhmm = (v: unknown, field: string): string => {
 };
 
 /** Every endpoint in docs/API.md, plus the Star endpoints in docs/BACKEND.md, under /api/v1. */
-export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers) {
+export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager) {
+  const registry = models.registry;
   /** An optional Star id from a query or body; an unknown one is a 400. */
   const starRef = (v: unknown, field = 'starId'): string | undefined => {
     if (v === undefined || v === null || v === '') return undefined;
@@ -46,7 +50,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     return { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
   };
   const starFields = (b: Record<string, unknown>) => {
-    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>> = {};
+    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds'>> = {};
     if (b.name !== undefined) p.name = text(b.name, 'name', 40);
     if (b.role !== undefined) p.role = text(b.role, 'role', 200);
     if (b.instructions !== undefined) {
@@ -62,12 +66,74 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
       }
       p.connectionIds = b.connectionIds === null ? null : [...new Set(b.connectionIds as string[])];
     }
+    if (b.providerIds !== undefined) {
+      if (b.providerIds !== null && (!Array.isArray(b.providerIds) || b.providerIds.some((id) => typeof id !== 'string' || !registry.find(id)))) {
+        throw badRequest('providerIds must be null (the global order) or a list of model provider ids');
+      }
+      p.providerIds = b.providerIds === null ? null : [...new Set(b.providerIds as string[])];
+    }
     return p;
   };
   const object = (body: unknown) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send a JSON object');
     return body as Record<string, unknown>;
   };
+
+  // ---- model providers ----
+  const providerFields = (b: Record<string, unknown>, creating: boolean): Partial<ProviderInput> => {
+    const p: Partial<ProviderInput> = {};
+    if (b.name !== undefined || creating) p.name = text(b.name, 'name', 60);
+    if (b.kind !== undefined || creating) p.kind = oneOf(b.kind, ['anthropic', 'openai'] as const as ('anthropic' | 'openai')[], 'kind');
+    if (b.baseUrl !== undefined || creating) {
+      const url = text(b.baseUrl, 'baseUrl', 500);
+      try {
+        if (!/^https?:$/.test(new URL(url).protocol)) throw new Error();
+      } catch {
+        throw badRequest('baseUrl must be an http or https address, like https://openrouter.ai/api/v1');
+      }
+      p.baseUrl = url;
+    }
+    if (b.model !== undefined || creating) p.model = text(b.model, 'model', 200);
+    if (b.apiKey !== undefined) {
+      if (b.apiKey !== null && typeof b.apiKey !== 'string') throw badRequest('apiKey must be text, or null to remove it');
+      p.apiKey = b.apiKey as string | null;
+    }
+    if (b.enabled !== undefined) p.enabled = boolean(b.enabled, 'enabled');
+    return p;
+  };
+  r.get('/providers', () => registry.list());
+  r.get('/providers/presets', () => PRESETS);
+  r.post('/providers', ({ body }) => registry.create(providerFields(object(body), true) as ProviderInput));
+  r.get('/providers/order', () => ({ providerIds: registry.order() }));
+  r.put('/providers/order', ({ body }) => {
+    const ids = object(body).providerIds;
+    if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) throw badRequest('providerIds must be a list of provider ids');
+    return { providerIds: registry.setOrder(ids as string[]) };
+  });
+  r.get('/providers/:id', ({ params }) => registry.get(params.id));
+  r.patch('/providers/:id', ({ params, body }) => registry.patch(params.id, providerFields(object(body), false)));
+  r.delete('/providers/:id', ({ params }) => registry.delete(params.id));
+  r.post('/providers/:id/test', ({ params }) => models.test(params.id));
+
+  // ---- the browser ----
+  r.get('/browser', () => ({ ...browser.available(), sessions: browser.sessions() }));
+  r.post('/browser/:starId/input', async ({ params, body }) => {
+    store.getStar(params.starId);
+    const b = object(body);
+    const type = oneOf(b.type, ['click', 'type', 'key', 'scroll', 'navigate', 'back'], 'type');
+    const num = (v: unknown, f: string) => {
+      if (typeof v !== 'number' || !Number.isFinite(v)) throw badRequest(`${f} must be a number`);
+      return v;
+    };
+    const input: ViewInput = type === 'click' ? { type, x: num(b.x, 'x'), y: num(b.y, 'y') }
+      : type === 'type' ? { type, text: text(b.text, 'text', 2000) }
+      : type === 'key' ? { type, key: text(b.key, 'key', 40) }
+      : type === 'scroll' ? { type, dy: num(b.dy, 'dy') }
+      : type === 'navigate' ? { type, url: text(b.url, 'url', 2000) }
+      : { type };
+    return browser.input(params.starId, input);
+  });
+  r.post('/browser/:starId/close', async ({ params }) => { await browser.closeTab(params.starId); });
 
   // ---- stars and the constellation ----
   r.get('/stars', () => store.listStars().map((s) => store.starView(s)));
@@ -80,7 +146,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     const star = runtime.createStar({
       name: f.name, role: f.role, instructions: f.instructions ?? '',
       avatar: f.avatar ?? { character: 'dot', color: colors[store.listStars().length % colors.length] },
-      autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null,
+      autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null, providerIds: f.providerIds ?? null,
     });
     return store.starView(star);
   });

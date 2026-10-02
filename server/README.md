@@ -28,7 +28,16 @@ SKY_WEB_ORIGIN=http://localhost:5173 npm start   # in server/, so the browser ma
 Or serve both from one place: build the web app with
 `VITE_SKYS_API_URL= npm run build` and the server serves `web/dist` at `/`.
 
-Without an API key the server still runs, on a small scripted stand-in for the
+Models: add any OpenAI-compatible or Anthropic-compatible provider in the app
+(OpenRouter, Groq, Gemini, Mistral, Ollama, …) and order them; Sky falls back
+along the list when one is rate limited, out of quota or down. An
+`ANTHROPIC_API_KEY` in the environment shows up as a built-in provider.
+
+The browser is a real Chromium driven by Playwright (`playwright-core`). On a
+new machine install it once with `npx playwright install chromium`, or point
+`SKY_BROWSER_PATH` at Chrome (or set `SKY_BROWSER_CHANNEL=chrome`).
+
+With no provider at all the server still runs, on a small scripted stand-in for the
 model. It can set up tasks, reminders and watches, remember things and walk
 through approvals, but it doesn't really think. It's what the tests use.
 
@@ -36,11 +45,16 @@ through approvals, but it doesn't really think. It's what the tests use.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `ANTHROPIC_API_KEY` | | Turns on the real agent (Claude) |
-| `SKY_MODEL` | `claude-opus-5-5` | Model for chat, tasks, research and ideas |
+| `ANTHROPIC_API_KEY` | | Adds Claude as a built-in model provider |
+| `SKY_MODEL` | `claude-opus-5-5` | Model for that built-in provider |
 | `SKY_EFFORT` | `medium` | `low` to `max`; more effort thinks harder and costs more |
 | `SKY_FALLBACKS` | on | `0` turns off the API's server-side refusal fallback |
 | `SKY_BRAIN` | auto | `scripted` forces the offline stand-in |
+| `SKY_BROWSER_HEADLESS` | `1` | `0` shows the browser window, e.g. to sign in on a desktop |
+| `SKY_BROWSER_PATH` | Playwright's Chromium | Use another Chrome or Chromium |
+| `SKY_BROWSER_CHANNEL` | | `chrome` or `msedge` to use the installed browser |
+| `SKY_BROWSER_PROFILE` | `DATA_DIR/browser-profile` | Where cookies and sign-ins are kept |
+| `SKY_BROWSER_PROXY` | | Proxy for the browser, like `http://user:pass@host:port` |
 | `PORT` | `8787` | |
 | `SKY_HOST` | `127.0.0.1` (`0.0.0.0` when a password is set) | |
 | `SKY_DATA_DIR` | `./data` | Where `sky.db` lives |
@@ -74,7 +88,7 @@ The older `SKYS_*` names still work.
 ## Develop
 
 ```
-npm test           # 44 tests: API contract, agent behaviour, Stars, schedules, Claude request shape
+npm test           # 53 tests: API contract, agent behaviour, Stars, model fallback, real browser, schedules
 npm run typecheck
 npm run dev        # restarts on change
 ```

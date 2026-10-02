@@ -21,7 +21,8 @@ export const builtInRules = (at: string): Rule[] => [
 
 /** Every provider the server knows, shown on the Connections screen even before they are connected. */
 export const connectionCatalog: Omit<Connection, 'status' | 'lastSyncAt'>[] = [
-  { id: 'web', provider: 'web', name: 'Web browser', description: 'Search and read the web', access: 'read' },
+  { id: 'web', provider: 'web', name: 'Web search', description: 'Search and read the web (Claude’s own web tools)', access: 'read' },
+  { id: 'browser', provider: 'browser', name: 'Browser', description: 'A real browser your Stars drive: open sites, click and fill in forms. Sign-ins stick.', access: 'read_write' },
   { id: 'gmail', provider: 'gmail', name: 'Gmail', description: 'Read, draft and send email', access: 'read_write' },
   { id: 'calendar', provider: 'calendar', name: 'Google Calendar', description: 'See and schedule events', access: 'read_write' },
   { id: 'drive', provider: 'drive', name: 'Google Drive', description: 'Find and read documents', access: 'read' },

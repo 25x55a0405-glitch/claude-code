@@ -69,7 +69,7 @@ export class Providers {
   /** Starts connecting. Returns an authorize URL for OAuth, or null when connected directly. */
   connect(id: string): { authorizeUrl: string | null; connection: Connection } {
     const conn = this.store.getConnection(id);
-    if (id === 'web') return { authorizeUrl: null, connection: this.markConnected(id) };
+    if (id === 'web' || id === 'browser') return { authorizeUrl: null, connection: this.markConnected(id) };
     if (id === 'github' && this.config.providers.githubToken) {
       this.store.db.setPrivate('connection', id, { accessToken: this.config.providers.githubToken } satisfies Credentials);
       return { authorizeUrl: null, connection: this.markConnected(id) };

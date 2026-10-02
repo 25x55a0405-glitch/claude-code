@@ -64,6 +64,8 @@ export interface Star {
   /** Connection ids this Star may use; null means every connected app. */
   connectionIds: string[] | null;
   paused: boolean;
+  /** Model providers this Star uses, in order; null means the global order. */
+  providerIds: string[] | null;
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -100,8 +102,69 @@ export interface ConstellationMessage {
   read: boolean;
 }
 
+// ---- Model providers --------------------------------------------------------
+
+/** anthropic: the Anthropic Messages format. openai: the Chat Completions format. */
+export type ProviderKind = 'anthropic' | 'openai';
+
+export interface ProviderHealth {
+  /** unknown: not used yet; ok: last call worked; cooling: skipped until cooldownUntil; failing: needs fixing (bad key, unknown model). */
+  state: 'unknown' | 'ok' | 'cooling' | 'failing';
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  cooldownUntil: string | null;
+  /** Failures in a row. */
+  failures: number;
+  latencyMs: number | null;
+}
+
+/** A model the Stars can think with. The API key never leaves the server. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  hasKey: boolean;
+  /** Last four characters of the key, for recognising it. */
+  keyHint: string | null;
+  /** Comes from the server's ANTHROPIC_API_KEY; can't be edited or removed here. */
+  builtIn: boolean;
+  health: ProviderHealth;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderPreset {
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  /** An example model id; providers change their lists often. */
+  exampleModel: string;
+  needsKey: boolean;
+  keyUrl: string | null;
+  note: string;
+}
+
+// ---- Browser ------------------------------------------------------------------
+
+/** A Star's tab in the shared real browser. */
+export interface BrowserSession {
+  starId: string;
+  url: string;
+  title: string;
+  /** Changes whenever a new screenshot is ready at /browser/:starId/screenshot. */
+  frameId: string | null;
+  updatedAt: string;
+}
+
 export type ServerEvent =
   | LiveEvent
+  | { type: 'provider.updated'; data: ModelProvider }
+  | { type: 'provider.deleted'; data: { id: string } }
+  | { type: 'browser.frame'; data: BrowserSession }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
   | { type: 'constellation.message'; data: ConstellationMessage };

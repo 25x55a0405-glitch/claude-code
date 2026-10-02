@@ -2,6 +2,7 @@ import type { Config } from '../../config.ts';
 import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
 import type { CreateTaskInput, MessageCard, Risk, Star, Task, TaskCommand } from '../../types.ts';
+import type { BrowserManager } from '../../browser/browser.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
@@ -37,6 +38,7 @@ export interface ToolContext {
   runtime: RuntimeHooks;
   /** The Star doing the work. */
   star: Star;
+  browser?: BrowserManager;
   /** Set when running inside a task. */
   task?: Task;
   /** Set when replying in a chat. */
@@ -62,10 +64,16 @@ export interface ToolResult {
   summary?: string;
 }
 
+/** What a tool may look at when judging a call before it runs (the browser tools look up the element). */
+export interface ToolEnv {
+  starId: string;
+  browser?: BrowserManager;
+}
+
 export interface ToolDef<I = any> extends ClientToolSpec {
   effect: Effect;
   /** When the effect depends on the input (an event with guests sends invites, one without doesn't). */
-  effectFor?(input: I): Effect;
+  effectFor?(input: I, env?: ToolEnv): Effect;
   /** Connection id this tool works through, if any. */
   connection?: string;
   /** Only offered in chat, or only inside tasks. */
@@ -73,7 +81,7 @@ export interface ToolDef<I = any> extends ClientToolSpec {
   /** One line for the timeline before the result is known. */
   label(input: I): string;
   /** How a gated call is shown for approval. Required for send, delete and spend tools. */
-  approval?(input: I): ApprovalPreview;
+  approval?(input: I, env?: ToolEnv): ApprovalPreview;
   /** Applies "approve with my edits": the edited preview back onto the input. */
   applyEdit?(input: I, editedPreview: string): I;
   run(input: I, ctx: ToolContext): Promise<ToolResult | string>;

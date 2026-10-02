@@ -39,7 +39,8 @@ nobody is looking.
 | Policy | `src/agent/policy.ts` | Decides allow, ask or forbid for each action |
 | Tools | `src/agent/tools/` | Core tools (remember, recall, progress, notify, finish, create and manage tasks), constellation tools (`constellation.ts`) and app tools, each tagged with its effect |
 | Providers | `src/connections/providers.ts` | OAuth, token refresh, and calling apps as the person. A 401 marks the connection expired and blocks the tasks that use it |
-| Brain | `src/agent/brain.ts`, `scripted.ts` | Claude through the Anthropic SDK, or a scripted stand-in for tests and running without a key |
+| Models | `src/models/`, `src/agent/brain.ts`, `openai.ts` | The person's model providers (any OpenAI- or Anthropic-compatible API) and the router that falls back along them. A scripted stand-in runs when none is set up |
+| Browser | `src/browser/browser.ts`, `src/agent/tools/browser.ts` | A real Chromium the Stars drive through Playwright, with a persistent profile and a live view |
 
 ## Stars
 
@@ -86,6 +87,86 @@ person's own rules and approvals decide what may happen.
 - Removing a Star stops its unfinished tasks (they stay as history), expires
   its pending approvals, deletes its private memory, its own rules and its
   chats, and tells any Star that was waiting on it.
+
+## Models: any provider, with fallback
+
+The person adds as many providers as they like. Each is one model at one
+API:
+
+- **OpenAI-compatible** (`kind: "openai"`): anything that speaks Chat
+  Completions. That includes OpenRouter, Groq, Gemini's OpenAI endpoint,
+  Mistral, Cerebras, GitHub Models, Together, DeepSeek, OpenAI, and local
+  Ollama or LM Studio. The base URL, key (optional for local servers) and
+  model are all up to the person.
+- **Anthropic-compatible** (`kind: "anthropic"`): Anthropic's API, or any
+  server that speaks the Messages format. Anthropic's own API gets adaptive
+  thinking, effort, caching and server-side web search. Other servers get a
+  plain request.
+- `ANTHROPIC_API_KEY` in the server's environment appears as a built-in
+  provider. It can be turned off, but not edited or removed.
+
+**The chain.** There is a global order (`PUT /providers/order`), and each
+Star can have its own (`Star.providerIds`; `null` uses the global order). A
+Star with its own chain uses only that chain. For every model call the router
+tries the providers in order:
+
+| What went wrong | What happens to that provider | Then |
+| --- | --- | --- |
+| Rate limit (429) | Skipped until `Retry-After`, or 1, 2, 4… minutes, at most 15 | Next provider |
+| Quota or credits used up (402, "quota", "insufficient") | Skipped for an hour | Next |
+| Bad key (401, 403), unknown model | Marked `failing` and skipped for six hours, or until it's edited | Next |
+| Server error, network error, timeout (180 s) | Skipped for 30 s, doubling up to 10 min | Next |
+| Any other 400 (e.g. the model doesn't do tools) | Not benched | Next |
+
+When every provider is cooling down, the one that recovers soonest is tried
+anyway. When every provider fails, the call fails with the reasons ("No
+model could answer. Groq: 429 … | OpenRouter: …"). A task goes offline and
+retries; a chat reply shows the error.
+
+Tool use works the same across providers. Sky keeps one history in the
+Anthropic format and translates it for OpenAI-style servers (tools become
+functions, results become `tool` messages, ids are made safe). Claude-only
+blocks such as thinking and server web search are dropped before the history
+goes to another provider, so a run can switch providers between turns. If a
+provider fails partway through a streamed reply, the next one's answer starts
+on a new line under it.
+
+Health is tracked per provider (`health.state`: `unknown`, `ok`, `cooling`,
+`failing`, plus the last error and latency) and sent live as
+`provider.updated`.
+
+## The browser
+
+Stars browse in a real Chromium, driven by Playwright. It is not a page
+fetcher.
+
+- **One browser, one tab per Star.** The browser starts on first use. It
+  uses a persistent profile (`DATA_DIR/browser-profile`), so cookies and
+  sign-ins survive restarts and are shared by every Star.
+- **Tools.** `browser_open`, `browser_search` (DuckDuckGo), `browser_snapshot`,
+  `browser_click`, `browser_type`, `browser_press`, `browser_scroll` and
+  `browser_back`. Each returns the page's text and a numbered list of links,
+  buttons and fields (`[e12] button "Place order" (submits a form)`). The
+  model acts on those refs. This works with any provider, including ones with
+  no web search of their own.
+- **Approvals.** A click is judged by what it lands on. Following a link
+  only reads. Anything that submits a form or says send, post, confirm, book
+  and so on counts as sending. Buy, pay, checkout or "place order" counts as
+  spending and always asks. Delete or remove counts as deleting. Typing with
+  `submit` counts as sending. These go through the same policy as email: the
+  Star's autonomy and rules, and the built-in money rule. The approval card
+  names the button, the site and the page.
+- **Passwords.** Stars never type into password fields. To sign in, the
+  person uses the live view (or runs the browser visibly with
+  `SKY_BROWSER_HEADLESS=0`), and the session sticks.
+- **Live view.** After each action the server takes a screenshot and sends
+  `browser.frame`. The UI can show `GET /browser/:starId/screenshot`, or put
+  `GET /browser/:starId/stream` (MJPEG, about one frame a second while
+  someone watches) straight into an `<img>`. `POST /browser/:starId/input`
+  lets the person click, type, press keys, scroll or go to a URL in that
+  Star's tab, for example to sign in.
+- **Chat.** Chat can open, search and read pages. Clicking and typing happen
+  in tasks, where approvals apply.
 
 ## A task's life
 
@@ -221,6 +302,58 @@ New live events:
 
 A Star's live activity comes through the existing `status` event (`starId`
 says whose); `star.updated` isn't sent for every step.
+
+### Model providers (for the UI to build on)
+
+```ts
+interface ModelProvider {
+  id: string; name: string;
+  kind: 'anthropic' | 'openai';
+  baseUrl: string; model: string; enabled: boolean;
+  hasKey: boolean; keyHint: string | null;   // last 4 characters; the key itself never leaves the server
+  builtIn: boolean;                          // from ANTHROPIC_API_KEY
+  health: { state: 'unknown' | 'ok' | 'cooling' | 'failing'; lastOkAt: string | null; lastError: string | null;
+            lastErrorAt: string | null; cooldownUntil: string | null; failures: number; latencyMs: number | null };
+  createdAt: string; updatedAt: string;
+}
+interface ProviderPreset { name: string; kind: 'anthropic' | 'openai'; baseUrl: string; exampleModel: string;
+                           needsKey: boolean; keyUrl: string | null; note: string }
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/providers` | `ModelProvider[]` in the global order |
+| GET | `/providers/presets` | `ProviderPreset[]`, starting points for an "Add model" form (OpenRouter, Groq, Gemini, Ollama…) |
+| POST | `/providers` | `{ name, kind, baseUrl, model, apiKey?, enabled? }` → `ModelProvider` (added at the end of the order) |
+| GET | `/providers/:id` | `ModelProvider` |
+| PATCH | `/providers/:id` | Any field; `apiKey: null` removes the key. Changing key, URL, kind or model resets health. Built-in: only `name` and `enabled` (`403` otherwise) |
+| DELETE | `/providers/:id` | `204`; also removed from every Star's chain. `403` for the built-in one |
+| POST | `/providers/:id/test` | Sends "Say hello" → `{ ok, latencyMs, reply?, error? }`, and updates health |
+| GET / PUT | `/providers/order` | `{ providerIds }`. PUT reorders; ids left out keep their place after the ones named |
+
+`Star.providerIds: string[] | null` is accepted on `POST` and `PATCH /stars`.
+Events: `provider.updated` (`ModelProvider`) and `provider.deleted` (`{ id }`).
+`GET /health` now reports `brain: "models"` or `"scripted"`, the first model,
+and whether the browser is available.
+
+### Browser (for the UI to build on)
+
+```ts
+interface BrowserSession { starId: string; url: string; title: string; frameId: string | null; updatedAt: string }
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/browser` | `{ ok, running, reason, sessions: BrowserSession[] }`. `reason` explains why the browser can't start |
+| GET | `/browser/:starId/screenshot` | The latest frame, `image/jpeg`; `404` before the Star has opened anything |
+| GET | `/browser/:starId/stream` | `multipart/x-mixed-replace` MJPEG; use it as an `<img src>` |
+| POST | `/browser/:starId/input` | `{ type: 'click', x, y }` (in a 1280×800 viewport), `{ type: 'type', text }`, `{ type: 'key', key }`, `{ type: 'scroll', dy }`, `{ type: 'navigate', url }` or `{ type: 'back' }` → `BrowserSession` |
+| POST | `/browser/:starId/close` | Closes that Star's tab |
+
+Event: `browser.frame` (`BrowserSession`) whenever a new screenshot is ready.
+The connections list gains `browser` ("Browser"). It is connected by
+default, and turning it off or limiting a Star's `connectionIds` takes the
+browser tools away. The `web` connection is now called "Web search".
 
 ### Server-side additions
 

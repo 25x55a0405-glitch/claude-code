@@ -21,12 +21,21 @@ export interface Config {
   model: string;
   effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   fallbacks: boolean;
-  /** "claude" uses the Claude API; "scripted" is the offline brain used in tests and demos. */
-  brain: 'claude' | 'scripted';
+  /** "models" uses the provider chain (falling back to scripted when none is set up); "scripted" forces the offline brain used in tests. */
+  brain: 'models' | 'scripted';
   userName: string;
   tickMs: number;
   researchEveryMs: number;
   maxStepsPerRun: number;
+  /** Where the browser keeps cookies and sign-ins. Default: DATA_DIR/browser-profile. */
+  browserProfileDir: string | null;
+  /** false shows the browser window (on a machine with a screen). */
+  browserHeadless: boolean;
+  /** A Chrome or Chromium to use instead of Playwright's. */
+  browserPath: string | null;
+  /** e.g. "chrome" to use the installed Google Chrome. */
+  browserChannel: string | null;
+  browserProxy: string | null;
   providers: {
     google?: { clientId: string; clientSecret: string };
     github?: { clientId: string; clientSecret: string };
@@ -51,7 +60,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
   const publicUrl = (v('PUBLIC_URL') ?? `http://localhost:${port}`).replace(/\/$/, '');
   const webOrigin = v('WEB_ORIGIN') ?? null;
   const anthropicKey = Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_PROFILE);
-  const brain = (v('BRAIN') as Config['brain']) ?? (anthropicKey ? 'claude' : 'scripted');
+  const brain: Config['brain'] = v('BRAIN') === 'scripted' ? 'scripted' : 'models';
   const botToken = v('TELEGRAM_BOT_TOKEN');
   const chatId = v('TELEGRAM_CHAT_ID');
   const telegram = botToken && chatId ? { botToken, chatId } : undefined;
@@ -76,6 +85,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     tickMs: Number(v('TICK_MS') ?? 15_000),
     researchEveryMs: Number(v('RESEARCH_EVERY_MIN') ?? 240) * 60_000,
     maxStepsPerRun: Number(v('MAX_STEPS') ?? 24),
+    browserProfileDir: v('BROWSER_PROFILE') ?? null,
+    browserHeadless: v('BROWSER_HEADLESS') !== '0',
+    browserPath: v('BROWSER_PATH') ?? null,
+    browserChannel: v('BROWSER_CHANNEL') ?? null,
+    browserProxy: v('BROWSER_PROXY') ?? null,
     providers: {
       google: pair(env, 'GOOGLE'),
       github: pair(env, 'GITHUB'),

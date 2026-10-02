@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `;
 
-export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea' | 'star';
+export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea' | 'star' | 'provider';
 
 export class Db {
   sql: DatabaseSync;

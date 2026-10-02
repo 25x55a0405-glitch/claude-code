@@ -44,7 +44,7 @@ export class Store {
       const s = this.settings();
       const star = this.db.put<Star>('star', {
         id: uid('star'), name: s.agentName, role: 'Your main Star: talks with you, runs your tasks and coordinates the others',
-        instructions: '', avatar: s.avatar, main: true, autonomy: null, connectionIds: null, paused: false,
+        instructions: '', avatar: s.avatar, main: true, autonomy: null, connectionIds: null, providerIds: null, paused: false,
         conversationId: this.db.getKv<string>('mainConversation')!, createdAt: now, updatedAt: now,
       });
       this.db.setKv('mainStar', star.id);
@@ -56,7 +56,7 @@ export class Store {
     for (const r of builtInRules(now)) if (!this.db.get('rule', r.id)) this.db.put('rule', r);
     for (const c of connectionCatalog) {
       if (!this.db.get('connection', c.id)) {
-        this.db.put<Connection>('connection', { ...c, status: c.id === 'web' ? 'connected' : 'disconnected' });
+        this.db.put<Connection>('connection', { ...c, status: c.id === 'web' || c.id === 'browser' ? 'connected' : 'disconnected' });
       }
     }
   }
@@ -414,19 +414,19 @@ export class Store {
 
   /** The main Star first, then the others in the order they were made. */
   listStars(): Star[] {
-    return this.db.all<Star>('star').sort((a, b) => Number(b.main) - Number(a.main) || a.createdAt.localeCompare(b.createdAt));
+    return this.db.all<Star>('star').map((s) => ({ ...s, providerIds: s.providerIds ?? null })).sort((a, b) => Number(b.main) - Number(a.main) || a.createdAt.localeCompare(b.createdAt));
   }
 
   getStar(id: string): Star {
     const s = this.db.get<Star>('star', id);
     if (!s) throw notFound('Star', id);
-    return s;
+    return { ...s, providerIds: s.providerIds ?? null };
   }
 
   /** Finds a Star by id or by name, ignoring case and a trailing "Star". */
   findStar(ref: string): Star | undefined {
     const byId = this.db.get<Star>('star', ref);
-    if (byId) return byId;
+    if (byId) return { ...byId, providerIds: byId.providerIds ?? null };
     const norm = (n: string) => n.trim().toLowerCase().replace(/\s+star$/, '');
     return this.listStars().find((s) => norm(s.name) === norm(ref));
   }
@@ -463,7 +463,7 @@ export class Store {
     if (clash && clash.id !== exceptId) throw new ApiError(409, 'conflict', `There’s already a Star called ${clash.name}`);
   }
 
-  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
+  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds'>): Star {
     this.assertNameFree(input.name);
     const now = iso();
     const id = uid('star');
@@ -474,7 +474,7 @@ export class Store {
     return star;
   }
 
-  patchStar(id: string, patch: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'paused'>>): Star {
+  patchStar(id: string, patch: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'paused'>>): Star {
     const current = this.getStar(id);
     if (patch.name && patch.name !== current.name) this.assertNameFree(patch.name, id);
     const star = this.db.put<Star>('star', { ...current, ...patch, updatedAt: iso() });

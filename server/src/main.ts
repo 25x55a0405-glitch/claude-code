@@ -1,4 +1,4 @@
-import { ClaudeBrain, type Brain } from './agent/brain.ts';
+import type { Brain } from './agent/brain.ts';
 import { Runtime } from './agent/runtime.ts';
 import { ScriptedBrain } from './agent/scripted.ts';
 import { loadConfig, type Config } from './config.ts';
@@ -7,12 +7,17 @@ import { Db } from './db/db.ts';
 import { EventBus } from './events.ts';
 import { createHttpServer } from './http/server.ts';
 import { Store } from './store.ts';
+import { ModelRegistry } from './models/registry.ts';
+import { ModelRouter } from './models/router.ts';
+import { BrowserManager } from './browser/browser.ts';
 
 export interface App {
   config: Config;
   store: Store;
   runtime: Runtime;
   providers: Providers;
+  models: ModelRouter;
+  browser: BrowserManager;
   server: ReturnType<typeof createHttpServer>;
   close(): Promise<void>;
 }
@@ -22,12 +27,15 @@ export function createApp(config: Config, brain?: Brain): App {
   const db = new Db(config.dbPath);
   const store = new Store(db, new EventBus(), config);
   const providers = new Providers(store, config);
-  const runtime = new Runtime(store, config, brain ?? (config.brain === 'claude' ? new ClaudeBrain(config) : new ScriptedBrain()), providers);
-  const server = createHttpServer(config, store, runtime, providers);
+  const models = new ModelRouter(new ModelRegistry(store, config), config);
+  const browser = new BrowserManager(store, config);
+  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser);
+  const server = createHttpServer(config, store, runtime, providers, models, browser);
   return {
-    config, store, runtime, providers, server,
+    config, store, runtime, providers, models, browser, server,
     async close() {
       await runtime.stop();
+      await browser.close();
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));
       db.close();
@@ -40,7 +48,10 @@ if (import.meta.main) {
   const app = createApp(config);
   app.runtime.start();
   app.server.listen(config.port, config.host, () => {
-    const brain = app.runtime.brain.name === 'claude' ? `Claude (${config.model})` : 'scripted offline brain (set ANTHROPIC_API_KEY for the real one)';
+    const chain = app.models.chain().map((p) => `${p.name} (${p.model})`);
+    const brain = app.runtime.brain.name === 'scripted'
+      ? 'the scripted offline brain (add a model provider in the app, or set ANTHROPIC_API_KEY)'
+      : `models: ${chain.join(' → ')}`;
     console.log(`Sky is up on http://${config.host}:${config.port}/api/v1 using ${brain}`);
     if (!config.password && config.host !== '127.0.0.1') console.warn('Warning: no SKY_PASSWORD set and listening beyond localhost.');
   });

@@ -4,6 +4,7 @@ import type { Store } from '../store.ts';
 import type { Brain } from './brain.ts';
 import type { Policy } from './policy.ts';
 import type { RuntimeHooks } from './tools/types.ts';
+import type { BrowserManager } from '../browser/browser.ts';
 
 /** Everything the agent pieces share. */
 export interface AgentDeps {
@@ -13,4 +14,5 @@ export interface AgentDeps {
   providers: Providers;
   policy: Policy;
   hooks: RuntimeHooks;
+  browser?: BrowserManager;
 }

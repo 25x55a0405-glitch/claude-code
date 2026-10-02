@@ -64,7 +64,7 @@ export class ChatAgent {
     const reply: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', starId: star.id };
     store.saveMessage(reply);
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, star, conversationId, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, conversationId, touchedTasks: new Set(),
       source: `Chat on ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: settings.timezone })}`,
     };
     const emit = (delta: string) => {
@@ -81,7 +81,8 @@ export class ChatAgent {
           system: systemPrompt(store, providers, 'chat', star),
           messages,
           tools: tools.map(toSpec),
-          web: providers.isUsable('web') && brain.name === 'claude',
+          web: providers.isUsable('web'),
+          chain: star.providerIds,
           onText: emit,
           maxTokens: 16_000,
         });

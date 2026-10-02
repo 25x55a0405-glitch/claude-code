@@ -88,7 +88,7 @@ export class ScriptedBrain implements Brain {
     if (/\b(watch|track|monitor|alert me|let me know when|keep an eye)\b/.test(lower)) {
       return [this.use('create_task', { title, description: text, kind: 'watch', schedule: 'every 3 hours' })];
     }
-    if (/\b(find|research|look up|look into|book|search|draft|email|send|plan|compare|summari[sz]e)\b/.test(lower)) {
+    if (/\b(find|research|look up|look into|book|search|draft|email|send|plan|compare|summari[sz]e|browse|visit|open)\b/.test(lower)) {
       return [this.use('create_task', { title, description: text, kind: 'one_off' })];
     }
     const pref = /\b(remember|i prefer|i like|i love|i hate|i don[’']?t like|my name is|i am|i'm)\b(.*)/i.exec(text);
@@ -119,6 +119,18 @@ export class ScriptedBrain implements Brain {
     const ask = /\b[Aa]sk ([A-Z]\w+) (.+)$/.exec(description);
     if (turns === 1 && ask && has('ask_star')) {
       return [this.use('ask_star', { star: ask[1], request: ask[2].replace(/^(to|for|about)\s+/, '') })];
+    }
+    // "Browse http://… and click "Place order"": open the page, then click what's quoted.
+    const url = /https?:\/\/[^\s"”)]+/.exec(description)?.[0];
+    const clickText = /\bclick\s+["“]([^"”]+)["”]/i.exec(description)?.[1];
+    if (url && has('browser_open')) {
+      const { results: last } = this.lastUser(req.messages);
+      if (turns === 1) return [this.use('browser_open', { url })];
+      if (turns === 2 && clickText && !last.some((r) => r.is_error)) return [this.use('browser_click', { text: clickText })];
+      const page = last.map((r) => String(r.content)).join('\n');
+      const seen = /Page: (.*?) — /.exec(page)?.[1];
+      const problem = last.find((r) => r.is_error || /declined|expired/.test(String(r.content)));
+      return [this.use('finish_task', { outcome: problem ? `Stopped: ${String(problem.content).slice(0, 120)}` : `Done: ${title}. Saw “${seen ?? 'the page'}”` })];
     }
     if (turns === 1 && email && has('send_email')) {
       return [this.use('send_email', { to: email, subject: title, body: `Hi,\n\n${description}\n\nSent by Sky` })];

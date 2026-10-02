@@ -21,7 +21,7 @@ export async function executeTool(deps: AgentDeps, tool: ToolDef, input: any, ct
     const res = typeof out === 'string' ? { content: out } : out;
     if (task && !QUIET_STEPS.has(tool.name)) {
       const summary = res.summary ?? tool.label(input);
-      const kind = tool.name === 'update_progress' ? 'note' : STEP_KIND[tool.effectFor?.(input) ?? tool.effect];
+      const kind = tool.name === 'update_progress' ? 'note' : STEP_KIND[tool.effectFor?.(input, { starId: ctx.star.id, browser: ctx.browser }) ?? tool.effect];
       const detail = res.content.length > 0 && res.content !== 'Noted.' && res.content !== summary ? truncate(res.content, 4000) : undefined;
       deps.store.addStep(task.id, { kind, summary: firstLine(summary, 160), ...(detail ? { detail } : {}), ...(tool.connection ? { connectionId: tool.connection } : {}) });
       deps.store.setActivity(firstLine(summary, 80), task.id);

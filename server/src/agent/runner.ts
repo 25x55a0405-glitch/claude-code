@@ -88,7 +88,7 @@ export class TaskRunner {
     store.setActivity(`Working on ${firstLine(task.title, 60)}`, task.id);
 
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, star, task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
     };
 
     // Carry out whatever the person decided, or read the other Star's answer, while the task was waiting.
@@ -124,7 +124,8 @@ export class TaskRunner {
           system: systemPrompt(store, providers, 'task', star),
           messages: state.messages,
           tools: tools.map(toSpec),
-          web: providers.isUsable('web') && brain.name === 'claude',
+          web: providers.isUsable('web'),
+          chain: star.providerIds,
         });
       } catch (err) {
         state.turns--;
@@ -191,7 +192,7 @@ export class TaskRunner {
           store.addStep(task.id, { kind: 'note', summary: firstLine(`Didn’t ${tool.label(use.input).toLowerCase()}: ${verdict.reason}`, 160) });
           state.results.push(errorResult(use.id, `Not allowed: ${verdict.reason}`));
         } else if (verdict.kind === 'ask') {
-          const p = tool.approval?.(use.input) ?? { action: tool.label(use.input), target: tool.connection ?? star.name, preview: JSON.stringify(use.input, null, 2) };
+          const p = tool.approval?.(use.input, { starId: star.id, browser: this.deps.browser }) ?? { action: tool.label(use.input), target: tool.connection ?? star.name, preview: JSON.stringify(use.input, null, 2) };
           const approval = store.createApproval({
             taskId: task.id, starId: star.id, action: p.action, target: p.target, reason: verdict.reason, preview: p.preview,
             ...(tool.connection ? { connectionId: tool.connection } : {}),
