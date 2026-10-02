@@ -170,7 +170,7 @@ export function createMockApi(): SkyApi {
     r.endedAt = iso();
     const s = db.browser.find((b) => b.starId === r.starId);
     if (s) s.recordingId = null;
-    const words = r.steps.map((st, i) => `${i + 1}. ${st.kind === 'open' ? `Open ${st.value ?? st.url}` : st.kind === 'click' ? `Click “${st.target ?? 'the button'}”` : st.kind === 'type' ? `Type ${st.value === '[password]' ? 'the password' : `“${st.value}”`} into ${st.target ?? 'the field'}` : st.kind === 'key' ? `Press ${st.value}` : st.kind === 'back' ? 'Go back' : 'Scroll down'}.`);
+    const words = r.steps.map((st, i) => `${i + 1}. ${st.kind === 'open' ? `Open ${st.value ?? st.url}` : st.kind === 'click' ? `Click “${st.target ?? 'the button'}”` : st.kind === 'type' ? `Type ${st.value === '[password]' ? 'the password' : st.value === '[hidden]' ? 'something private' : `“${st.value}”`} into ${st.target ?? 'the field'}` : st.kind === 'key' ? `Press ${st.value}` : st.kind === 'back' ? 'Go back' : 'Scroll down'}.`);
     r.draft = r.steps.length ? { name: r.title, whenToUse: `When d asks to ${r.title.charAt(0).toLowerCase()}${r.title.slice(1)}`, steps: words.join('\n') } : null;
     emit({ type: 'recording.updated', data: clone(r) });
   };
@@ -965,6 +965,7 @@ export function createMockApi(): SkyApi {
     async decideApproval(id, d) {
       await wait(300);
       const a = db.approvals.find((x) => x.id === id) as Approval;
+      if (d.editedPreview && !a.editable) throw new Error('This one can’t be edited. Approve it as it is, or say Not now.');
       a.status = d.decision === 'approve' ? 'approved' : 'rejected';
       if (d.editedPreview) a.preview = d.editedPreview;
       emit({ type: 'approval.updated', data: clone(a) });

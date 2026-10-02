@@ -13,7 +13,7 @@ const STEP_ICON: Record<RecordedStep['kind'], IconName> = { open: 'search', clic
 export function stepLine(s: RecordedStep) {
   if (s.kind === 'open') return `Opened ${hostOf(s.value ?? s.url)}`;
   if (s.kind === 'click') return `Clicked “${s.target ?? 'something'}”`;
-  if (s.kind === 'type') return s.value === '[password]' ? `Typed a password into ${s.target ?? 'a field'} (not kept)` : `Typed “${s.value ?? ''}”${s.target ? ` into ${s.target}` : ''}`;
+  if (s.kind === 'type') return s.value === '[password]' ? `Typed a password into ${s.target ?? 'a field'} (not kept)` : s.value === '[hidden]' ? `Typed something private${s.target ? ` into ${s.target}` : ''} (not kept)` : `Typed “${s.value ?? ''}”${s.target ? ` into ${s.target}` : ''}`;
   if (s.kind === 'key') return `Pressed ${s.value ?? 'a key'}`;
   if (s.kind === 'back') return 'Went back';
   return 'Scrolled';

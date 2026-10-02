@@ -74,7 +74,7 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
         {editing ? (
           <textarea className="field" rows={6} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Edit before approving" autoFocus />
         ) : (
-          <pre className={`quote ${expanded ? '' : 'clamp'}`} onClick={() => setExpanded(true)}>{approval.preview}</pre>
+          <pre className={`quote ${expanded ? 'open' : 'clamp'}`} onClick={() => setExpanded(true)}>{approval.preview}</pre>
         )}
         {pay && pending && <p className="pay-note"><Icon name="lock" size={13} /> Saying yes gives you the browser on the payment page. You pay, then press Hand back. {who?.name ?? 'Sky'} never enters card details.</p>}
         {computer && pending && <p className="t3 xs">Allowed only inside what you set on that computer. It may ask there too.</p>}
@@ -83,7 +83,7 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
             <button className="btn ink sm" onClick={() => decide('approve')} disabled={busy}>
               {editing ? 'Send edited' : pay ? 'OK, I’ll pay' : computer ? 'Allow' : 'Approve'}
             </button>
-            {!pay && (!computer || /^(Write|Add to) /.test(approval.action)) && <button className="btn sm" onClick={() => setEditing((v) => !v)} disabled={busy}>{editing ? 'Cancel' : 'Edit'}</button>}
+            {approval.editable === true && !pay && <button className="btn sm" onClick={() => setEditing((v) => !v)} disabled={busy}>{editing ? 'Cancel' : 'Edit'}</button>}
             <button className="btn quiet sm" onClick={() => decide('reject')} disabled={busy}>Not now</button>
             {!compact && approval.taskId && <><span className="grow" /><a className="t3 xs" href={href('goals', approval.taskId)}>From a goal</a></>}
           </div>

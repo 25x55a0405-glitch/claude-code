@@ -244,6 +244,11 @@ checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
 - **Your computer** (Settings): `listCompanion`, `pairCompanion`, `updateCompanionDevice` (`{ enabled }`), `deleteCompanionDevice`. The allowlist is read-only here. Which Stars can use it is the `computer` entry in each Star's `connectionIds`. Events: `companion.updated`, `companion.deleted`.
 - **Checkout**: `BrowserSession.checkout`. At `waiting_ok` the approval shows the total and "OK, I’ll pay"; at `paying` the browser is the person's, and "I’ve paid, hand back" returns it. Stars never enter card details.
 
+## Round 5
+
+- **Approvals**: Edit shows only when `Approval.editable` is true (anything else gets `400 not_editable`). An opened preview scrolls, since file writes show their whole content (up to 20,000 characters).
+- **Teach a task**: a typed step stored as `[hidden]` (a card or secret field) shows as "something private".
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

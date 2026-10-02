@@ -358,6 +358,7 @@ a.r { transition: background var(--quick); }
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+.quote.open { max-height: min(52dvh, 480px); overflow: auto; overscroll-behavior: contain; }
 .quote.clamp { max-height: calc(1.55em * 4 + 20px); overflow: hidden; cursor: pointer; -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
 a.card-inline { display: block; transition: border-color var(--quick), transform var(--quick) var(--spring); }
 a.card-inline:hover { border-color: var(--line-strong); }

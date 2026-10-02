@@ -169,6 +169,8 @@ export interface Approval {
   createdAt: string;
   expiresAt?: string;
   starId?: string;
+  /** Whether the content can be changed before saying yes. Only then is Edit shown. */
+  editable?: boolean;
 }
 
 export interface ApprovalDecision {
@@ -563,7 +565,7 @@ export interface CompanionPairing {
 
 // ---- Teach a task ------------------------------------------------------
 
-/** One thing the person did while recording. Typed passwords are stored as "[password]". */
+/** One thing the person did while recording. Typed passwords are stored as "[password]", and card or secret fields as "[hidden]". */
 export interface RecordedStep {
   at: string;
   kind: 'open' | 'click' | 'type' | 'key' | 'scroll' | 'back';
