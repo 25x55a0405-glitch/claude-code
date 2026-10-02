@@ -1,7 +1,9 @@
+import type { Correction } from '../learning.ts';
 import type { Config } from '../../config.ts';
 import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
 import type { CreateTaskInput, MessageCard, Risk, Star, Task, TaskCommand } from '../../types.ts';
+import type { BrowserManager } from '../../browser/browser.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
@@ -21,9 +23,15 @@ export interface RuntimeHooks {
   createTask(input: CreateTaskInput, origin: string, requestedBy?: Task['requestedBy']): Task;
   commandTask(id: string, command: TaskCommand): Task;
   /** Posts to the Star's own chat (the main chat for the main Star) and the person's channels. */
-  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string }): Promise<string>;
+  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string; kind?: 'needs_you' }): Promise<string>;
   /** A task another Star asked for has ended: answer the Star that asked, and wake its task if it was waiting. */
   starAnswered(task: Task, answer: string, failed: boolean): void;
+  /** A task has ended: stop the ask_star requests it still had open with other Stars. */
+  dropAsks(taskId: string, reason: string): void;
+  /** Learns from a correction in the background (see learning.ts); `fallback` runs if no lesson came of it. */
+  learn(starId: string, c: Correction, fallback?: () => void): void;
+  /** A run ended. `reported` is true when the Star itself called finish_task (so a failure is worth learning from). */
+  taskEnded(task: Task, outcome: string, failed: boolean, reported: boolean): void;
   /** When a recurring or watch task should next run. */
   nextRunAt(task: Task, after: Date): string | undefined;
 }
@@ -35,6 +43,7 @@ export interface ToolContext {
   runtime: RuntimeHooks;
   /** The Star doing the work. */
   star: Star;
+  browser?: BrowserManager;
   /** Set when running inside a task. */
   task?: Task;
   /** Set when replying in a chat. */
@@ -60,10 +69,16 @@ export interface ToolResult {
   summary?: string;
 }
 
+/** What a tool may look at when judging a call before it runs (the browser tools look up the element). */
+export interface ToolEnv {
+  starId: string;
+  browser?: BrowserManager;
+}
+
 export interface ToolDef<I = any> extends ClientToolSpec {
   effect: Effect;
   /** When the effect depends on the input (an event with guests sends invites, one without doesn't). */
-  effectFor?(input: I): Effect;
+  effectFor?(input: I, env?: ToolEnv): Effect;
   /** Connection id this tool works through, if any. */
   connection?: string;
   /** Only offered in chat, or only inside tasks. */
@@ -71,7 +86,7 @@ export interface ToolDef<I = any> extends ClientToolSpec {
   /** One line for the timeline before the result is known. */
   label(input: I): string;
   /** How a gated call is shown for approval. Required for send, delete and spend tools. */
-  approval?(input: I): ApprovalPreview;
+  approval?(input: I, env?: ToolEnv): ApprovalPreview;
   /** Applies "approve with my edits": the edited preview back onto the input. */
   applyEdit?(input: I, editedPreview: string): I;
   run(input: I, ctx: ToolContext): Promise<ToolResult | string>;

@@ -5,6 +5,11 @@ import type { Store } from '../store.ts';
 import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, Star, TaskStatus, Tone } from '../types.ts';
 import { badRequest, firstLine, iso, uid } from '../util.ts';
 import type { Router } from './router.ts';
+import type { ModelRouter } from '../models/router.ts';
+import { PRESETS, type ProviderInput } from '../models/registry.ts';
+import type { BrowserManager, ViewInput } from '../browser/browser.ts';
+import type { Vault } from '../vault.ts';
+import type { Push } from '../push.ts';
 
 const TASK_STATUSES: TaskStatus[] = ['active', 'scheduled', 'waiting_approval', 'blocked', 'paused', 'done', 'failed'];
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 'style'];
@@ -27,13 +32,24 @@ const boolean = (v: unknown, field: string): boolean => {
   if (typeof v !== 'boolean') throw badRequest(`${field} must be true or false`);
   return v;
 };
+const optionalText = (v: unknown, field: string, max: number): string => {
+  if (typeof v !== 'string') throw badRequest(`${field} must be text`);
+  if (v.length > max) throw badRequest(`${field} must be at most ${max} characters`);
+  return v.trim();
+};
+const secretValue = (v: unknown): string => {
+  if (typeof v !== 'string' || !v) throw badRequest('value is required');
+  if (v.length > 20_000) throw badRequest('value is too long');
+  return v;
+};
 const hhmm = (v: unknown, field: string): string => {
   if (typeof v !== 'string' || parseHHMM(v) === null) throw badRequest(`${field} must be a time like 08:00`);
   return v;
 };
 
 /** Every endpoint in docs/API.md, plus the Star endpoints in docs/BACKEND.md, under /api/v1. */
-export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers) {
+export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push) {
+  const registry = models.registry;
   /** An optional Star id from a query or body; an unknown one is a 400. */
   const starRef = (v: unknown, field = 'starId'): string | undefined => {
     if (v === undefined || v === null || v === '') return undefined;
@@ -46,12 +62,23 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     return { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
   };
   const starFields = (b: Record<string, unknown>) => {
-    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>> = {};
+    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify'>> = {};
     if (b.name !== undefined) p.name = text(b.name, 'name', 40);
     if (b.role !== undefined) p.role = text(b.role, 'role', 200);
     if (b.instructions !== undefined) {
       if (typeof b.instructions !== 'string' || b.instructions.length > 4000) throw badRequest('instructions must be text up to 4000 characters');
       p.instructions = b.instructions.trim();
+    }
+    if (b.personality !== undefined) p.personality = optionalText(b.personality, 'personality', 1000);
+    if (b.replyStyle !== undefined) p.replyStyle = optionalText(b.replyStyle, 'replyStyle', 1000);
+    if (b.notify !== undefined) {
+      const n = b.notify as Record<string, unknown>;
+      if (!n || typeof n !== 'object') throw badRequest('notify must be an object like { "whenDone": false, "whenNeedsYou": true }');
+      const current = typeof b.id === 'string' ? store.findStar(b.id)?.notify : undefined;
+      p.notify = {
+        whenDone: n.whenDone === undefined ? current?.whenDone ?? false : boolean(n.whenDone, 'notify.whenDone'),
+        whenNeedsYou: n.whenNeedsYou === undefined ? current?.whenNeedsYou ?? true : boolean(n.whenNeedsYou, 'notify.whenNeedsYou'),
+      };
     }
     if (b.avatar !== undefined) p.avatar = avatar(b.avatar);
     if (b.autonomy !== undefined) p.autonomy = b.autonomy === null ? null : oneOf(b.autonomy, AUTONOMY, 'autonomy');
@@ -62,12 +89,74 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
       }
       p.connectionIds = b.connectionIds === null ? null : [...new Set(b.connectionIds as string[])];
     }
+    if (b.providerIds !== undefined) {
+      if (b.providerIds !== null && (!Array.isArray(b.providerIds) || b.providerIds.some((id) => typeof id !== 'string' || !registry.find(id)))) {
+        throw badRequest('providerIds must be null (the global order) or a list of model provider ids');
+      }
+      p.providerIds = b.providerIds === null ? null : [...new Set(b.providerIds as string[])];
+    }
     return p;
   };
   const object = (body: unknown) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send a JSON object');
     return body as Record<string, unknown>;
   };
+
+  // ---- model providers ----
+  const providerFields = (b: Record<string, unknown>, creating: boolean): Partial<ProviderInput> => {
+    const p: Partial<ProviderInput> = {};
+    if (b.name !== undefined || creating) p.name = text(b.name, 'name', 60);
+    if (b.kind !== undefined || creating) p.kind = oneOf(b.kind, ['anthropic', 'openai'] as const as ('anthropic' | 'openai')[], 'kind');
+    if (b.baseUrl !== undefined || creating) {
+      const url = text(b.baseUrl, 'baseUrl', 500);
+      try {
+        if (!/^https?:$/.test(new URL(url).protocol)) throw new Error();
+      } catch {
+        throw badRequest('baseUrl must be an http or https address, like https://openrouter.ai/api/v1');
+      }
+      p.baseUrl = url;
+    }
+    if (b.model !== undefined || creating) p.model = text(b.model, 'model', 200);
+    if (b.apiKey !== undefined) {
+      if (b.apiKey !== null && typeof b.apiKey !== 'string') throw badRequest('apiKey must be text, or null to remove it');
+      p.apiKey = b.apiKey as string | null;
+    }
+    if (b.enabled !== undefined) p.enabled = boolean(b.enabled, 'enabled');
+    return p;
+  };
+  r.get('/providers', () => registry.list());
+  r.get('/providers/presets', () => PRESETS);
+  r.post('/providers', ({ body }) => registry.create(providerFields(object(body), true) as ProviderInput));
+  r.get('/providers/order', () => ({ providerIds: registry.order() }));
+  r.put('/providers/order', ({ body }) => {
+    const ids = object(body).providerIds;
+    if (!Array.isArray(ids) || ids.some((x) => typeof x !== 'string')) throw badRequest('providerIds must be a list of provider ids');
+    return { providerIds: registry.setOrder(ids as string[]) };
+  });
+  r.get('/providers/:id', ({ params }) => registry.get(params.id));
+  r.patch('/providers/:id', ({ params, body }) => registry.patch(params.id, providerFields(object(body), false)));
+  r.delete('/providers/:id', ({ params }) => registry.delete(params.id));
+  r.post('/providers/:id/test', ({ params }) => models.test(params.id));
+
+  // ---- the browser ----
+  r.get('/browser', () => ({ ...browser.available(), sessions: browser.sessions() }));
+  r.post('/browser/:starId/input', async ({ params, body }) => {
+    store.getStar(params.starId);
+    const b = object(body);
+    const type = oneOf(b.type, ['click', 'type', 'key', 'scroll', 'navigate', 'back'], 'type');
+    const num = (v: unknown, f: string) => {
+      if (typeof v !== 'number' || !Number.isFinite(v)) throw badRequest(`${f} must be a number`);
+      return v;
+    };
+    const input: ViewInput = type === 'click' ? { type, x: num(b.x, 'x'), y: num(b.y, 'y') }
+      : type === 'type' ? { type, text: text(b.text, 'text', 2000) }
+      : type === 'key' ? { type, key: text(b.key, 'key', 40) }
+      : type === 'scroll' ? { type, dy: num(b.dy, 'dy') }
+      : type === 'navigate' ? { type, url: text(b.url, 'url', 2000) }
+      : { type };
+    return browser.input(params.starId, input);
+  });
+  r.post('/browser/:starId/close', async ({ params }) => { await browser.closeTab(params.starId); });
 
   // ---- stars and the constellation ----
   r.get('/stars', () => store.listStars().map((s) => store.starView(s)));
@@ -80,16 +169,80 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     const star = runtime.createStar({
       name: f.name, role: f.role, instructions: f.instructions ?? '',
       avatar: f.avatar ?? { character: 'dot', color: colors[store.listStars().length % colors.length] },
-      autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null,
+      autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null, providerIds: f.providerIds ?? null,
+      personality: f.personality ?? '', replyStyle: f.replyStyle ?? '', notify: f.notify ?? { whenDone: false, whenNeedsYou: true },
     });
     return store.starView(star);
   });
   r.get('/stars/:id', ({ params }) => store.starView(store.getStar(params.id)));
-  r.patch('/stars/:id', ({ params, body }) => store.starView(store.patchStar(params.id, starFields(object(body)))));
+  r.patch('/stars/:id', ({ params, body }) => store.starView(store.patchStar(params.id, starFields({ ...object(body), id: params.id }))));
   r.delete('/stars/:id', ({ params }) => runtime.deleteStar(params.id));
   r.post('/stars/:id/pause', ({ params, body }) => store.starView(runtime.setStarPaused(params.id, boolean(body?.paused, 'paused'))));
   r.get('/constellation', () => ({ stars: store.listStars().map((s) => store.starView(s)), messages: store.teamMessages(undefined, 50) }));
   r.get('/constellation/messages', ({ query }) => store.teamMessages(starRef(query.get('starId'))));
+
+  // ---- skills ----
+  const skillFields = (b: Record<string, unknown>, creating: boolean) => {
+    const p: { name?: string; whenToUse?: string; steps?: string; starId?: string | null } = {};
+    if (b.name !== undefined || creating) p.name = text(b.name, 'name', 80);
+    if (b.whenToUse !== undefined || creating) p.whenToUse = text(b.whenToUse, 'whenToUse', 300);
+    if (b.steps !== undefined || creating) p.steps = text(b.steps, 'steps', 8000);
+    if (b.starId !== undefined) p.starId = starRef(b.starId) ?? null;
+    return p;
+  };
+  r.get('/skills', ({ query }) => store.listSkills(starRef(query.get('starId'))));
+  r.post('/skills', ({ body }) => {
+    const f = skillFields(object(body), true);
+    return store.addSkill({ name: f.name!, whenToUse: f.whenToUse!, steps: f.steps!, starId: f.starId ?? null, source: 'you' });
+  });
+  r.get('/skills/:id', ({ params }) => store.getSkill(params.id));
+  r.patch('/skills/:id', ({ params, body }) => store.patchSkill(params.id, skillFields(object(body), false)));
+  r.delete('/skills/:id', ({ params }) => store.deleteSkill(params.id));
+
+  // ---- lessons (learned from corrections) ----
+  r.get('/lessons', ({ query }) => store.listLessons(starRef(query.get('starId'))));
+  r.post('/lessons/:id/undo', ({ params }) => store.undoLesson(params.id));
+
+  // ---- secrets (values go in, never come out) ----
+  const starIdList = (v: unknown): string[] | null => {
+    if (v === null) return null;
+    if (!Array.isArray(v) || v.some((id) => typeof id !== 'string' || store.findStar(id)?.id !== id)) throw badRequest('starIds must be null (every Star) or a list of Star ids');
+    return [...new Set(v as string[])];
+  };
+  r.get('/secrets', ({ query }) => ({ keySource: vault.keySource, secrets: vault.list(starRef(query.get('starId'))) }));
+  r.post('/secrets', ({ body }) => {
+    const b = object(body);
+    return vault.create({
+      name: text(b.name, 'name', 64), value: secretValue(b.value),
+      description: b.description === undefined ? '' : optionalText(b.description, 'description', 300),
+      starIds: b.starIds === undefined ? null : starIdList(b.starIds),
+    });
+  });
+  r.patch('/secrets/:name', ({ params, body }) => {
+    const b = object(body);
+    return vault.patch(params.name, {
+      ...(b.value !== undefined ? { value: secretValue(b.value) } : {}),
+      ...(b.description !== undefined ? { description: optionalText(b.description, 'description', 300) } : {}),
+      ...(b.starIds !== undefined ? { starIds: starIdList(b.starIds) } : {}),
+    });
+  });
+  r.delete('/secrets/:name', ({ params }) => vault.delete(params.name));
+
+  // ---- push notifications ----
+  r.get('/push/key', () => ({ publicKey: push.publicKey() }));
+  r.get('/push/subscriptions', () => push.list());
+  r.post('/push/subscriptions', ({ body }) => {
+    const b = object(body);
+    return push.subscribe(b.subscription, b.label === undefined ? 'This device' : text(b.label, 'label', 80));
+  });
+  r.delete('/push/subscriptions/:id', ({ params }) => push.remove(params.id));
+  r.post('/push/test', async () => {
+    const s = store.settings();
+    if (!s.ntfyTopic && !(s.channels.push && push.list().length)) {
+      throw badRequest('Nothing to send to yet: turn on push and allow notifications on a device, or set an ntfy topic.');
+    }
+    return push.send({ title: s.agentName, body: 'Notifications from Sky are working.', url: '#/' });
+  });
 
   // ---- status and briefing ----
   r.get('/status', () => store.status());
@@ -188,6 +341,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   r.patch('/settings', ({ body }) => {
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send the settings to change as a JSON object');
     const patch = validateSettings(body);
+    if (patch.smallProviderIds?.some((id) => !registry.find(id))) throw badRequest('smallProviderIds must be ids of your model providers');
     const before = store.settings();
     const next = store.updateSettings(patch);
     if (patch.timezone && patch.timezone !== before.timezone) {
@@ -227,6 +381,23 @@ function validateSettings(b: Record<string, unknown>): Partial<Settings> {
       web: boolean(c.web, 'channels.web'), email: boolean(c.email, 'channels.email'), push: boolean(c.push, 'channels.push'),
       slack: boolean(c.slack, 'channels.slack'), telegram: boolean(c.telegram, 'channels.telegram'),
     };
+  }
+  if (b.learnFromCorrections !== undefined) p.learnFromCorrections = boolean(b.learnFromCorrections, 'learnFromCorrections');
+  if (b.smallProviderIds !== undefined) {
+    if (b.smallProviderIds !== null && (!Array.isArray(b.smallProviderIds) || b.smallProviderIds.some((x) => typeof x !== 'string'))) {
+      throw badRequest('smallProviderIds must be null (each Star\'s own chain) or a list of model provider ids');
+    }
+    p.smallProviderIds = b.smallProviderIds === null ? null : [...new Set(b.smallProviderIds as string[])];
+  }
+  if (b.ntfyTopic !== undefined) {
+    if (b.ntfyTopic !== null && (typeof b.ntfyTopic !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(b.ntfyTopic))) {
+      throw badRequest('ntfyTopic must be null or a topic name of letters, digits, - and _ (hard to guess: anyone who knows it can read it)');
+    }
+    p.ntfyTopic = b.ntfyTopic as string | null;
+  }
+  if (b.ntfyServer !== undefined) {
+    if (typeof b.ntfyServer !== 'string' || (b.ntfyServer && !/^https?:\/\/[^\s]+$/.test(b.ntfyServer))) throw badRequest('ntfyServer must be an http(s) address, or empty for ntfy.sh');
+    p.ntfyServer = b.ntfyServer.replace(/\/+$/, '');
   }
   return p;
 }

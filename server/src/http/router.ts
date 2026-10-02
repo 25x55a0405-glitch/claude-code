@@ -39,6 +39,7 @@ export class Router {
   get = (p: string, h: Handler) => this.on('GET', p, h);
   post = (p: string, h: Handler) => this.on('POST', p, h);
   patch = (p: string, h: Handler) => this.on('PATCH', p, h);
+  put = (p: string, h: Handler) => this.on('PUT', p, h);
   delete = (p: string, h: Handler) => this.on('DELETE', p, h);
 
   /** Returns the handler and params, "method" when the path exists under another method, or null. */

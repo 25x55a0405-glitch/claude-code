@@ -1,13 +1,28 @@
 import type { Config } from './config.ts';
 import type { Db } from './db/db.ts';
-import { builtInRules, connectionCatalog, defaultSettings } from './db/seed.ts';
+import { builtInRules, builtInSkills, connectionCatalog, defaultSettings } from './db/seed.ts';
 import type { EventBus } from './events.ts';
 import { startOfLocalDay } from './agent/time.ts';
 import type {
   ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, ConstellationMessage, Conversation, Idea,
-  MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep,
+  Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep,
 } from './types.ts';
 import { ApiError, iso, notFound, uid } from './util.ts';
+
+/** What can be set on a Star when making or editing it. */
+export type StarInput = Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify'>;
+
+/** Stars saved by an older version gain the newer fields. */
+const starDefaults = (s: Star): Star => ({
+  ...s,
+  providerIds: s.providerIds ?? null,
+  personality: s.personality ?? '',
+  replyStyle: s.replyStyle ?? '',
+  notify: s.notify ?? { whenDone: false, whenNeedsYou: true },
+});
+
+const pick = <T extends object, K extends keyof T>(o: T | undefined, keys: K[]): Partial<T> =>
+  o ? Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]])) as unknown as Partial<T> : {};
 
 const ACTIVE: TaskStatus[] = ['active', 'waiting_approval', 'blocked'];
 const PAGE_SIZE = 50;
@@ -23,6 +38,8 @@ export class Store {
   /** What the runtime is doing right now; drives AgentStatus. */
   private live = { activity: null as string | null, taskId: null as string | null, starId: null as string | null, since: iso(), offline: false };
   private lastStatusJson = '';
+  /** Each Star's current phrase from a chat reply (task phrases come from `live`). */
+  private phrases = new Map<string, { activity: string; at: string }>();
   private userName: string;
 
   constructor(db: Db, bus: EventBus, config: Pick<Config, 'userName'>) {
@@ -44,7 +61,8 @@ export class Store {
       const s = this.settings();
       const star = this.db.put<Star>('star', {
         id: uid('star'), name: s.agentName, role: 'Your main Star: talks with you, runs your tasks and coordinates the others',
-        instructions: '', avatar: s.avatar, main: true, autonomy: null, connectionIds: null, paused: false,
+        instructions: '', avatar: s.avatar, main: true, autonomy: null, connectionIds: null, providerIds: null, paused: false,
+        personality: '', replyStyle: '', notify: { whenDone: false, whenNeedsYou: true },
         conversationId: this.db.getKv<string>('mainConversation')!, createdAt: now, updatedAt: now,
       });
       this.db.setKv('mainStar', star.id);
@@ -54,9 +72,10 @@ export class Store {
       }
     }
     for (const r of builtInRules(now)) if (!this.db.get('rule', r.id)) this.db.put('rule', r);
+    for (const k of builtInSkills(now)) this.db.put('skill', { ...k, ...pick(this.db.get<Skill>('skill', k.id), ['uses', 'lastUsedAt']) });
     for (const c of connectionCatalog) {
       if (!this.db.get('connection', c.id)) {
-        this.db.put<Connection>('connection', { ...c, status: c.id === 'web' ? 'connected' : 'disconnected' });
+        this.db.put<Connection>('connection', { ...c, status: c.id === 'web' || c.id === 'browser' ? 'connected' : 'disconnected' });
       }
     }
   }
@@ -100,7 +119,10 @@ export class Store {
     const stateChanged = Boolean(this.live.activity) !== Boolean(activity);
     const task = taskId ? this.findTask(taskId) : undefined;
     const starId = task ? this.starIdOf(task) : activity ? this.mainStarId() : null;
+    const previousStar = this.live.starId;
     this.live = { ...this.live, activity, taskId, starId, since: stateChanged ? iso() : this.live.since };
+    if (starId) this.emitPhrase(starId, activity, taskId);
+    else if (previousStar) this.emitPhrase(previousStar, this.phrases.get(previousStar)?.activity ?? null, null);
     this.emitStatus();
   }
 
@@ -253,11 +275,11 @@ export class Store {
   }
 
   /** Posts a finished agent message (not a streamed reply) and tells the UI. */
-  postAgentMessage(conversationId: string, content: string, opts: { proactive?: boolean; cards?: MessageCard[] } = {}): Message {
+  postAgentMessage(conversationId: string, content: string, opts: { proactive?: boolean; cards?: MessageCard[]; lessonId?: string } = {}): Message {
     const starId = this.getConversation(conversationId).starId;
     const m: Message = {
       id: uid('msg'), conversationId, role: 'agent', content, createdAt: iso(), status: 'done', ...(starId ? { starId } : {}),
-      ...(opts.proactive ? { proactive: true } : {}), ...(opts.cards?.length ? { cards: opts.cards } : {}),
+      ...(opts.proactive ? { proactive: true } : {}), ...(opts.cards?.length ? { cards: opts.cards } : {}), ...(opts.lessonId ? { lessonId: opts.lessonId } : {}),
     };
     this.saveMessage(m);
     this.patchConversation(conversationId, { updatedAt: m.createdAt, preview: content.split('\n')[0].slice(0, 120) });
@@ -414,19 +436,19 @@ export class Store {
 
   /** The main Star first, then the others in the order they were made. */
   listStars(): Star[] {
-    return this.db.all<Star>('star').sort((a, b) => Number(b.main) - Number(a.main) || a.createdAt.localeCompare(b.createdAt));
+    return this.db.all<Star>('star').map(starDefaults).sort((a, b) => Number(b.main) - Number(a.main) || a.createdAt.localeCompare(b.createdAt));
   }
 
   getStar(id: string): Star {
     const s = this.db.get<Star>('star', id);
     if (!s) throw notFound('Star', id);
-    return s;
+    return starDefaults(s);
   }
 
   /** Finds a Star by id or by name, ignoring case and a trailing "Star". */
   findStar(ref: string): Star | undefined {
     const byId = this.db.get<Star>('star', ref);
-    if (byId) return byId;
+    if (byId) return starDefaults(byId);
     const norm = (n: string) => n.trim().toLowerCase().replace(/\s+star$/, '');
     return this.listStars().find((s) => norm(s.name) === norm(ref));
   }
@@ -440,15 +462,32 @@ export class Store {
     return this.isPaused() || Boolean(this.db.get<Star>('star', starId)?.paused);
   }
 
+  /**
+   * A Star's live status phrase while it replies in chat ("Checking memory").
+   * null clears it. Task work sets phrases through setActivity.
+   */
+  setStarPhrase(starId: string, activity: string | null) {
+    if (activity) this.phrases.set(starId, { activity, at: iso() });
+    else this.phrases.delete(starId);
+    const task = this.live.starId === starId && this.live.activity;
+    if (!task) this.emitPhrase(starId, activity, null);
+  }
+
+  private emitPhrase(starId: string, activity: string | null, taskId: string | null) {
+    this.bus.emit({ type: 'star.activity', data: { starId, activity, taskId, at: iso() } });
+  }
+
   starStatus(star: Star): StarStatus {
     const paused = this.isPaused() || star.paused;
     const tasks = this.listTasks(ACTIVE, star.id);
     const pending = this.listApprovals('pending', star.id).length;
-    const working = !paused && Boolean(this.live.activity) && this.live.starId === star.id;
+    const onTask = !paused && Boolean(this.live.activity) && this.live.starId === star.id;
+    const chatting = !paused && !onTask ? this.phrases.get(star.id) : undefined;
+    const working = onTask || Boolean(chatting);
     return {
       state: paused ? 'paused' : this.live.offline ? 'offline' : working ? 'working' : pending ? 'waiting' : 'idle',
-      activity: working ? this.live.activity : null,
-      taskId: working ? this.live.taskId : null,
+      activity: onTask ? this.live.activity : chatting?.activity ?? null,
+      taskId: onTask ? this.live.taskId : null,
       activeTasks: tasks.length,
       pendingApprovals: pending,
     };
@@ -463,7 +502,7 @@ export class Store {
     if (clash && clash.id !== exceptId) throw new ApiError(409, 'conflict', `There’s already a Star called ${clash.name}`);
   }
 
-  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
+  createStar(input: StarInput): Star {
     this.assertNameFree(input.name);
     const now = iso();
     const id = uid('star');
@@ -474,7 +513,7 @@ export class Store {
     return star;
   }
 
-  patchStar(id: string, patch: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'paused'>>): Star {
+  patchStar(id: string, patch: Partial<StarInput & Pick<Star, 'paused'>>): Star {
     const current = this.getStar(id);
     if (patch.name && patch.name !== current.name) this.assertNameFree(patch.name, id);
     const star = this.db.put<Star>('star', { ...current, ...patch, updatedAt: iso() });
@@ -534,6 +573,98 @@ export class Store {
       update.run(JSON.stringify(m), r.id);
       return m;
     });
+  }
+
+  // ---- skills ------------------------------------------------------------
+
+  /** Every skill, or with a Star, the ones it can use: shared plus its own. Most used first. */
+  listSkills(starId?: string): Skill[] {
+    return this.db.all<Skill>('skill')
+      .filter((k) => !starId || !k.starId || k.starId === starId)
+      .sort((a, b) => b.uses - a.uses || a.name.localeCompare(b.name));
+  }
+
+  getSkill(id: string): Skill {
+    const k = this.db.get<Skill>('skill', id);
+    if (!k) throw notFound('Skill', id);
+    return k;
+  }
+
+  /** By id, or by name (ignoring case) among the skills a Star can use. */
+  findSkill(ref: string, starId?: string): Skill | undefined {
+    const byId = this.db.get<Skill>('skill', ref);
+    if (byId && (!starId || !byId.starId || byId.starId === starId)) return byId;
+    const want = ref.trim().toLowerCase();
+    return this.listSkills(starId).find((k) => k.name.toLowerCase() === want);
+  }
+
+  addSkill(input: Pick<Skill, 'name' | 'whenToUse' | 'steps' | 'starId' | 'source'>): Skill {
+    if (input.starId) this.getStar(input.starId);
+    if (this.findSkill(input.name, input.starId ?? undefined)) throw new ApiError(409, 'conflict', `There’s already a skill called “${input.name}”`);
+    const now = iso();
+    const k = this.db.put<Skill>('skill', { id: uid('k'), ...input, uses: 0, lastUsedAt: null, createdAt: now, updatedAt: now });
+    this.bus.emit({ type: 'skill.updated', data: k });
+    return k;
+  }
+
+  patchSkill(id: string, patch: Partial<Pick<Skill, 'name' | 'whenToUse' | 'steps' | 'starId'>>, opts: { internal?: boolean } = {}): Skill {
+    const current = this.getSkill(id);
+    if (current.source === 'builtIn' && !opts.internal) throw new ApiError(403, 'forbidden', 'Built-in skills can’t be changed');
+    if (patch.name && patch.name.toLowerCase() !== current.name.toLowerCase()) {
+      const clash = this.findSkill(patch.name, (patch.starId ?? current.starId) ?? undefined);
+      if (clash && clash.id !== id) throw new ApiError(409, 'conflict', `There’s already a skill called “${patch.name}”`);
+    }
+    const k = this.db.put<Skill>('skill', { ...current, ...patch, updatedAt: opts.internal ? current.updatedAt : iso() });
+    this.bus.emit({ type: 'skill.updated', data: k });
+    return k;
+  }
+
+  /** Counts a use, for "used 3 times". */
+  touchSkill(id: string) {
+    const k = this.getSkill(id);
+    const next = this.db.put<Skill>('skill', { ...k, uses: k.uses + 1, lastUsedAt: iso() });
+    this.bus.emit({ type: 'skill.updated', data: next });
+  }
+
+  deleteSkill(id: string) {
+    const k = this.getSkill(id);
+    if (k.source === 'builtIn') throw new ApiError(403, 'forbidden', 'Built-in skills can’t be deleted');
+    this.db.delete('skill', id);
+    this.bus.emit({ type: 'skill.deleted', data: { id } });
+  }
+
+  // ---- lessons -----------------------------------------------------------
+
+  listLessons(starId?: string): Lesson[] {
+    return this.db.all<Lesson>('lesson').filter((l) => !starId || l.starId === starId).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  getLesson(id: string): Lesson {
+    const l = this.db.get<Lesson>('lesson', id);
+    if (!l) throw notFound('Lesson', id);
+    return l;
+  }
+
+  saveLesson(l: Lesson): Lesson {
+    this.db.put('lesson', l);
+    this.bus.emit({ type: 'lesson.learned', data: l });
+    return l;
+  }
+
+  /** Takes a lesson back: removes the memory it made, or its line from the skill it changed (keeping later edits). */
+  undoLesson(id: string): Lesson {
+    const l = this.getLesson(id);
+    if (l.undone) return l;
+    if (l.memoryId) this.db.delete('memory', l.memoryId);
+    const skill = l.skillId ? this.db.get<Skill>('skill', l.skillId) : undefined;
+    if (skill) {
+      const line = `- Lesson: ${l.lesson}`;
+      this.patchSkill(skill.id, { steps: skill.steps.split('\n').filter((x) => x.trim() !== line).join('\n').trimEnd() }, { internal: true });
+    }
+    const done = this.db.put<Lesson>('lesson', { ...l, undone: true });
+    this.log('memory_learned', `Unlearned: ${l.lesson}`, l.taskId, l.starId);
+    this.bus.emit({ type: 'lesson.undone', data: done });
+    return done;
   }
 
   // ---- ideas -------------------------------------------------------------

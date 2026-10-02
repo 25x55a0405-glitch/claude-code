@@ -44,7 +44,7 @@ after(() => fake.close());
 
 test('Claude requests use the current API shape and stream replies into chat', async () => {
   const { startServer } = await import('./helpers.ts');
-  const s = await startServer({ brain: 'claude', model: 'claude-opus-5-5', effort: 'medium', fallbacks: true });
+  const s = await startServer({ brain: 'models', anthropicKey: true, model: 'claude-opus-5-5', effort: 'medium', fallbacks: true });
   try {
     requests = [];
     reply = () => textStream('Hello there, happy to help.');

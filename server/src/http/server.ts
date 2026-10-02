@@ -9,6 +9,10 @@ import { ApiError } from '../util.ts';
 import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
 import { registerRoutes } from './routes.ts';
+import type { Vault } from '../vault.ts';
+import type { Push } from '../push.ts';
+import type { ModelRouter } from '../models/router.ts';
+import type { BrowserManager } from '../browser/browser.ts';
 import { Router, type Req } from './router.ts';
 
 const API = '/api/v1';
@@ -19,10 +23,10 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
 };
 
-export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers): Server {
+export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push): Server {
   const auth = new Auth(config, store.db);
   const router = new Router();
-  registerRoutes(router, store, runtime, providers);
+  registerRoutes(router, store, runtime, providers, models, browser, vault, push);
   const origins = new Set((config.webOrigin ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 
   const send = (res: ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}) => {
@@ -92,7 +96,7 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
     }
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Max-Age': '600',
       }).end();
@@ -113,7 +117,8 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
 
     // Endpoints that work before sign-in.
     if (path === '/health' && req.method === 'GET') {
-      send(res, 200, { ok: true, brain: runtime.brain.name, model: runtime.brain.name === 'claude' ? config.model : null });
+      const first = runtime.brain.name === 'scripted' ? null : models.chain()[0];
+      send(res, 200, { ok: true, brain: runtime.brain.name, model: first?.model ?? null, browser: browser.available() });
       return;
     }
     if (path === '/session') {
@@ -129,6 +134,25 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
     if (!auth.isSignedIn(req)) return fail(res, 401, 'unauthorized', 'Please sign in to Sky first');
 
     if (path === '/events' && req.method === 'GET') return events(req, res);
+    const view = /^\/browser\/([^/]+)\/(screenshot|stream)$/.exec(path);
+    if (view && req.method === 'GET') {
+      const starId = decodeURIComponent(view[1]);
+      if (view[2] === 'screenshot') {
+        const frame = browser.frame(starId);
+        if (!frame) return fail(res, 404, 'not_found', 'That Star hasn’t opened anything in the browser yet');
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' }).end(frame);
+        return;
+      }
+      // A live view an <img> can show directly (MJPEG): a new frame about once a second.
+      res.writeHead(200, { 'Content-Type': 'multipart/x-mixed-replace; boundary=frame', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+      const stop = browser.watch(starId, (jpeg) => {
+        res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`);
+        res.write(jpeg);
+        res.write('\r\n');
+      });
+      req.on('close', stop);
+      return;
+    }
     if (path === '/oauth/callback' && req.method === 'GET') {
       const code = url.searchParams.get('code');
       const state = url.searchParams.get('state');

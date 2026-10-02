@@ -2,11 +2,13 @@ import type { Providers } from '../../connections/providers.ts';
 import type { Star } from '../../types.ts';
 import type { ClientToolSpec } from '../brain.ts';
 import { constellationTools } from './constellation.ts';
+import { browserTools } from './browser.ts';
+import { skillTools } from './skills.ts';
 import { appTools } from './apps.ts';
 import { coreTools } from './core.ts';
 import type { ToolDef } from './types.ts';
 
-export const allTools: ToolDef[] = [...coreTools, ...constellationTools, ...appTools];
+export const allTools: ToolDef[] = [...coreTools, ...skillTools, ...constellationTools, ...browserTools, ...appTools];
 const byName = new Map(allTools.map((t) => [t.name, t]));
 
 export const findTool = (name: string) => byName.get(name);

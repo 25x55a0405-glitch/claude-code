@@ -70,7 +70,7 @@ test('rules: built-ins are protected, custom rules editable', async () => {
 
 test('connections list every provider; web connects directly, OAuth ones explain setup', async () => {
   const list = (await s.call<Connection[]>('GET', '/connections')).body;
-  assert.deepEqual(list.map((c) => c.provider), ['web', 'gmail', 'calendar', 'drive', 'github', 'notion', 'slack', 'telegram']);
+  assert.deepEqual(list.map((c) => c.provider), ['web', 'browser', 'gmail', 'calendar', 'drive', 'github', 'notion', 'slack', 'telegram']);
   const web = await s.call('POST', '/connections/web/connect');
   assert.equal(web.body.authorizeUrl, null);
   assert.equal(web.body.connection.status, 'connected');

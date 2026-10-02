@@ -1,9 +1,9 @@
 import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { Config } from '../config.ts';
 import type { Providers } from '../connections/providers.ts';
-import type { Store } from '../store.ts';
+import type { Store, StarInput } from '../store.ts';
 import type { Approval, ApprovalDecision, CreateTaskInput, MessageCard, Star, Task, TaskCommand } from '../types.ts';
-import { ApiError, badRequest, firstLine, iso, uid } from '../util.ts';
+import { ApiError, badRequest, firstLine, iso, truncate, uid } from '../util.ts';
 import { generateBriefing } from './briefing.ts';
 import { refreshIdeas } from './ideas.ts';
 import { BrainUnavailable, type Brain } from './brain.ts';
@@ -17,6 +17,11 @@ import { describeSchedule, nextRun, parseSchedule } from './schedule.ts';
 import { inWindow, localDateKey, localMinutes, parseHHMM } from './time.ts';
 import { findTool, toSpec } from './tools/index.ts';
 import type { RuntimeHooks, ToolContext } from './tools/types.ts';
+import type { BrowserManager } from '../browser/browser.ts';
+import type { Push } from '../push.ts';
+import type { Vault } from '../vault.ts';
+import { reflect, type Correction } from './learning.ts';
+import type { PushMessage } from '../push.ts';
 
 const WATCH_DEFAULT = 'every 3 hours';
 
@@ -49,13 +54,26 @@ export class Runtime implements RuntimeHooks {
   private lastResearch = 0;
   private briefingBusy = false;
 
-  constructor(store: Store, config: Config, brain: Brain, providers: Providers) {
+  browser?: BrowserManager;
+  vault?: Vault;
+  push?: Push;
+  deps: AgentDeps;
+  /** Work started in the background (reflections, pushes) that idle() waits for. */
+  private background = new Set<Promise<unknown>>();
+
+  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager, extras: { vault?: Vault; push?: Push } = {}) {
     this.store = store;
     this.config = config;
     this.brain = brain;
     this.providers = providers;
+    this.browser = browser;
+    this.vault = extras.vault;
+    this.push = extras.push;
     this.policy = new Policy(store, brain);
-    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this };
+    this.policy.browser = browser;
+    this.policy.vault = extras.vault;
+    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this, browser, vault: extras.vault };
+    this.deps = deps;
     this.runner = new TaskRunner(deps);
     this.chat = new ChatAgent(deps);
     this.lastResearch = store.db.getKv<number>('lastResearch') ?? Date.now();
@@ -77,11 +95,30 @@ export class Runtime implements RuntimeHooks {
     this.timer = null;
     if (this.running) this.stopRequested.add(this.running);
     await this.draining;
+    await Promise.allSettled([...this.background]);
   }
 
   /** Resolves once the queue is empty. Used by tests and graceful shutdown. */
   async idle() {
-    while (this.draining) await this.draining;
+    while (this.draining || this.background.size) {
+      await this.draining;
+      await Promise.allSettled([...this.background]);
+    }
+  }
+
+  /** Runs something after the current request, logging failures; idle() waits for it. */
+  private later(work: () => Promise<unknown>) {
+    const p = work().catch((err) => console.error('[runtime] background work failed', err)).finally(() => this.background.delete(p));
+    this.background.add(p);
+  }
+
+  /** Lets a Star learn from a correction, in the background. */
+  learn(starId: string, c: Correction, fallback?: () => void) {
+    const star = this.store.findStar(starId) ?? this.store.mainStar();
+    this.later(async () => {
+      const lesson = await reflect(this.deps, star, c);
+      if (!lesson) fallback?.();
+    });
   }
 
   // ---- the clock -----------------------------------------------------------
@@ -228,6 +265,7 @@ export class Runtime implements RuntimeHooks {
         for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === id)) this.store.setApprovalStatus(a.id, 'expired');
         this.store.patchTask(id, { status: 'done', lastOutcome: 'Stopped by you' });
         this.store.setActivity(null);
+        this.dropAsks(id, `No longer needed: you stopped “${firstLine(task.title, 60)}”`);
         if (task.kind === 'one_off' && task.requestedBy) this.starAnswered(task, 'The person stopped this before it finished.', true);
         break;
     }
@@ -244,8 +282,22 @@ export class Runtime implements RuntimeHooks {
     const edited = decision.decision === 'approve' && decision.editedPreview?.trim() ? decision.editedPreview : undefined;
     const a = this.store.setApprovalStatus(id, decision.decision === 'approve' ? 'approved' : 'rejected', edited);
     this.store.log('approval_resolved', `${a.status === 'approved' ? 'Approved' : 'Declined'}: ${a.action} to ${a.target}`, a.taskId);
-    if (decision.note?.trim()) {
-      this.store.addMemory('preference', decision.note.trim(), `Your note on “${firstLine(a.action, 40)}”`, true, a.taskId);
+    const note = decision.note?.trim();
+    const saveNote = () => {
+      if (note) this.store.addMemory('preference', note, `Your note on “${firstLine(a.action, 40)}”`, true, a.taskId);
+    };
+    if ((a.status === 'rejected' || edited) && this.store.settings().learnFromCorrections !== false) {
+      // A decline or an edit is a correction: the Star works out what to do differently (the note, if any, is the best clue).
+      const what = `${a.action} to ${a.target}`;
+      const situation = a.status === 'rejected'
+        ? `The person declined: ${what}.\nWhat the assistant was about to do:\n${truncate(a.preview, 1500)}`
+        : `The person approved ${what}, but edited it first.\nThe assistant's version:\n${truncate(a.preview, 1500)}\nThe person's version:\n${truncate(edited!, 1500)}`;
+      this.learn(a.starId ?? this.store.mainStar().id, {
+        trigger: a.status === 'rejected' ? 'declined' : 'edited', taskId: a.taskId,
+        situation: `${situation}${note ? `\nTheir note: “${note}”` : ''}`,
+      }, saveNote);
+    } else {
+      saveNote();
     }
     this.afterDecision(a, { ...decision, editedPreview: edited });
     return a;
@@ -285,7 +337,25 @@ export class Runtime implements RuntimeHooks {
     if (allIn && req.taskId) this.wake(req.taskId);
   }
 
-  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
+  /**
+   * Stops the work a task asked other Stars for (ask_star) once nobody is
+   * waiting on it, and whatever those tasks asked for in turn. Hand-offs are
+   * independent work and carry on.
+   */
+  dropAsks(taskId: string, reason: string) {
+    const open = this.store.listTasks(['active', 'scheduled', 'waiting_approval', 'blocked', 'paused'])
+      .filter((t) => t.requestedBy?.taskId === taskId && t.requestedBy.depth !== undefined);
+    for (const t of open) {
+      if (this.running === t.id) this.stopRequested.add(t.id);
+      this.runner.discard(t.id);
+      for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === t.id)) this.store.setApprovalStatus(a.id, 'expired');
+      this.store.patchTask(t.id, { status: 'done', lastOutcome: reason });
+      this.store.addStep(t.id, { kind: 'note', summary: firstLine(reason, 160) });
+      this.dropAsks(t.id, reason);
+    }
+  }
+
+  createStar(input: StarInput): Star {
     return this.store.createStar(input);
   }
 
@@ -313,6 +383,7 @@ export class Runtime implements RuntimeHooks {
       for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === t.id)) this.store.setApprovalStatus(a.id, 'expired');
       this.store.patchTask(t.id, { status: 'done', lastOutcome: `Stopped: ${star.name} was removed` });
       this.store.addStep(t.id, { kind: 'note', summary: `Stopped because ${star.name} was removed` });
+      this.dropAsks(t.id, `No longer needed: ${star.name} was removed`);
       if (t.kind === 'one_off' && t.requestedBy) this.starAnswered(t, `${star.name} was removed before finishing this.`, true);
     }
     this.store.removeStar(id);
@@ -350,7 +421,7 @@ export class Runtime implements RuntimeHooks {
    * main chat for the main Star) and, outside quiet hours, the person's other
    * channels, signed with the Star's name when it isn't the main one.
    */
-  async notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string } = {}): Promise<string> {
+  async notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string; kind?: 'needs_you' } = {}): Promise<string> {
     const settings = this.store.settings();
     const delivered: string[] = ['the app'];
     const cards = opts.cards ?? (opts.taskId ? [{ kind: 'task' as const, taskId: opts.taskId }] : []);
@@ -373,9 +444,39 @@ export class Runtime implements RuntimeHooks {
       attempts.push(this.providers.api('slack', 'https://slack.com/api/chat.postMessage', { method: 'POST', body: { channel: slackChannel, text: message } })
         .then(() => { delivered.push('Slack'); }));
     }
+    // Phone and browser notifications. A Star can be set not to push its "can I…?" questions.
+    if (this.push && !(opts.kind === 'needs_you' && !star.notify.whenNeedsYou)) {
+      attempts.push(this.pushNow({
+        title: opts.kind === 'needs_you' ? `${star.name} needs you` : star.name, body: message.replace(new RegExp(`^${escapeRe(star.name)}: `), ''),
+        url: opts.taskId ? `#/tasks/${opts.taskId}` : '#/', tag: opts.taskId, urgent: opts.urgent,
+      }).then((r) => { if (r.delivered.length) delivered.push('push'); else if (r.failed.length) throw new Error(r.failed.join('; ')); }));
+    }
     const results = await Promise.allSettled(attempts);
     const failed = results.filter((r) => r.status === 'rejected').length;
     return `Delivered to ${delivered.join(', ')}${failed ? ` (${failed} channel${failed === 1 ? '' : 's'} failed)` : ''}.`;
+  }
+
+  /** Sends to the person's devices; nothing to do when no device or ntfy topic is set up. */
+  private async pushNow(msg: PushMessage) {
+    const settings = this.store.settings();
+    if (!this.push || (!settings.ntfyTopic && !(settings.channels.push && this.push.list().length))) return { delivered: [], failed: [] };
+    return this.push.send(msg);
+  }
+
+  /**
+   * A run ended. A one-off the person gave a Star tells their devices when the
+   * Star is set to (notify.whenDone), and a task the Star itself reported as
+   * failed is a chance to learn something.
+   */
+  taskEnded(task: Task, outcome: string, failed: boolean, reported: boolean) {
+    const star = this.store.findStar(this.store.starIdOf(task)) ?? this.store.mainStar();
+    if (failed && reported) {
+      const steps = this.store.taskDetail(task.id).steps.slice(-8).map((s) => `- ${s.summary}`).join('\n');
+      this.learn(star.id, { trigger: 'failed', taskId: task.id, situation: `The task “${task.title}” failed. The assistant said: ${outcome}\nIts last steps:\n${steps}` });
+    }
+    if (task.kind === 'one_off' && !task.requestedBy && star.notify.whenDone && this.push && !this.inQuietHours()) {
+      this.later(() => this.pushNow({ title: `${star.name} ${failed ? 'couldn’t finish' : 'finished'}`, body: `${firstLine(task.title, 80)}: ${firstLine(outcome, 160)}`, url: `#/tasks/${task.id}`, tag: task.id }));
+    }
   }
 
   private async sendTelegram(text: string) {
@@ -421,7 +522,7 @@ export class Runtime implements RuntimeHooks {
 
   private async maybeResearch(now: Date) {
     const settings = this.store.settings();
-    if (!settings.proactiveResearch || this.brain.name !== 'claude' || !this.providers.isUsable('web')) return;
+    if (!settings.proactiveResearch || this.brain.name === 'scripted' || !this.providers.isUsable('web')) return;
     if (this.running || this.queue.length || this.inQuietHours(now) || Date.now() - this.lastResearch < this.config.researchEveryMs) return;
     const interests = this.store.listMemory().filter((m) => m.category === 'goal' || m.category === 'preference').slice(0, 20);
     if (!interests.length) return;
@@ -450,7 +551,7 @@ export class Runtime implements RuntimeHooks {
         + `${recent.length ? `\n\nYou already looked into these this week, so find something else:\n${recent.join('\n')}` : ''}`,
     }];
     const ctx: ToolContext = { store: this.store, config: this.config, providers: this.providers, runtime: this, star: this.store.mainStar(), source: 'Proactive research', touchedTasks: new Set() };
-    const deps: AgentDeps = { store: this.store, config: this.config, brain: this.brain, providers: this.providers, policy: this.policy, hooks: this };
+    const deps = this.deps;
     let text = '';
     for (let i = 0; i < 6; i++) {
       const res = await this.brain.turn({ system: systemPrompt(this.store, this.providers, 'research'), messages, tools: tools.map(toSpec), web: true });
@@ -469,3 +570,5 @@ export class Runtime implements RuntimeHooks {
     return text;
   }
 }
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

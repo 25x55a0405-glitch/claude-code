@@ -1,14 +1,17 @@
 import type { BetaMessageParam, BetaToolResultBlockParam, BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import type { Message } from '../types.ts';
-import { firstLine, iso, uid } from '../util.ts';
+import { firstLine, iso, truncate, uid } from '../util.ts';
 import type { AgentDeps } from './deps.ts';
 import { errorResult, executeTool } from './execute.ts';
+import { looksLikeCorrection } from './learning.ts';
 import { contextMemory } from './memory.ts';
 import { contextNote, systemPrompt, takeInbox } from './prompt.ts';
 import { availableTools, findTool, toSpec } from './tools/index.ts';
 import { validateInput, type ToolContext } from './tools/types.ts';
 
 const MAX_TURNS = 8;
+/** Tools that mean the Star already took a correction on board, so no separate reflection is needed. */
+const LEARNING_TOOLS = new Set(['remember', 'save_skill', 'update_skill', 'set_personality', 'forget_memories']);
 const HISTORY = 40;
 
 /**
@@ -58,17 +61,22 @@ export class ChatAgent {
 
     // Volatile context rides on the newest user turn so the cached prefix stays intact.
     const last = messages[messages.length - 1];
+    const said = String(last.content);
+    const before = messages.length > 1 ? String(messages[messages.length - 2].content) : '';
     const memory = contextMemory(store.listMemory(star.id), String(last.content));
     messages[messages.length - 1] = { role: 'user', content: `${contextNote(settings, memory, takeInbox(store, star.id))}\n\n${last.content}` };
 
     const reply: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', starId: star.id };
     store.saveMessage(reply);
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, star, conversationId, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, conversationId, touchedTasks: new Set(),
       source: `Chat on ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: settings.timezone })}`,
     };
+    let writing = false;
     const emit = (delta: string) => {
       if (!delta) return;
+      if (!writing) store.setStarPhrase(star.id, 'Writing');
+      writing = true;
       reply.content += delta;
       bus.emit({ type: 'message.delta', data: { conversationId, messageId: reply.id, delta } });
     };
@@ -77,11 +85,14 @@ export class ChatAgent {
       const tools = availableTools('chat', providers, star).filter((t) => t.effect === 'internal' || t.effect === 'read');
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         if (turn > 0 && reply.content && !reply.content.endsWith('\n')) emit('\n\n');
+        store.setStarPhrase(star.id, 'Thinking');
+        writing = false;
         const res = await brain.turn({
           system: systemPrompt(store, providers, 'chat', star),
           messages,
           tools: tools.map(toSpec),
-          web: providers.isUsable('web') && brain.name === 'claude',
+          web: providers.isUsable('web'),
+          chain: star.providerIds,
           onText: emit,
           maxTokens: 16_000,
         });
@@ -105,10 +116,20 @@ export class ChatAgent {
       console.error('[chat] reply failed', message);
       reply.content = `${reply.content}${reply.content ? '\n\n' : ''}Sorry, I couldn’t finish that reply: ${message}`;
       reply.status = 'error';
+    } finally {
+      store.setStarPhrase(star.id, null);
     }
     if (ctx.touchedTasks.size) reply.cards = [...ctx.touchedTasks].map((taskId) => ({ kind: 'task' as const, taskId }));
     store.saveMessage(reply);
     store.patchConversation(conversationId, { updatedAt: iso(), preview: firstLine(reply.content, 120) });
     bus.emit({ type: 'message.done', data: reply });
+
+    // "No, do it like this": a correction worth keeping, unless the Star already saved it during the reply.
+    const learnedAlready = messages.some((m) => Array.isArray(m.content) && m.content.some((b) => b.type === 'tool_use' && LEARNING_TOOLS.has(b.name)));
+    if (reply.status === 'done' && before && looksLikeCorrection(said) && !learnedAlready) {
+      this.deps.hooks.learn(star.id, {
+        trigger: 'chat', situation: `The assistant had said: “${truncate(before, 1500)}”\nThey said: “${truncate(said, 1000)}”`,
+      });
+    }
   }
 }

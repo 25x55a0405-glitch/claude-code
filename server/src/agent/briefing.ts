@@ -43,7 +43,7 @@ export async function generateBriefing(store: Store, brain: Brain): Promise<Brie
   const greeting = `${part}, ${settings.userName}`;
   const facts = h.map((x) => `- ${x.kind}: ${x.title} (${x.detail})`).join('\n') || '- nothing notable';
   let summary = '';
-  if (brain.name === 'claude') {
+  if (brain.name !== 'scripted') {
     try {
       summary = await brain.complete(
         `You are ${settings.agentName}, ${settings.userName}'s personal agent. Write the two-sentence summary at the top of their daily briefing. `

@@ -58,6 +58,6 @@ async function modelIdeas(store: Store, brain: Brain): Promise<Draft[]> {
 /** Adds any new ideas and returns them. */
 export async function refreshIdeas(store: Store, providers: Providers, brain: Brain): Promise<Idea[]> {
   const drafts = [...starterIdeas(store, providers)];
-  if (brain.name === 'claude') drafts.push(...(await modelIdeas(store, brain).catch(() => [])));
+  if (brain.name !== 'scripted') drafts.push(...(await modelIdeas(store, brain).catch(() => [])));
   return drafts.map((d) => store.addIdea(d)).filter((x): x is Idea => Boolean(x));
 }

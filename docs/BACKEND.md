@@ -39,7 +39,8 @@ nobody is looking.
 | Policy | `src/agent/policy.ts` | Decides allow, ask or forbid for each action |
 | Tools | `src/agent/tools/` | Core tools (remember, recall, progress, notify, finish, create and manage tasks), constellation tools (`constellation.ts`) and app tools, each tagged with its effect |
 | Providers | `src/connections/providers.ts` | OAuth, token refresh, and calling apps as the person. A 401 marks the connection expired and blocks the tasks that use it |
-| Brain | `src/agent/brain.ts`, `scripted.ts` | Claude through the Anthropic SDK, or a scripted stand-in for tests and running without a key |
+| Models | `src/models/`, `src/agent/brain.ts`, `openai.ts` | The person's model providers (any OpenAI- or Anthropic-compatible API) and the router that falls back along them. A scripted stand-in runs when none is set up |
+| Browser | `src/browser/browser.ts`, `src/agent/tools/browser.ts` | A real Chromium the Stars drive through Playwright, with a persistent profile and a live view |
 
 ## Stars
 
@@ -60,7 +61,7 @@ plus its own**. `remember` saves to shared memory unless the Star picks
 
 | Tool | Where | What happens |
 | --- | --- | --- |
-| `ask_star` | tasks | Creates a one-off task for the other Star, marked `requestedBy` the asker. The asking task goes to `blocked` ("Waiting on Scout") and leaves the queue. When the other Star finishes, its outcome becomes the result of the call and the asking task carries on. Chains go at most 3 deep; a Star can't ask itself |
+| `ask_star` | tasks | Creates a one-off task for the other Star, marked `requestedBy` the asker. The asking task goes to `blocked` ("Waiting on Scout") and leaves the queue. When the other Star finishes, its outcome becomes the result of the call and the asking task carries on. Chains go at most 3 deep; a Star can't ask itself. If the asking task ends first (stopped, failed, or its Star removed), the request is stopped too, along with anything it asked for in turn |
 | `hand_off` | chat and tasks | Gives work (one-off, recurring or watch) to the other Star as its own task. The giver doesn't wait. When a one-off hand-off ends, the giver gets a reply in its inbox |
 | `message_star` | chat and tasks | A heads-up, no reply |
 | `list_stars` | chat and tasks | The roster with roles and states |
@@ -86,6 +87,86 @@ person's own rules and approvals decide what may happen.
 - Removing a Star stops its unfinished tasks (they stay as history), expires
   its pending approvals, deletes its private memory, its own rules and its
   chats, and tells any Star that was waiting on it.
+
+## Models: any provider, with fallback
+
+The person adds as many providers as they like. Each is one model at one
+API:
+
+- **OpenAI-compatible** (`kind: "openai"`): anything that speaks Chat
+  Completions. That includes OpenRouter, Groq, Gemini's OpenAI endpoint,
+  Mistral, Cerebras, GitHub Models, Together, DeepSeek, OpenAI, and local
+  Ollama or LM Studio. The base URL, key (optional for local servers) and
+  model are all up to the person.
+- **Anthropic-compatible** (`kind: "anthropic"`): Anthropic's API, or any
+  server that speaks the Messages format. Anthropic's own API gets adaptive
+  thinking, effort, caching and server-side web search. Other servers get a
+  plain request.
+- `ANTHROPIC_API_KEY` in the server's environment appears as a built-in
+  provider. It can be turned off, but not edited or removed.
+
+**The chain.** There is a global order (`PUT /providers/order`), and each
+Star can have its own (`Star.providerIds`; `null` uses the global order). A
+Star with its own chain uses only that chain. For every model call the router
+tries the providers in order:
+
+| What went wrong | What happens to that provider | Then |
+| --- | --- | --- |
+| Rate limit (429) | Skipped until `Retry-After`, or 1, 2, 4… minutes, at most 15 | Next provider |
+| Quota or credits used up (402, "quota", "insufficient") | Skipped for an hour | Next |
+| Bad key (401, 403), unknown model | Marked `failing` and skipped for six hours, or until it's edited | Next |
+| Server error, network error, timeout (180 s) | Skipped for 30 s, doubling up to 10 min | Next |
+| Any other 400 (e.g. the model doesn't do tools) | Not benched | Next |
+
+When every provider is cooling down, the one that recovers soonest is tried
+anyway. When every provider fails, the call fails with the reasons ("No
+model could answer. Groq: 429 … | OpenRouter: …"). A task goes offline and
+retries; a chat reply shows the error.
+
+Tool use works the same across providers. Sky keeps one history in the
+Anthropic format and translates it for OpenAI-style servers (tools become
+functions, results become `tool` messages, ids are made safe). Claude-only
+blocks such as thinking and server web search are dropped before the history
+goes to another provider, so a run can switch providers between turns. If a
+provider fails partway through a streamed reply, the next one's answer starts
+on a new line under it.
+
+Health is tracked per provider (`health.state`: `unknown`, `ok`, `cooling`,
+`failing`, plus the last error and latency) and sent live as
+`provider.updated`.
+
+## The browser
+
+Stars browse in a real Chromium, driven by Playwright. It is not a page
+fetcher.
+
+- **One browser, one tab per Star.** The browser starts on first use. It
+  uses a persistent profile (`DATA_DIR/browser-profile`), so cookies and
+  sign-ins survive restarts and are shared by every Star.
+- **Tools.** `browser_open`, `browser_search` (DuckDuckGo), `browser_snapshot`,
+  `browser_click`, `browser_type`, `browser_press`, `browser_scroll` and
+  `browser_back`. Each returns the page's text and a numbered list of links,
+  buttons and fields (`[e12] button "Place order" (submits a form)`). The
+  model acts on those refs. This works with any provider, including ones with
+  no web search of their own.
+- **Approvals.** A click is judged by what it lands on. Following a link
+  only reads. Anything that submits a form or says send, post, confirm, book
+  and so on counts as sending. Buy, pay, checkout or "place order" counts as
+  spending and always asks. Delete or remove counts as deleting. Typing with
+  `submit` counts as sending. These go through the same policy as email: the
+  Star's autonomy and rules, and the built-in money rule. The approval card
+  names the button, the site and the page.
+- **Passwords.** Stars never type into password fields. To sign in, the
+  person uses the live view (or runs the browser visibly with
+  `SKY_BROWSER_HEADLESS=0`), and the session sticks.
+- **Live view.** After each action the server takes a screenshot and sends
+  `browser.frame`. The UI can show `GET /browser/:starId/screenshot`, or put
+  `GET /browser/:starId/stream` (MJPEG, about one frame a second while
+  someone watches) straight into an `<img>`. `POST /browser/:starId/input`
+  lets the person click, type, press keys, scroll or go to a URL in that
+  Star's tab, for example to sign in.
+- **Chat.** Chat can open, search and read pages. Clicking and typing happen
+  in tasks, where approvals apply.
 
 ## A task's life
 
@@ -126,8 +207,60 @@ is lost. Pausing a single Star or a single task works the same way.
 the Star's own chat (the main chat for the main Star and the briefing).
 Messages to outside channels from other Stars start with the Star's name.
 Outside quiet hours (or when urgent) they also go to the
-channels turned on in Settings: email to yourself through Gmail, Telegram, or
-a Slack channel. Push needs a device subscription the UI doesn't collect yet.
+channels turned on in Settings: email to yourself through Gmail, Telegram, a
+Slack channel, and push to your devices (Web Push and ntfy, below). Push also
+tells you when a one-off task you gave a Star finishes, if that Star's
+`notify.whenDone` is on, and skips a Star's "can I…?" questions when its
+`notify.whenNeedsYou` is off.
+
+## Wave 1: personality, live status, skills, learning, secrets, push
+
+- **Personality.** Each Star has `personality` (its character) and
+  `replyStyle` (how replies look). Both go into its system prompt. A Star can
+  change its own with `set_personality` when the person asks in chat.
+- **Live status.** `star.activity` events carry a short phrase per Star
+  ("Thinking", "Writing", "Reading your inbox", "Browsing"…) while it chats or
+  works, and `null` when it stops. `StarView.status.activity` has the same.
+- **Skills.** Saved recipes: a name, when to use it, and steps. The prompt
+  lists each skill's name and when-to-use; a Star calls `use_skill` to read
+  the steps, `save_skill` when it works out something worth repeating, and
+  `update_skill` to improve one. The person can add, edit and delete them.
+  "Forget something" is built in (recall with ids, then `forget_memories`).
+- **Learning from corrections.** A declined approval, an approval with an
+  edited preview, a task the Star itself reports as failed, or a chat
+  message starting "no…/actually…/don't…" makes the Star ask a model (the
+  `smallProviderIds` chain if set, else its own) for one general lesson. It
+  becomes a shared memory, or a "- Lesson: …" line on the skill it's about,
+  and the Star says "Got it. I'll remember: …" in its chat with a `lessonId`
+  the UI can offer to undo. Nothing is saved when there's no general lesson.
+  With `learnFromCorrections: false`, an approval note is saved as written,
+  like before.
+- **Secrets.** The person stores values (API keys, codes) under a name. They
+  are encrypted with AES-256-GCM using `SKY_SECRET_KEY`, or a key file made
+  at `DATA_DIR/secret.key` (back it up, or the secrets can't be read). Stars
+  see only names and write `{{secret:NAME}}`; the value goes in just before
+  the tool runs, any value that comes back is replaced with `[secret:NAME]`,
+  and using a secret always asks first (high risk), whatever the autonomy.
+  Secrets only reach a task's tools that act outside Sky: chat, memory,
+  skills and Star-to-Star messages get an error instead. A secret can be
+  limited to some Stars (`starIds`).
+- **Push.** Web Push with the server's own VAPID keys (made on first use, kept
+  in the database), and ntfy (ntfy.sh or self-hosted) as a second free
+  channel: install the ntfy app and subscribe to the topic.
+
+Free-tier notes:
+
+- Web Push costs nothing and needs no account: browsers deliver it through
+  their own push services. On iPhone it works only once Sky is added to the
+  home screen (iOS 16.4 or later), so the UI needs a web app manifest and a
+  service worker.
+- ntfy.sh is free with no account; anyone who knows the topic can read it,
+  so the topic should be long and random. A self-hosted ntfy server is
+  supported through `ntfyServer`.
+- From the sandbox this was built in, outside hosts are blocked, so a real
+  delivery to Google, Mozilla or Apple push services and to ntfy.sh couldn't
+  be checked. The tests check the encrypted, VAPID-signed request web-push
+  builds for a real device key, and the ntfy request.
 
 ## Ideas
 
@@ -141,7 +274,8 @@ recent activity. Each title is offered once; dismissing it keeps it gone.
 - Content from emails, pages and documents is treated as information, never instructions.
 - Chat can't act on the world; only tasks can, and only through the policy.
 - Built-in rules can't be edited or deleted (403).
-- Tokens never leave the server.
+- Tokens never leave the server, and neither do secret values or push keys.
+- A secret is only filled into a task's outward tool, after the person approves.
 - Messages between Stars are treated like content: information, not instructions.
 - With `SKY_PASSWORD` unset the server listens only on localhost.
 
@@ -219,8 +353,129 @@ New live events:
 | `star.deleted` | `{ id }` |
 | `constellation.message` | `ConstellationMessage` |
 
-A Star's live activity comes through the existing `status` event (`starId`
-says whose); `star.updated` isn't sent for every step.
+A Star's live activity comes through `star.activity` (wave 1, below) and the
+existing `status` event (`starId` says whose); `star.updated` isn't sent for
+every step.
+
+### Model providers (for the UI to build on)
+
+```ts
+interface ModelProvider {
+  id: string; name: string;
+  kind: 'anthropic' | 'openai';
+  baseUrl: string; model: string; enabled: boolean;
+  hasKey: boolean; keyHint: string | null;   // last 4 characters; the key itself never leaves the server
+  builtIn: boolean;                          // from ANTHROPIC_API_KEY
+  health: { state: 'unknown' | 'ok' | 'cooling' | 'failing'; lastOkAt: string | null; lastError: string | null;
+            lastErrorAt: string | null; cooldownUntil: string | null; failures: number; latencyMs: number | null };
+  createdAt: string; updatedAt: string;
+}
+interface ProviderPreset { name: string; kind: 'anthropic' | 'openai'; baseUrl: string; exampleModel: string;
+                           needsKey: boolean; keyUrl: string | null; note: string }
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/providers` | `ModelProvider[]` in the global order |
+| GET | `/providers/presets` | `ProviderPreset[]`, starting points for an "Add model" form (OpenRouter, Groq, Gemini, Ollama…) |
+| POST | `/providers` | `{ name, kind, baseUrl, model, apiKey?, enabled? }` → `ModelProvider` (added at the end of the order) |
+| GET | `/providers/:id` | `ModelProvider` |
+| PATCH | `/providers/:id` | Any field; `apiKey: null` removes the key. Changing key, URL, kind or model resets health. Built-in: only `name` and `enabled` (`403` otherwise) |
+| DELETE | `/providers/:id` | `204`; also removed from every Star's chain. `403` for the built-in one |
+| POST | `/providers/:id/test` | Sends "Say hello" → `{ ok, latencyMs, reply?, error? }`, and updates health |
+| GET / PUT | `/providers/order` | `{ providerIds }`. PUT reorders; ids left out keep their place after the ones named |
+
+`Star.providerIds: string[] | null` is accepted on `POST` and `PATCH /stars`.
+Events: `provider.updated` (`ModelProvider`) and `provider.deleted` (`{ id }`).
+`GET /health` now reports `brain: "models"` or `"scripted"`, the first model,
+and whether the browser is available.
+
+### Browser (for the UI to build on)
+
+```ts
+interface BrowserSession { starId: string; url: string; title: string; frameId: string | null; updatedAt: string }
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/browser` | `{ ok, running, reason, sessions: BrowserSession[] }`. `reason` explains why the browser can't start |
+| GET | `/browser/:starId/screenshot` | The latest frame, `image/jpeg`; `404` before the Star has opened anything |
+| GET | `/browser/:starId/stream` | `multipart/x-mixed-replace` MJPEG; use it as an `<img src>` |
+| POST | `/browser/:starId/input` | `{ type: 'click', x, y }` (in a 1280×800 viewport), `{ type: 'type', text }`, `{ type: 'key', key }`, `{ type: 'scroll', dy }`, `{ type: 'navigate', url }` or `{ type: 'back' }` → `BrowserSession` |
+| POST | `/browser/:starId/close` | Closes that Star's tab |
+
+Event: `browser.frame` (`BrowserSession`) whenever a new screenshot is ready.
+The connections list gains `browser` ("Browser"). It is connected by
+default, and turning it off or limiting a Star's `connectionIds` takes the
+browser tools away. The `web` connection is now called "Web search".
+
+### Wave 1 (for the UI to build on)
+
+```ts
+// Star gains:
+interface Star {
+  personality: string;            // up to 1000 characters; '' means none
+  replyStyle: string;             // up to 1000 characters
+  notify: { whenDone: boolean; whenNeedsYou: boolean };   // defaults false / true
+}
+interface Skill {
+  id: string; name: string; whenToUse: string; steps: string;
+  starId: string | null;          // null: every Star
+  source: 'you' | 'star' | 'builtIn';
+  uses: number; lastUsedAt: string | null; createdAt: string; updatedAt: string;
+}
+interface Lesson {
+  id: string; starId: string; lesson: string;
+  trigger: 'declined' | 'edited' | 'failed' | 'chat';
+  memoryId?: string; skillId?: string; taskId?: string;
+  undone: boolean; createdAt: string;
+}
+interface Secret {                // never includes the value
+  id: string; name: string; description: string;
+  starIds: string[] | null; lastUsedAt: string | null; createdAt: string; updatedAt: string;
+}
+interface PushSubscriptionInfo { id: string; label: string; createdAt: string; lastSentAt: string | null }
+// Message gains lessonId?: string ("Got it. I'll remember: …" messages; show an Undo).
+// Settings gains:
+//   learnFromCorrections: boolean (default true)
+//   smallProviderIds: string[] | null (model chain for lessons; null = the Star's own)
+//   ntfyTopic: string | null (letters, digits, - and _, up to 64)
+//   ntfyServer: string ('' = https://ntfy.sh)
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST / PATCH | `/stars`, `/stars/:id` | Also take `personality`, `replyStyle` and `notify` (a partial `notify` keeps the other switch) |
+| GET | `/skills?starId=` | `Skill[]`. With `starId`: the skills that Star can use (shared plus its own) |
+| POST | `/skills` | `{ name, whenToUse, steps, starId? }` → `Skill` (`source: 'you'`). `409` if the name is taken |
+| GET / PATCH / DELETE | `/skills/:id` | PATCH any of those fields. Built-in skills: `403` on PATCH and DELETE |
+| GET | `/lessons?starId=` | `Lesson[]`, newest first |
+| POST | `/lessons/:id/undo` | → `Lesson` with `undone: true`. Removes the memory, or the skill line it added (later edits stay) |
+| GET | `/secrets?starId=` | `{ keySource: 'env' \| 'file' \| 'memory', secrets: Secret[] }` |
+| POST | `/secrets` | `{ name, value, description?, starIds? }` → `Secret`. `400` for a bad name, `409` if taken |
+| PATCH | `/secrets/:name` | `{ value?, description?, starIds? }` (name or id) → `Secret` |
+| DELETE | `/secrets/:name` | `204` |
+| GET | `/push/key` | `{ publicKey }`: the `applicationServerKey` for `pushManager.subscribe` |
+| GET | `/push/subscriptions` | `PushSubscriptionInfo[]` (device keys stay on the server) |
+| POST | `/push/subscriptions` | `{ subscription: <PushSubscription.toJSON()>, label? }` → `PushSubscriptionInfo`. The same endpoint again replaces the old entry |
+| DELETE | `/push/subscriptions/:id` | `204` |
+| POST | `/push/test` | Sends a test → `{ delivered: string[], failed: string[] }`; `400` when there's nowhere to send |
+
+Push only goes to devices while `settings.channels.push` is on; ntfy goes
+whenever `ntfyTopic` is set. A device the push service says is gone (404/410)
+is removed. The push payload the service worker receives is JSON:
+`{ title, body, url, tag }`, where `url` is a hash route like `#/tasks/t_1`
+and `tag` groups notifications about the same task.
+
+Events:
+
+| Event | Data |
+| --- | --- |
+| `star.activity` | `{ starId, activity: string \| null, taskId: string \| null, at }` |
+| `skill.updated` | `Skill` (created or changed, including `uses`) |
+| `skill.deleted` | `{ id }` |
+| `lesson.learned` | `Lesson` |
+| `lesson.undone` | `Lesson` |
 
 ### Server-side additions
 

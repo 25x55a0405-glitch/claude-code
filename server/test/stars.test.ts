@@ -213,3 +213,28 @@ test('removing a Star stops its work, expires its approvals, and clears its own 
   assert.equal((await s.call('GET', `/conversations/${temp.conversationId}/messages`)).status, 404);
   assert.ok(!(await s.call<MemoryItem[]>('GET', '/memory')).body.some((m) => m.content === 'Temp only'));
 });
+
+test('stopping a task, or removing its Star, stops what it asked other Stars for', async () => {
+  s = await startServer();
+  const scout = (await star({ name: 'Scout', role: 'Finds places' })).body;
+  const helper = (await star({ name: 'Helper', role: 'Plans things' })).body;
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: true });
+  const childOf = async (id: string) => (await s.call<Task[]>('GET', '/tasks')).body.find((x) => x.requestedBy?.taskId === id)!;
+
+  const t = (await s.call<Task>('POST', '/tasks', { title: 'Plan dinner', description: 'Ask Scout for the best ramen in Lisbon', kind: 'one_off' })).body;
+  await s.app.runtime.idle();
+  const child = await childOf(t.id);
+  assert.equal((await task(t.id)).status, 'blocked');
+  await s.call('POST', `/tasks/${t.id}/cancel`);
+  assert.equal((await task(child.id)).status, 'done');
+  assert.match((await task(child.id)).lastOutcome!, /^No longer needed: you stopped/);
+
+  const u = (await s.call<Task>('POST', '/tasks', { title: 'Plan lunch', description: 'Ask Scout for a lunch spot', kind: 'one_off', starId: helper.id })).body;
+  await s.app.runtime.idle();
+  const child2 = await childOf(u.id);
+  await s.call('DELETE', `/stars/${helper.id}`);
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: false });
+  await s.app.runtime.idle();
+  assert.match((await task(child2.id)).lastOutcome!, /Helper was removed/);
+  assert.equal((await s.call<Task[]>('GET', `/tasks?starId=${scout.id}`)).body.filter((x) => x.lastOutcome?.startsWith('Done')).length, 0, 'Scout did no orphaned work');
+});
