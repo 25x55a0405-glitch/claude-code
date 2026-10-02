@@ -1,4 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { ApiError } from '../util.ts';
+
+const decode = (s: string) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    throw new ApiError(400, 'bad_request', 'That address isn’t valid');
+  }
+};
 
 export interface Req {
   raw: IncomingMessage;
@@ -41,7 +50,7 @@ export class Router {
       const params: Record<string, string> = {};
       const ok = r.parts.every((p, i) => {
         if (p.startsWith(':')) {
-          params[p.slice(1)] = decodeURIComponent(parts[i]);
+          params[p.slice(1)] = decode(parts[i]);
           return true;
         }
         return p === parts[i];

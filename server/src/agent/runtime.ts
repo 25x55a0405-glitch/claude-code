@@ -60,6 +60,10 @@ export class Runtime implements RuntimeHooks {
   }
 
   start() {
+    // A reply cut off by a restart would otherwise show "typing" forever.
+    for (const m of this.store.interruptedMessages()) {
+      this.store.saveMessage({ ...m, status: 'error', content: `${m.content}${m.content ? '\n\n' : ''}I was interrupted before I could finish this reply. Ask me again?` });
+    }
     // Tasks that were mid-run when the server stopped pick up where they left off.
     for (const t of this.store.listTasks(['active'])) this.enqueue(t.id);
     this.timer = setInterval(() => void this.tick(), this.config.tickMs);
@@ -204,6 +208,7 @@ export class Runtime implements RuntimeHooks {
       }
       case 'run_now':
         if (!recurringish) throw new ApiError(409, 'conflict', 'Run now is for recurring and watch tasks');
+        if (finished) throw new ApiError(409, 'conflict', 'This task has already finished');
         if (task.status === 'active' || task.status === 'waiting_approval') throw new ApiError(409, 'conflict', 'This task is already running');
         this.store.patchTask(id, { status: 'active' });
         this.enqueue(id);

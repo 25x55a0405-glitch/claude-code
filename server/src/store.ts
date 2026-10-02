@@ -249,6 +249,12 @@ export class Store {
     return rows.map((r) => JSON.parse(r.data) as Message);
   }
 
+  /** Agent replies still marked streaming, left behind if the server stopped mid-reply. */
+  interruptedMessages(): Message[] {
+    const rows = this.db.sql.prepare(`SELECT data FROM messages WHERE json_extract(data, '$.status') = 'streaming'`).all() as { data: string }[];
+    return rows.map((r) => JSON.parse(r.data) as Message);
+  }
+
   saveMessage(m: Message): Message {
     this.db.sql.prepare(
       'INSERT INTO messages (id, conversation_id, data) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data',
@@ -344,7 +350,8 @@ export class Store {
   }
 
   activity(cursor?: string | null, limit = PAGE_SIZE): Page<ActivityEvent> {
-    const before = cursor ? Number(Buffer.from(cursor, 'base64url').toString()) : Number.MAX_SAFE_INTEGER;
+    const decoded = cursor ? Buffer.from(cursor, 'base64url').toString() : null;
+    const before = decoded === null ? Number.MAX_SAFE_INTEGER : /^[1-9]\d*$/.test(decoded) ? Number(decoded) : NaN;
     if (!Number.isFinite(before)) throw new ApiError(400, 'bad_request', 'That page cursor is not valid');
     const rows = this.db.sql.prepare('SELECT seq, data FROM activity WHERE seq < ? ORDER BY seq DESC LIMIT ?')
       .all(before, limit + 1) as { seq: number; data: string }[];

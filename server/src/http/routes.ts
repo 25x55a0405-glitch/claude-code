@@ -126,7 +126,8 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   // ---- settings ----
   r.get('/settings', () => store.settings());
   r.patch('/settings', ({ body }) => {
-    const patch = validateSettings(body ?? {});
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send the settings to change as a JSON object');
+    const patch = validateSettings(body);
     const before = store.settings();
     const next = store.updateSettings(patch);
     if (patch.agentName) store.patchConversation(store.mainConversation().id, { title: patch.agentName });

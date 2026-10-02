@@ -72,7 +72,7 @@ Until they're set, "Connect" in the app explains which variables are missing.
 ## Develop
 
 ```
-npm test           # 33 tests: API contract, agent behaviour, schedules, Claude request shape
+npm test           # 34 tests: API contract, agent behaviour, schedules, Claude request shape
 npm run typecheck
 npm run dev        # restarts on change
 ```

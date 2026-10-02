@@ -157,3 +157,12 @@ test('approvals list and decision validation', async () => {
   assert.equal((await s.call('POST', '/approvals/a_missing/decision', { decision: 'approve' })).status, 404);
   assert.equal((await s.call('GET', '/approvals?status=maybe')).status, 400);
 });
+
+test('bad input is a 400, not a 500 or a silent success', async () => {
+  assert.equal((await s.call('GET', '/tasks/%E0%A4%A')).status, 400);
+  assert.equal((await s.call('GET', '/activity?cursor=!!!')).status, 400);
+  for (const body of [null, [], 'x', 5]) assert.equal((await s.call('PATCH', '/settings', body)).status, 400, JSON.stringify(body));
+  const t = (await s.call<Task>('POST', '/tasks', { title: 'Daily', description: '', kind: 'recurring', schedule: 'every day at 9:00' })).body;
+  await s.call('POST', `/tasks/${t.id}/cancel`);
+  assert.equal((await s.call('POST', `/tasks/${t.id}/run_now`)).status, 409);
+});
