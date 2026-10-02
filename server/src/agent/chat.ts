@@ -4,7 +4,7 @@ import { firstLine, iso, uid } from '../util.ts';
 import type { AgentDeps } from './deps.ts';
 import { errorResult, executeTool } from './execute.ts';
 import { contextMemory } from './memory.ts';
-import { contextNote, systemPrompt } from './prompt.ts';
+import { contextNote, systemPrompt, takeInbox } from './prompt.ts';
 import { availableTools, findTool, toSpec } from './tools/index.ts';
 import { validateInput, type ToolContext } from './tools/types.ts';
 
@@ -53,16 +53,18 @@ export class ChatAgent {
     const settings = store.settings();
     const messages = this.history(conversationId);
     if (!messages.length || messages[messages.length - 1].role !== 'user') return;
+    const conv = store.getConversation(conversationId);
+    const star = (conv.starId && store.findStar(conv.starId)) || store.mainStar();
 
     // Volatile context rides on the newest user turn so the cached prefix stays intact.
     const last = messages[messages.length - 1];
-    const memory = contextMemory(store.listMemory(), String(last.content));
-    messages[messages.length - 1] = { role: 'user', content: `${contextNote(settings, memory)}\n\n${last.content}` };
+    const memory = contextMemory(store.listMemory(star.id), String(last.content));
+    messages[messages.length - 1] = { role: 'user', content: `${contextNote(settings, memory, takeInbox(store, star.id))}\n\n${last.content}` };
 
-    const reply: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming' };
+    const reply: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', starId: star.id };
     store.saveMessage(reply);
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, conversationId, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, conversationId, touchedTasks: new Set(),
       source: `Chat on ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: settings.timezone })}`,
     };
     const emit = (delta: string) => {
@@ -72,11 +74,11 @@ export class ChatAgent {
     };
 
     try {
-      const tools = availableTools('chat', providers).filter((t) => t.effect === 'internal' || t.effect === 'read');
+      const tools = availableTools('chat', providers, star).filter((t) => t.effect === 'internal' || t.effect === 'read');
       for (let turn = 0; turn < MAX_TURNS; turn++) {
         if (turn > 0 && reply.content && !reply.content.endsWith('\n')) emit('\n\n');
         const res = await brain.turn({
-          system: systemPrompt(store, providers, 'chat'),
+          system: systemPrompt(store, providers, 'chat', star),
           messages,
           tools: tools.map(toSpec),
           web: providers.isUsable('web') && brain.name === 'claude',

@@ -131,7 +131,7 @@ export function nextRun(schedule: Schedule, tz: string, after: Date = new Date()
 
 const fmt = (m: number) => `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
 
-/** Plain-English rendering, used in task steps so people can see how Skys read their schedule. */
+/** Plain-English rendering, used in task steps so people can see how Sky read their schedule. */
 export function describeSchedule(s: Schedule): string {
   if (s.type === 'interval') {
     const every = s.minutes % 1440 === 0 ? `${s.minutes / 1440} day` : s.minutes % 60 === 0 ? `${s.minutes / 60} hour` : `${s.minutes} minute`;

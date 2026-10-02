@@ -38,7 +38,7 @@ const OAUTH: Record<string, OAuthSpec> = {
 export class ConnectionError extends Error {}
 
 /**
- * Connecting, authorizing and calling the apps Skys works with. OAuth
+ * Connecting, authorizing and calling the apps Sky's Stars work with. OAuth
  * providers need client credentials in the environment (see server/README.md);
  * GitHub can also use a personal token and Telegram a bot token.
  */
@@ -76,7 +76,7 @@ export class Providers {
     }
     if (id === 'telegram') {
       const tg = this.config.providers.telegram;
-      if (!tg) throw new ApiError(400, 'not_configured', 'Telegram isn’t set up on the server yet. Add SKYS_TELEGRAM_BOT_TOKEN and SKYS_TELEGRAM_CHAT_ID.');
+      if (!tg) throw new ApiError(400, 'not_configured', 'Telegram isn’t set up on the server yet. Add SKY_TELEGRAM_BOT_TOKEN and SKY_TELEGRAM_CHAT_ID.');
       this.store.db.setPrivate('connection', id, { accessToken: tg.botToken, extra: { chatId: tg.chatId } } satisfies Credentials);
       return { authorizeUrl: null, connection: this.markConnected(id) };
     }

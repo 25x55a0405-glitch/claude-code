@@ -1,13 +1,13 @@
 import type { Config } from '../../config.ts';
 import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
-import type { CreateTaskInput, MessageCard, Risk, Task, TaskCommand } from '../../types.ts';
+import type { CreateTaskInput, MessageCard, Risk, Star, Task, TaskCommand } from '../../types.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
  * What a tool does to the world. The policy engine decides from this (plus
  * autonomy, rules and connection access) whether a call needs an approval.
- *  - internal: Skys' own bookkeeping (memory, progress, its own tasks)
+ *  - internal: a Star's own bookkeeping (memory, progress, tasks, talking to other Stars)
  *  - read: looks, never changes anything
  *  - write: changes something that can be undone (a draft, a label, a page edit)
  *  - send: reaches other people (email, invites, posts)
@@ -17,9 +17,13 @@ export type Effect = 'internal' | 'read' | 'write' | 'send' | 'delete' | 'spend'
 
 /** The parts of the runtime a tool may call back into. */
 export interface RuntimeHooks {
-  createTask(input: CreateTaskInput, origin: string): Task;
+  /** `input.starId` picks the Star that owns it (the main Star by default). */
+  createTask(input: CreateTaskInput, origin: string, requestedBy?: Task['requestedBy']): Task;
   commandTask(id: string, command: TaskCommand): Task;
-  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[] }): Promise<string>;
+  /** Posts to the Star's own chat (the main chat for the main Star) and the person's channels. */
+  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string }): Promise<string>;
+  /** A task another Star asked for has ended: answer the Star that asked, and wake its task if it was waiting. */
+  starAnswered(task: Task, answer: string, failed: boolean): void;
   /** When a recurring or watch task should next run. */
   nextRunAt(task: Task, after: Date): string | undefined;
 }
@@ -29,6 +33,8 @@ export interface ToolContext {
   config: Config;
   providers: Providers;
   runtime: RuntimeHooks;
+  /** The Star doing the work. */
+  star: Star;
   /** Set when running inside a task. */
   task?: Task;
   /** Set when replying in a chat. */

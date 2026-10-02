@@ -5,18 +5,23 @@ import { bool, num, schema, str, type ToolDef } from './types.ts';
 
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 'style'];
 
-export const remember: ToolDef<{ category: MemoryCategory; content: string }> = {
+export const remember: ToolDef<{ category: MemoryCategory; content: string; scope?: 'shared' | 'mine' }> = {
   name: 'remember',
   description: 'Save something durable about the person (a preference, fact, person, goal or writing style) so you can use it later. '
-    + 'Use it when they tell you something worth keeping or correct you. Keep it to one short sentence. Do not save secrets.',
-  input_schema: schema({ category: str('Kind of memory', { enum: CATEGORIES }), content: str('The memory, one sentence') }, ['category', 'content']),
+    + 'Use it when they tell you something worth keeping or correct you. Keep it to one short sentence. Do not save secrets. '
+    + 'Memories are shared with every Star unless scope is "mine", for things only useful to your own role.',
+  input_schema: schema({
+    category: str('Kind of memory', { enum: CATEGORIES }),
+    content: str('The memory, one sentence'),
+    scope: str('shared (default) or mine', { enum: ['shared', 'mine'] }),
+  }, ['category', 'content']),
   effect: 'internal',
   label: (i) => `Remembered: ${i.content}`,
   async run(i, ctx) {
-    const dupe = ctx.store.listMemory().find((m) => m.content.toLowerCase() === i.content.toLowerCase());
+    const dupe = ctx.store.listMemory(ctx.star.id).find((m) => m.content.toLowerCase() === i.content.toLowerCase());
     if (dupe) return 'Already remembered.';
-    ctx.store.addMemory(i.category, i.content, ctx.source, true, ctx.task?.id);
-    return 'Saved to memory.';
+    ctx.store.addMemory(i.category, i.content, ctx.source, true, ctx.task?.id, i.scope === 'mine' ? ctx.star.id : null);
+    return i.scope === 'mine' ? 'Saved to your own memory.' : 'Saved to shared memory.';
   },
 };
 
@@ -27,7 +32,7 @@ export const recall: ToolDef<{ query: string }> = {
   effect: 'internal',
   label: (i) => `Checked memory for “${i.query}”`,
   async run(i, ctx) {
-    const hits = relevantMemory(ctx.store.listMemory(), i.query, 10);
+    const hits = relevantMemory(ctx.store.listMemory(ctx.star.id), i.query, 10);
     return hits.length ? hits.map((m) => `- [${m.category}] ${m.content}`).join('\n') : 'Nothing remembered about that.';
   },
 };
@@ -53,7 +58,7 @@ export const notifyUser: ToolDef<{ message: string; urgent?: boolean }> = {
   effect: 'internal',
   label: (i) => `Told you: ${firstLine(i.message, 80)}`,
   async run(i, ctx) {
-    return ctx.runtime.notify(i.message, { urgent: i.urgent, taskId: ctx.task?.id });
+    return ctx.runtime.notify(i.message, { urgent: i.urgent, taskId: ctx.task?.id, starId: ctx.star.id });
   },
 };
 
@@ -85,7 +90,7 @@ export const createTask: ToolDef<{ title: string; description: string; kind: Tas
   scope: 'chat',
   label: (i) => `Created task: ${i.title}`,
   async run(i, ctx) {
-    const t = ctx.runtime.createTask({ title: i.title, description: i.description, kind: i.kind, schedule: i.schedule }, ctx.source);
+    const t = ctx.runtime.createTask({ title: i.title, description: i.description, kind: i.kind, schedule: i.schedule, starId: ctx.star.id }, ctx.source);
     ctx.touchedTasks.add(t.id);
     return `Created task ${t.id} (${t.status}${t.nextRunAt ? `, next run ${t.nextRunAt}` : ''}).`;
   },
@@ -93,15 +98,16 @@ export const createTask: ToolDef<{ title: string; description: string; kind: Tas
 
 export const listTasks: ToolDef<{ include_finished?: boolean }> = {
   name: 'list_tasks',
-  description: 'List the tasks you are responsible for, with status and latest outcome.',
+  description: 'List tasks with status and latest outcome. You see your own tasks; the main Star sees every Star’s.',
   input_schema: schema({ include_finished: bool('Also list done and failed tasks') }),
   effect: 'internal',
   scope: 'chat',
   label: () => 'Checked tasks',
   async run(i, ctx) {
-    const tasks = ctx.store.listTasks().filter((t) => i.include_finished || !['done', 'failed'].includes(t.status));
+    const tasks = ctx.store.listTasks(undefined, ctx.star.main ? undefined : ctx.star.id).filter((t) => i.include_finished || !['done', 'failed'].includes(t.status));
     if (!tasks.length) return 'No tasks.';
-    return tasks.map((t) => `- ${t.id} "${t.title}" [${t.kind}, ${t.status}]${t.schedule ? ` schedule: ${t.schedule}` : ''}${t.lastOutcome ? ` latest: ${t.lastOutcome}` : ''}`).join('\n');
+    const owner = (t: { starId?: string }) => ctx.star.main ? ` (${ctx.store.findStar(ctx.store.starIdOf(t))?.name ?? 'removed Star'})` : '';
+    return tasks.map((t) => `- ${t.id} "${t.title}"${owner(t)} [${t.kind}, ${t.status}]${t.schedule ? ` schedule: ${t.schedule}` : ''}${t.lastOutcome ? ` latest: ${t.lastOutcome}` : ''}`).join('\n');
   },
 };
 

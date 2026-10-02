@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { loadConfig, type Config } from '../src/config.ts';
 import { createApp, type App } from '../src/main.ts';
-import type { LiveEvent } from '../src/types.ts';
+import type { ServerEvent as LiveEvent } from '../src/types.ts';
 
 export interface TestServer {
   app: App;
@@ -14,7 +14,7 @@ export interface TestServer {
 
 /** Starts a server on a random port with an in-memory database and the scripted brain. */
 export async function startServer(overrides: Partial<Config> = {}, env: NodeJS.ProcessEnv = {}): Promise<TestServer> {
-  const config = loadConfig({ SKYS_USER_NAME: 'd', ...env }, { dbPath: ':memory:', brain: 'scripted', tickMs: 60_000, webDist: '/nonexistent', ...overrides });
+  const config = loadConfig({ SKY_USER_NAME: 'd', ...env }, { dbPath: ':memory:', brain: 'scripted', tickMs: 60_000, webDist: '/nonexistent', ...overrides });
   const app = createApp(config);
   app.store.updateSettings({ timezone: 'UTC', briefingTime: null, quietHours: { enabled: false, start: '22:00', end: '07:00' } });
   await new Promise<void>((r) => app.server.listen(0, '127.0.0.1', () => r()));

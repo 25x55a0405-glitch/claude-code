@@ -2,7 +2,7 @@ import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages
 import type { Config } from '../config.ts';
 import type { Providers } from '../connections/providers.ts';
 import type { Store } from '../store.ts';
-import type { Approval, ApprovalDecision, CreateTaskInput, MessageCard, Task, TaskCommand } from '../types.ts';
+import type { Approval, ApprovalDecision, CreateTaskInput, MessageCard, Star, Task, TaskCommand } from '../types.ts';
 import { ApiError, badRequest, firstLine, iso, uid } from '../util.ts';
 import { generateBriefing } from './briefing.ts';
 import { refreshIdeas } from './ideas.ts';
@@ -21,13 +21,15 @@ import type { RuntimeHooks, ToolContext } from './tools/types.ts';
 const WATCH_DEFAULT = 'every 3 hours';
 
 /**
- * The always-on part of Skys. A clock ticks every few seconds and:
+ * The always-on part of Sky. A clock ticks every few seconds and:
  *  - starts scheduled tasks that are due and queues active ones
  *  - expires approvals nobody answered
  *  - prepares the daily briefing at the person's briefing time
  *  - does a round of proactive research when things are quiet
- * Task runs go through one queue, one at a time, so the orb always shows the
- * single thing Skys is doing. Chat replies don't wait for the queue.
+ * Task runs from every Star go through one queue, one at a time, so the orb
+ * always shows the single thing being done and Stars never race each other
+ * over the same apps. A Star waiting on another (ask_star) leaves the queue
+ * until it's answered. Chat replies don't wait for the queue.
  */
 export class Runtime implements RuntimeHooks {
   store: Store;
@@ -89,6 +91,7 @@ export class Runtime implements RuntimeHooks {
     this.expireApprovals(now);
     if (this.store.isPaused()) return;
     for (const t of this.store.listTasks(['scheduled'])) {
+      if (this.store.isStarPaused(this.store.starIdOf(t))) continue;
       if (t.nextRunAt && t.nextRunAt <= now.toISOString()) {
         this.store.patchTask(t.id, { status: 'active' });
         this.enqueue(t.id);
@@ -102,7 +105,7 @@ export class Runtime implements RuntimeHooks {
 
   private ideasBusy = false;
 
-  /** New ideas at most every few hours, from what's connected and what Skys knows. */
+  /** New ideas at most every few hours, from what's connected and what Sky knows. */
   private async maybeIdeas() {
     const last = this.store.db.getKv<number>('lastIdeas') ?? 0;
     if (this.ideasBusy || Date.now() - last < 6 * 3_600_000) return;
@@ -128,9 +131,12 @@ export class Runtime implements RuntimeHooks {
       const id = this.queue.shift()!;
       const task = this.store.findTask(id);
       if (!task || task.status !== 'active') continue;
+      // A paused Star's tasks wait; the clock queues them again once it's resumed.
+      const starId = this.store.starIdOf(task);
+      if (this.store.isStarPaused(starId)) continue;
       this.running = id;
       try {
-        const end = await this.runner.run(id, () => this.store.isPaused() || this.stopRequested.has(id));
+        const end = await this.runner.run(id, () => this.store.isStarPaused(starId) || this.stopRequested.has(id));
         if (end === 'offline') {
           this.store.setOffline(true);
           this.retryAt = Date.now() + 60_000;
@@ -156,7 +162,8 @@ export class Runtime implements RuntimeHooks {
     return nextRun(s, this.store.settings().timezone, after, task.lastRunAt ? new Date(task.lastRunAt) : undefined).toISOString();
   }
 
-  createTask(input: CreateTaskInput, origin = 'You'): Task {
+  createTask(input: CreateTaskInput, origin = 'You', requestedBy?: Task['requestedBy']): Task {
+    const star = input.starId ? this.store.getStar(input.starId) : this.store.mainStar();
     const title = input.title?.trim();
     if (!title) throw badRequest('A task needs a title');
     if (!['one_off', 'recurring', 'watch'].includes(input.kind)) throw badRequest('kind must be one_off, recurring or watch');
@@ -169,7 +176,8 @@ export class Runtime implements RuntimeHooks {
       id: uid('t'), title: firstLine(title, 120), description: input.description?.trim() ?? '', kind: input.kind,
       status: input.kind === 'recurring' ? 'scheduled' : 'active',
       ...(schedule ? { schedule } : {}),
-      createdAt: now, updatedAt: now, connectionIds: [],
+      createdAt: now, updatedAt: now, connectionIds: [], starId: star.id,
+      ...(requestedBy ? { requestedBy } : {}),
     };
     task.nextRunAt = this.nextRunAt(task, new Date());
     if (!task.nextRunAt) delete task.nextRunAt;
@@ -220,6 +228,7 @@ export class Runtime implements RuntimeHooks {
         for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === id)) this.store.setApprovalStatus(a.id, 'expired');
         this.store.patchTask(id, { status: 'done', lastOutcome: 'Stopped by you' });
         this.store.setActivity(null);
+        if (task.kind === 'one_off' && task.requestedBy) this.starAnswered(task, 'The person stopped this before it finished.', true);
         break;
     }
     this.store.addStep(id, { kind: 'note', summary: note });
@@ -244,11 +253,69 @@ export class Runtime implements RuntimeHooks {
 
   private afterDecision(a: Approval, decision: ApprovalDecision | 'expired') {
     if (!this.runner.recordDecision(a, decision) || !a.taskId) return;
-    const task = this.store.findTask(a.taskId);
-    if (task?.status === 'waiting_approval') {
+    this.wake(a.taskId);
+  }
+
+  /** Puts a task that was waiting on answers back in the queue. */
+  private wake(taskId: string) {
+    const task = this.store.findTask(taskId);
+    if (task?.status === 'waiting_approval' || task?.status === 'blocked') {
       this.store.patchTask(task.id, { status: 'active' });
       this.enqueue(task.id);
     }
+  }
+
+  // ---- stars ---------------------------------------------------------------
+
+  /**
+   * A task another Star asked for has ended. The asking Star hears back as a
+   * constellation reply; if its task was waiting on this (ask_star), the
+   * answer becomes that call's result and the task carries on.
+   */
+  starAnswered(task: Task, answer: string, failed: boolean) {
+    const req = task.requestedBy;
+    if (!req) return;
+    const allIn = req.taskId ? this.runner.recordReply(req.taskId, task.id, answer, failed) : null;
+    this.store.sendTeamMessage({
+      fromStarId: this.store.starIdOf(task), toStarId: req.starId, kind: 'reply',
+      content: `${failed ? 'Couldn’t finish' : 'Finished'} “${firstLine(task.title, 60)}”: ${answer}`, taskId: task.id,
+      // An ask_star answer reaches the asking task directly, so it isn't also left in the inbox.
+      read: allIn !== null,
+    });
+    if (allIn && req.taskId) this.wake(req.taskId);
+  }
+
+  createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
+    return this.store.createStar(input);
+  }
+
+  /** Pauses one Star: its running task stops at the next step and nothing of its starts until it's resumed. */
+  setStarPaused(id: string, paused: boolean): Star {
+    const star = this.store.getStar(id);
+    if (star.paused === paused) return star;
+    if (paused && this.running) {
+      const t = this.store.findTask(this.running);
+      if (t && this.store.starIdOf(t) === id) this.stopRequested.add(t.id);
+    }
+    const next = this.store.patchStar(id, { paused });
+    this.store.log('message', `${paused ? 'Paused' : 'Resumed'} ${star.name}`, undefined, id);
+    if (!paused) void this.tick();
+    return next;
+  }
+
+  /** Removes a Star. Its unfinished tasks stop, its approvals expire, and Stars waiting on it get told. */
+  deleteStar(id: string) {
+    const star = this.store.getStar(id);
+    if (star.main) throw new ApiError(403, 'forbidden', 'The main Star can’t be removed');
+    for (const t of this.store.listTasks(['active', 'scheduled', 'waiting_approval', 'blocked', 'paused'], id)) {
+      if (this.running === t.id) this.stopRequested.add(t.id);
+      this.runner.discard(t.id);
+      for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === t.id)) this.store.setApprovalStatus(a.id, 'expired');
+      this.store.patchTask(t.id, { status: 'done', lastOutcome: `Stopped: ${star.name} was removed` });
+      this.store.addStep(t.id, { kind: 'note', summary: `Stopped because ${star.name} was removed` });
+      if (t.kind === 'one_off' && t.requestedBy) this.starAnswered(t, `${star.name} was removed before finishing this.`, true);
+    }
+    this.store.removeStar(id);
   }
 
   private expireApprovals(now: Date) {
@@ -279,15 +346,18 @@ export class Runtime implements RuntimeHooks {
   }
 
   /**
-   * Skys reaching out on its own: a proactive message in the main chat and,
-   * outside quiet hours, the person's other channels.
+   * A Star reaching out on its own: a proactive message in its own chat (the
+   * main chat for the main Star) and, outside quiet hours, the person's other
+   * channels, signed with the Star's name when it isn't the main one.
    */
-  async notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[] } = {}): Promise<string> {
+  async notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string } = {}): Promise<string> {
     const settings = this.store.settings();
     const delivered: string[] = ['the app'];
     const cards = opts.cards ?? (opts.taskId ? [{ kind: 'task' as const, taskId: opts.taskId }] : []);
-    this.store.postAgentMessage(this.store.mainConversation().id, message, { proactive: true, cards });
-    this.store.log('message', `Told you: ${firstLine(message, 120)}`, opts.taskId);
+    const star = (opts.starId && this.store.findStar(opts.starId)) || this.store.mainStar();
+    this.store.postAgentMessage(star.conversationId, message, { proactive: true, cards });
+    this.store.log('message', `Told you: ${firstLine(message, 120)}`, opts.taskId, star.id);
+    if (!star.main) message = `${star.name}: ${message}`;
 
     if (this.inQuietHours() && !opts.urgent) return 'Posted in the app. Other channels are held during quiet hours.';
     const { channels } = settings;
@@ -298,8 +368,9 @@ export class Runtime implements RuntimeHooks {
     if (channels.email && this.providers.isUsable('gmail')) {
       attempts.push(this.emailSelf(message).then(() => { delivered.push('email'); }));
     }
-    if (channels.slack && this.providers.isUsable('slack') && process.env.SKYS_SLACK_NOTIFY_CHANNEL) {
-      attempts.push(this.providers.api('slack', 'https://slack.com/api/chat.postMessage', { method: 'POST', body: { channel: process.env.SKYS_SLACK_NOTIFY_CHANNEL, text: message } })
+    const slackChannel = process.env.SKY_SLACK_NOTIFY_CHANNEL ?? process.env.SKYS_SLACK_NOTIFY_CHANNEL;
+    if (channels.slack && this.providers.isUsable('slack') && slackChannel) {
+      attempts.push(this.providers.api('slack', 'https://slack.com/api/chat.postMessage', { method: 'POST', body: { channel: slackChannel, text: message } })
         .then(() => { delivered.push('Slack'); }));
     }
     const results = await Promise.allSettled(attempts);
@@ -378,7 +449,7 @@ export class Runtime implements RuntimeHooks {
       content: `${contextNote(this.store.settings(), [])}\n\nTheir goals and interests:\n${formatMemory(this.store.listMemory().filter((m) => interests.includes(m.content)))}`
         + `${recent.length ? `\n\nYou already looked into these this week, so find something else:\n${recent.join('\n')}` : ''}`,
     }];
-    const ctx: ToolContext = { store: this.store, config: this.config, providers: this.providers, runtime: this, source: 'Proactive research', touchedTasks: new Set() };
+    const ctx: ToolContext = { store: this.store, config: this.config, providers: this.providers, runtime: this, star: this.store.mainStar(), source: 'Proactive research', touchedTasks: new Set() };
     const deps: AgentDeps = { store: this.store, config: this.config, brain: this.brain, providers: this.providers, policy: this.policy, hooks: this };
     let text = '';
     for (let i = 0; i < 6; i++) {

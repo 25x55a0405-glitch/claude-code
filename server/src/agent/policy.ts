@@ -1,5 +1,5 @@
 import type { Store } from '../store.ts';
-import type { Risk, Rule } from '../types.ts';
+import type { Risk, Rule, Star } from '../types.ts';
 import type { Brain } from './brain.ts';
 import type { ApprovalPreview, Effect, ToolDef } from './tools/types.ts';
 
@@ -29,21 +29,22 @@ export class Policy {
     this.brain = brain;
   }
 
-  async check(tool: ToolDef, input: unknown, why: string): Promise<Verdict> {
+  /** Decides for one Star: its own autonomy (or the global one) and the global rules plus its own. */
+  async check(tool: ToolDef, input: unknown, why: string, star: Star = this.store.mainStar()): Promise<Verdict> {
     const effect = tool.effectFor?.(input) ?? tool.effect;
     if (effect === 'internal' || effect === 'read') return { kind: 'allow' };
-    const preview: ApprovalPreview = tool.approval?.(input) ?? { action: tool.label(input), target: tool.connection ?? 'Skys', preview: JSON.stringify(input, null, 2) };
+    const preview: ApprovalPreview = tool.approval?.(input) ?? { action: tool.label(input), target: tool.connection ?? star.name, preview: JSON.stringify(input, null, 2) };
     const text = `${preview.action} ${preview.target} ${preview.preview}`;
 
     if (tool.connection) {
       const conn = this.store.getConnection(tool.connection);
       if (conn.access === 'read') {
-        return { kind: 'forbid', reason: `${conn.name} is set to read-only, so Skys can’t ${preview.action.toLowerCase()} there. The person can allow it on the Connections screen.` };
+        return { kind: 'forbid', reason: `${conn.name} is set to read-only, so ${star.name} can’t ${preview.action.toLowerCase()} there. The person can allow it on the Connections screen.` };
       }
     }
-    const rules = this.store.listRules().filter((r) => r.enabled);
+    const rules = this.store.listRules(star.id).filter((r) => r.enabled);
     if (rules.some((r) => r.id === 'r_pw') && SECURITY.test(text)) {
-      return { kind: 'forbid', reason: 'Built-in rule: Skys never changes passwords or security settings.' };
+      return { kind: 'forbid', reason: 'Built-in rule: Stars never change passwords or security settings.' };
     }
     if (effect === 'spend' || (effect !== 'write' && MONEY.test(`${preview.action} ${preview.preview}`))) {
       return { kind: 'ask', reason: 'Built-in rule: always ask before spending money or moving funds.', risk: 'high' };
@@ -55,7 +56,7 @@ export class Policy {
     if (ruling?.verdict === 'ask') return { kind: 'ask', reason: `${why} (your rule: “${ruling.rule}”)`, risk: preview.risk ?? RISK[effect] };
     if (ruling?.verdict === 'allow' && effect !== 'delete') return { kind: 'allow' };
 
-    const autonomy = this.store.settings().autonomy;
+    const autonomy = star.autonomy ?? this.store.settings().autonomy;
     const needsOk = autonomy === 'ask' || (autonomy === 'balanced' && effect !== 'write') || (autonomy === 'autonomous' && effect === 'delete');
     return needsOk ? { kind: 'ask', reason: why, risk: preview.risk ?? RISK[effect] } : { kind: 'allow' };
   }

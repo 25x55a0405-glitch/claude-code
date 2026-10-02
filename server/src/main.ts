@@ -41,8 +41,8 @@ if (import.meta.main) {
   app.runtime.start();
   app.server.listen(config.port, config.host, () => {
     const brain = app.runtime.brain.name === 'claude' ? `Claude (${config.model})` : 'scripted offline brain (set ANTHROPIC_API_KEY for the real one)';
-    console.log(`Skys is up on http://${config.host}:${config.port}/api/v1 using ${brain}`);
-    if (!config.password && config.host !== '127.0.0.1') console.warn('Warning: no SKYS_PASSWORD set and listening beyond localhost.');
+    console.log(`Sky is up on http://${config.host}:${config.port}/api/v1 using ${brain}`);
+    if (!config.password && config.host !== '127.0.0.1') console.warn('Warning: no SKY_PASSWORD set and listening beyond localhost.');
   });
   const shutdown = async () => {
     console.log('Shutting down…');

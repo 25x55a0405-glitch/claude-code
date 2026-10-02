@@ -1,6 +1,6 @@
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** A tiny sign-in page for servers protected with SKYS_PASSWORD. */
+/** A tiny sign-in page for servers protected with SKY_PASSWORD. */
 export function loginPage(agentName: string, webUrl: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sign in to ${esc(agentName)}</title>

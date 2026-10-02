@@ -71,10 +71,17 @@ export class ScriptedBrain implements Brain {
       }
       if (used?.name === 'remember') return [this.text('Got it. I’ll remember that.')];
       if (used?.name === 'list_tasks') return [this.text(`Here’s what I’m on:\n${String(results[0].content)}`)];
+      if (used?.name === 'hand_off') return [this.text(`Done. I handed that to ${used.input.star}.`)];
       return [this.text('Done.')];
     }
     const lower = text.toLowerCase();
     const title = firstLine(text.replace(/^(please|can you|could you)\s+/i, ''), 60).replace(/^./, (c) => c.toUpperCase());
+    // "Have Scout find flights to Tokyo": pass it to the Star named Scout.
+    const handoff = /^(?:[Pp]lease\s+)?(?:[Hh]ave|[Gg]et|[Aa]sk)\s+([A-Z]\w+)\s+(?:to\s+)?(.+)$/s.exec(text.trim());
+    if (handoff && req.tools.some((t) => t.name === 'hand_off')) {
+      const work = handoff[2].replace(/^./, (c) => c.toUpperCase());
+      return [this.use('hand_off', { star: handoff[1], title: firstLine(work, 60), description: work })];
+    }
     if (/\b(remind|every|daily|weekly|each (morning|day|week)|weekdays|hourly)\b/.test(lower)) {
       return [this.use('create_task', { title, description: text, kind: 'recurring', schedule: text })];
     }
@@ -108,10 +115,17 @@ export class ScriptedBrain implements Brain {
     if (turns === 0) {
       return [this.text(`Plan: ${firstLine(description || title, 140)}`), this.use('update_progress', { summary: 'Worked through the brief', progress: 0.5 })];
     }
+    // "Ask Scout for the best ramen in Lisbon": wait on another Star's answer.
+    const ask = /\b[Aa]sk ([A-Z]\w+) (.+)$/.exec(description);
+    if (turns === 1 && ask && has('ask_star')) {
+      return [this.use('ask_star', { star: ask[1], request: ask[2].replace(/^(to|for|about)\s+/, '') })];
+    }
     if (turns === 1 && email && has('send_email')) {
-      return [this.use('send_email', { to: email, subject: title, body: `Hi,\n\n${description}\n\nSent by Skys` })];
+      return [this.use('send_email', { to: email, subject: title, body: `Hi,\n\n${description}\n\nSent by Sky` })];
     }
     const { results } = this.lastUser(req.messages);
+    const answer = results.map((r) => String(r.content)).find((c) => / replied: /.test(c));
+    if (answer && !results.some((r) => r.is_error)) return [this.use('finish_task', { outcome: `Done: ${title}. ${answer}` })];
     const declined = results.some((r) => /declined|expired/.test(String(r.content)));
     const failed = results.some((r) => r.is_error);
     const outcome = declined ? 'Skipped sending as you asked' : failed ? `Couldn’t finish: ${String(results.find((r) => r.is_error)?.content)}` : email && turns >= 2 ? `Sent the email to ${email}` : `Done: ${title}`;
