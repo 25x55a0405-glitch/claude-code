@@ -222,6 +222,15 @@ Wave 2 endpoints and events in [BACKEND.md](BACKEND.md). Every write sends
 `Content-Type: application/json`, so the server's JSON-only and same-origin
 checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
 
+## Wave 3
+
+- **Workspace** (`#/workspace/:starId`): `getWorkspace`, `listFiles`, `fileUrl`, `uploadFile` (the raw file as the body; plain text goes up as `application/octet-stream`, because the server refuses `text/plain` and form types), `deleteFile`. The terminal is read-only: it shows the Star's `Ran \`…\`` steps from its latest goals, with the output from `detail`.
+- **Browser**: `takeOverBrowser`, `handBackBrowser` (with a note). The live view follows `BrowserSession.control`, shows `controlNote` while `waitingTaskId` is set, and says so when control went back by itself after 2 quiet minutes.
+- **Teach a task**: `startRecording`, `stopRecording`, `listRecordings`, `getRecording`, `deleteRecording`, `saveRecordingAsSkill`. Recordings not yet saved are listed on Skills.
+- **Guard** (`#/guard`, linked from Permissions): `settings.guard`, and the decisions read from Activity entries with `kind: "guard"`.
+- **Password fill** (Permissions, Signing in): `settings.passwordFill` is off until the person confirms what it relaxes. `listLogins`, `createLogin`, `updateLogin`, `deleteLogin`; passwords are write-only.
+- Events: `browser.control`, `recording.updated`, `workspace.changed`.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

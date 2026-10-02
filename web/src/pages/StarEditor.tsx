@@ -210,6 +210,13 @@ export function StarEditor({ id }: { id: string }) {
               <StarAddress star={star} />
             </div>
           )}
+          {star && star.id && (
+            <a className="ws-link" href={href('workspace', star.id)}>
+              <span className="glyph"><Icon name="folder" size={16} /></span>
+              <span className="grow"><strong>Its workspace</strong><span className="t3 xs">The files it keeps and the commands it ran</span></span>
+              <Icon name="chevron" size={16} />
+            </a>
+          )}
         </div>
       </section>
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, type Skill, type SkillSource } from '../api';
+import { api, type Recording, type Skill, type SkillSource } from '../api';
 import { Icon } from '../components/Icon';
+import { TeachReview, TeachStart } from '../components/Teach';
 import { Empty, ErrorNote, PageHead, Skeleton, StarFace, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
@@ -12,11 +13,16 @@ export function Skills() {
   const list = useResource(() => api.listSkills(), []);
   const [who, setWho] = useState<string>('all');
   const [open, setOpen] = useState<Skill | 'new' | null>(null);
+  const [teaching, setTeaching] = useState(false);
+  const [reviewing, setReviewing] = useState<Recording | null>(null);
+  const recs = useResource(() => api.listRecordings(), []);
 
   useLiveEvents((e) => {
     if (e.type === 'skill.updated') list.setData((d) => d && (d.some((k) => k.id === e.data.id) ? d.map((k) => (k.id === e.data.id ? e.data : k)) : [e.data, ...d]));
     if (e.type === 'skill.deleted') list.setData((d) => d && d.filter((k) => k.id !== e.data.id));
+    if (e.type === 'recording.updated') recs.setData((d) => d && (d.some((r) => r.id === e.data.id) ? d.map((r) => (r.id === e.data.id ? e.data : r)) : [e.data, ...d]));
   });
+  const toReview = (recs.data ?? []).filter((r) => r.status === 'done' && !r.skillId && r.steps.length > 0);
 
   const many = (stars?.length ?? 0) > 1;
   const shown = (list.data ?? []).filter((k) => who === 'all' || (who === 'shared' ? k.starId === null : k.starId === who));
@@ -26,7 +32,10 @@ export function Skills() {
   return (
     <div className="page">
       <PageHead title="Skills" sub="Step-by-step recipes your Stars follow when a job comes up again. They save new ones when they work out something worth repeating, and sharpen them when you correct them.">
-        <button className="btn ink" onClick={() => setOpen('new')}><Icon name="plus" size={16} /> New skill</button>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn" onClick={() => setTeaching(true)}><Icon name="record" size={16} /> Teach by showing</button>
+          <button className="btn ink" onClick={() => setOpen('new')}><Icon name="plus" size={16} /> New skill</button>
+        </div>
       </PageHead>
 
       {many && (
@@ -37,6 +46,29 @@ export function Skills() {
             <button key={s.id} aria-pressed={who === s.id} onClick={() => setWho(s.id)}><StarFace star={s} size={20} still />{s.name}</button>
           ))}
         </div>
+      )}
+
+      {toReview.length > 0 && (
+        <section>
+          <div className="section-title">Shown, not saved yet</div>
+          <div className="panel">
+            <div className="rows">
+              {toReview.map((r) => {
+                const s = starOf(r.starId);
+                return (
+                  <div key={r.id} className="r">
+                    {s ? <StarFace star={s} size={26} still /> : <span className="glyph"><Icon name="record" size={16} /></span>}
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <h3>{r.draft?.name ?? r.title}</h3>
+                      <p className="t3 xs">You showed {s?.name ?? 'a Star'} {r.steps.length} steps · {relTime(r.endedAt ?? r.startedAt)}</p>
+                    </div>
+                    <button className="btn sm" onClick={() => setReviewing(r)}>Review</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
       )}
 
       {list.error ? <ErrorNote error={list.error} retry={list.reload} /> : !list.data ? <Skeleton h={88} n={3} /> : shown.length === 0 ? (
@@ -59,6 +91,8 @@ export function Skills() {
         </div>
       )}
 
+      {teaching && <TeachStart onClose={() => { setTeaching(false); recs.reload(); }} />}
+      {reviewing && <TeachReview recording={reviewing} star={starOf(reviewing.starId) ?? { id: reviewing.starId, name: 'your Star', avatar: { character: 'dot', color: 'sky' } }} onClose={() => { setReviewing(null); recs.reload(); }} />}
       {open && <SkillEditor skill={open === 'new' ? null : open} defaultStar={who !== 'all' && who !== 'shared' ? who : null} onClose={() => setOpen(null)} />}
     </div>
   );
@@ -67,6 +101,7 @@ export function Skills() {
 function sourceLabel(src: SkillSource, starName?: string) {
   if (src === 'builtIn') return 'Built in';
   if (src === 'star') return `Worked out by ${starName ?? 'a Star'}`;
+  if (src === 'taught') return `You showed ${starName ?? 'every Star'}`;
   return 'Written by you';
 }
 

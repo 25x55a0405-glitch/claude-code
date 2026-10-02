@@ -27,6 +27,9 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'mcp.updated',
   'mcp.deleted',
   'messaging.updated',
+  'browser.control',
+  'recording.updated',
+  'workspace.changed',
 ];
 
 export class HttpError extends Error {
@@ -122,6 +125,37 @@ export function createHttpApi(baseUrl: string): SkyApi {
     browserFrameUrl: (starId, frameId) => `${root}/browser/${encodeURIComponent(starId)}/screenshot${frameId ? `?f=${encodeURIComponent(frameId)}` : ''}`,
     browserInput: (starId, input) => call('POST', `/browser/${encodeURIComponent(starId)}/input`, input),
     closeBrowserTab: (starId) => call('POST', `/browser/${encodeURIComponent(starId)}/close`),
+    takeOverBrowser: (starId, note) => call('POST', `/browser/${encodeURIComponent(starId)}/takeover`, note ? { note } : {}),
+    handBackBrowser: (starId, note) => call('POST', `/browser/${encodeURIComponent(starId)}/handback`, note ? { note } : {}),
+
+    startRecording: (starId, input) => call('POST', `/browser/${encodeURIComponent(starId)}/record`, input ?? {}),
+    stopRecording: (starId) => call('POST', `/browser/${encodeURIComponent(starId)}/record/stop`),
+    listRecordings: (starId) => call('GET', '/recordings' + qs({ starId })),
+    getRecording: (id) => call('GET', `/recordings/${id}`),
+    deleteRecording: (id) => call('DELETE', `/recordings/${id}`),
+    saveRecordingAsSkill: (id, input) => call('POST', `/recordings/${id}/skill`, input),
+
+    getWorkspace: () => call('GET', '/workspace'),
+    listFiles: (starId, path, recursive) => call('GET', `/stars/${encodeURIComponent(starId)}/files` + qs({ path, recursive: recursive ? '1' : undefined })),
+    fileUrl: (starId, path, download) => `${root}/stars/${encodeURIComponent(starId)}/files/content` + qs({ path, download: download ? '1' : undefined }),
+    async uploadFile(starId, path, file) {
+      // The raw file is the body. The server refuses text/plain and form types (a page on another
+      // site could send those without asking), so plain text goes up as octet-stream.
+      const own = file.type && !/^(text\/plain|application\/x-www-form-urlencoded|multipart\/form-data)\b/i.test(file.type) ? file.type : 'application/octet-stream';
+      const res = await fetch(`${root}/stars/${encodeURIComponent(starId)}/files/content` + qs({ path }), { method: 'PUT', credentials: 'include', headers: { 'Content-Type': own }, body: file });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        throw new HttpError(res.status, json?.error?.code ?? 'unknown', json?.error?.message ?? res.statusText);
+      }
+      return json;
+    },
+    deleteFile: (starId, path) => call('DELETE', `/stars/${encodeURIComponent(starId)}/files` + qs({ path })),
+
+    listLogins: () => call('GET', '/logins'),
+    createLogin: (input) => call('POST', '/logins', input),
+    updateLogin: (id, patch) => call('PATCH', `/logins/${id}`, patch),
+    deleteLogin: (id) => call('DELETE', `/logins/${id}`),
 
     listSkills: (starId) => call('GET', '/skills' + qs({ starId })),
     createSkill: (input) => call('POST', '/skills', input),

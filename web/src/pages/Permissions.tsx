@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { api, type Autonomy, type Connection } from '../api';
 import { Icon } from '../components/Icon';
+import { PasswordFill } from '../components/PasswordFill';
 import { SecretsVault } from '../components/SecretsVault';
+import { loadGuardDecisions } from './Guard';
 import { ConnectionChip, ErrorNote, PageHead, Segmented, Skeleton, Switch, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
+import { href } from '../lib/router';
 
 const AUTONOMY: { value: Autonomy; title: string; body: string }[] = [
   { value: 'ask', title: 'Ask first', body: 'Researches and drafts, then checks with you before every action.' },
@@ -105,7 +108,45 @@ export function Permissions() {
         </div>
       </section>
 
+      <GuardSummary />
+
+      <PasswordFill />
+
       <SecretsVault />
     </div>
+  );
+}
+
+const GUARD_LABEL = { model: 'Quick checks and a second look', rules: 'Quick checks only', off: 'Off' };
+
+/** The guard's setting and its latest calls, linking to the full view. */
+function GuardSummary() {
+  const { settings } = useAgent();
+  const recent = useResource(() => loadGuardDecisions(3), [], ['activity']);
+  const mode = settings?.guard ?? 'model';
+  return (
+    <section>
+      <div className="section-title">Safety guard</div>
+      <div className="panel">
+        <div className="rows">
+          <a className="r" href={href('guard')}>
+            <span className="glyph"><Icon name="shield" size={16} /></span>
+            <div className="grow">
+              <h3>{GUARD_LABEL[mode]}</h3>
+              <p className="t3 xs">A second check on anything that sends, deletes, spends or runs. It can stop an action or ask you, never loosen your rules.</p>
+            </div>
+            {mode === 'off' ? <span className="chip warn">Off</span> : <span className="chip ok"><span className="dot" />On</span>}
+            <Icon name="chevron" size={16} />
+          </a>
+          {recent.data?.map((d) => (
+            <a key={d.id} className="r" href={href('guard')}>
+              <span className={`chip ${d.verdict === 'block' ? 'danger' : 'attn'}`} style={{ flex: 'none' }}>{d.verdict === 'block' ? 'Stopped' : 'Asked you'}</span>
+              <span className="grow" style={{ minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.what}</span>
+              <span className="t3 xs">{relTime(d.at)}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

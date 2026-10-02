@@ -90,7 +90,9 @@ decorative animation beyond the character.
 | **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |
 | **Memory** | What it knows about you; add, edit, pin, forget |
-| **Permissions** | Independence level, apps with look-only or look-and-act access, and rules |
+| **Permissions** | Independence level, apps with look-only or look-and-act access, rules, the safety guard, signing in with saved logins (off until confirmed), and secrets |
+| **Safety guard** | How strict the second check is, and every action it stopped or asked about, with its reason |
+| **Workspace** | Each Star's folder (browse, add, download, delete) and a read-only terminal of the commands it ran |
 | **Activity** | Everything it has done, by day |
 | **Settings** | Name, character and colour, tone, briefing, quiet hours, channels, theme |
 

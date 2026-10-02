@@ -272,7 +272,9 @@ export type ActivityKind =
   | 'approval_resolved'
   | 'memory_learned'
   | 'research'
-  | 'message';
+  | 'message'
+  | 'guard'
+  | 'browser';
 
 export interface ActivityEvent {
   id: string;
@@ -313,6 +315,10 @@ export interface Settings {
   mailPollMinutes?: number;
   /** '' | 'owner/repo' | an https URL to index.json. */
   templateGallery?: string;
+  /** The second check on outward actions. Default model. */
+  guard?: GuardMode;
+  /** Stars may sign in with saved logins. Off by default. */
+  passwordFill?: boolean;
 }
 
 // ---- Ideas -------------------------------------------------------------
@@ -475,7 +481,89 @@ export interface BrowserSession {
   /** Changes whenever a new screenshot is ready. */
   frameId: string | null;
   updatedAt: string;
+  /** Who is driving the tab. Using the live view takes it for the person; it goes back after 2 idle minutes. */
+  control?: 'star' | 'person';
+  /** While the person has it: their own note, or what the Star asked them to do. */
+  controlNote?: string | null;
+  /** A task waiting for the person to hand the browser back. */
+  waitingTaskId?: string | null;
+  /** Set while the person is recording a task to teach. */
+  recordingId?: string | null;
 }
+
+// ---- Teach a task ------------------------------------------------------
+
+/** One thing the person did while recording. Typed passwords are stored as "[password]". */
+export interface RecordedStep {
+  at: string;
+  kind: 'open' | 'click' | 'type' | 'key' | 'scroll' | 'back';
+  url: string;
+  target?: string;
+  value?: string;
+}
+
+export interface Recording {
+  id: string;
+  starId: string;
+  title: string;
+  status: 'recording' | 'done';
+  startedAt: string;
+  endedAt: string | null;
+  steps: RecordedStep[];
+  /** The skill drafted once recording stops. */
+  draft: { name: string; whenToUse: string; steps: string } | null;
+  skillId: string | null;
+}
+
+export interface SaveRecordingInput {
+  name?: string;
+  whenToUse?: string;
+  steps?: string;
+  /** Every Star gets the skill. */
+  shared?: boolean;
+  /** Plain language, like "every Monday at 9:00": also sets up a recurring task that uses it. */
+  schedule?: string;
+}
+
+// ---- Workspace ---------------------------------------------------------
+
+export interface WorkspaceFile {
+  /** Relative to the Star's folder, with forward slashes. */
+  path: string;
+  kind: 'file' | 'folder';
+  size: number;
+  updatedAt: string;
+}
+
+export interface WorkspaceStatus {
+  sandbox: 'bwrap' | 'none';
+  reason: string | null;
+  root: string;
+}
+
+// ---- Saved logins (password fill) ---------------------------------------
+
+/** The password is write-only: it goes in, and never comes back. */
+export interface SavedLogin {
+  id: string;
+  origin: string;
+  username: string;
+  starIds: string[] | null;
+  autoFill: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedLoginInput {
+  origin: string;
+  username: string;
+  password: string;
+  starIds?: string[] | null;
+  autoFill?: boolean;
+}
+
+export type GuardMode = 'model' | 'rules' | 'off';
 
 export interface BrowserState {
   ok: boolean;
@@ -496,7 +584,7 @@ export type BrowserInput =
 
 // ---- Skills, lessons, secrets, push -----------------------------------
 
-export type SkillSource = 'you' | 'star' | 'builtIn';
+export type SkillSource = 'you' | 'star' | 'builtIn' | 'taught';
 
 /** A saved recipe a Star can follow. */
 export interface Skill {
@@ -672,7 +760,10 @@ export type LiveEvent =
   | { type: 'lesson.undone'; data: Lesson }
   | { type: 'mcp.updated'; data: McpServer }
   | { type: 'mcp.deleted'; data: { id: string } }
-  | { type: 'messaging.updated'; data: MessagingStatus };
+  | { type: 'messaging.updated'; data: MessagingStatus }
+  | { type: 'browser.control'; data: BrowserSession }
+  | { type: 'recording.updated'; data: Recording }
+  | { type: 'workspace.changed'; data: { starId: string; path: string } };
 
 export type LiveEventType = LiveEvent['type'];
 

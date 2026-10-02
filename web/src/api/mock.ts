@@ -13,7 +13,7 @@ import type {
   StarView,
 } from './types';
 import * as seed from './mockData';
-import type { BrowserSession, Lesson, McpServer, MessagingStatus, ModelProvider, PushSubscriptionInfo, Secret, Skill, TriggerInput, TriggerSetup } from './types';
+import type { BrowserSession, RecordedStep, Recording, SavedLogin, WorkspaceFile, Lesson, McpServer, MessagingStatus, ModelProvider, PushSubscriptionInfo, Secret, Skill, TriggerInput, TriggerSetup } from './types';
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -77,6 +77,9 @@ export function createMockApi(): SkyApi {
     messaging: clone(seed.seedMessaging),
     mcp: clone(seed.seedMcp),
     clicks: {} as Record<string, { x: number; y: number }[]>,
+    recordings: clone(seed.seedRecordings),
+    files: clone(seed.seedFiles),
+    logins: clone(seed.seedLogins),
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
     activityTask: 't_flights' as string | null,
@@ -128,7 +131,7 @@ export function createMockApi(): SkyApi {
   const tab = (starId: string) => {
     let s = db.browser.find((b) => b.starId === starId);
     if (!s) {
-      s = { starId, url: 'about:blank', title: 'New tab', frameId: null, updatedAt: iso() };
+      s = { starId, url: 'about:blank', title: 'New tab', frameId: null, updatedAt: iso(), control: 'star', controlNote: null, waitingTaskId: null, recordingId: null };
       db.browser.push(s);
     }
     return s;
@@ -137,6 +140,53 @@ export function createMockApi(): SkyApi {
     s.frameId = uid('f');
     s.updatedAt = iso();
     emit({ type: 'browser.frame', data: clone(s) });
+  };
+
+  const idle: Record<string, boolean> = {};
+  const idleTimers: Record<string, number> = {};
+  const starName = (id: string) => db.stars.find((x) => x.id === id)?.name ?? 'The Star';
+  const setControl = (s: BrowserSession, who: 'star' | 'person', note: string | null) => {
+    const was = s.control;
+    s.control = who;
+    s.controlNote = who === 'person' ? note : null;
+    if (who === 'star') s.waitingTaskId = null;
+    s.updatedAt = iso();
+    emit({ type: 'browser.control', data: clone(s) });
+    if (was !== who) logActivity('browser', who === 'person' ? `You took over ${starName(s.starId)}’s browser${note ? `: ${note}` : ''}` : `${starName(s.starId)} has the browser back${note ? `: ${note}` : ''}`, undefined, s.starId);
+  };
+  const recordStep = (starId: string, step: Omit<RecordedStep, 'at' | 'url'>, url: string) => {
+    const r = db.recordings.find((x) => x.starId === starId && x.status === 'recording');
+    if (!r) return;
+    r.steps.push({ at: iso(), url, ...step });
+    emit({ type: 'recording.updated', data: clone(r) });
+  };
+  const finishRecording = (r: Recording) => {
+    r.status = 'done';
+    r.endedAt = iso();
+    const s = db.browser.find((b) => b.starId === r.starId);
+    if (s) s.recordingId = null;
+    const words = r.steps.map((st, i) => `${i + 1}. ${st.kind === 'open' ? `Open ${st.value ?? st.url}` : st.kind === 'click' ? `Click “${st.target ?? 'the button'}”` : st.kind === 'type' ? `Type ${st.value === '[password]' ? 'the password' : `“${st.value}”`} into ${st.target ?? 'the field'}` : st.kind === 'key' ? `Press ${st.value}` : st.kind === 'back' ? 'Go back' : 'Scroll down'}.`);
+    r.draft = r.steps.length ? { name: r.title, whenToUse: `When d asks to ${r.title.charAt(0).toLowerCase()}${r.title.slice(1)}`, steps: words.join('\n') } : null;
+    emit({ type: 'recording.updated', data: clone(r) });
+  };
+  const filesOf = (starId: string) => (db.files[starId] ??= {});
+  const listing = (starId: string, path: string, recursive: boolean): WorkspaceFile[] => {
+    const all = filesOf(starId);
+    const prefix = path ? `${path.replace(/\/$/, '')}/` : '';
+    const out = new Map<string, WorkspaceFile>();
+    for (const [p, f] of Object.entries(all)) {
+      if (!p.startsWith(prefix)) continue;
+      const rest = p.slice(prefix.length);
+      const parts = rest.split('/');
+      if (parts.length === 1 || recursive) out.set(p, { path: p, kind: 'file', size: new Blob([f.text]).size, updatedAt: f.at });
+      if (parts.length > 1) {
+        const folder = prefix + parts[0];
+        const prev = out.get(folder);
+        const size = (prev?.size ?? 0) + new Blob([f.text]).size;
+        out.set(folder, { path: folder, kind: 'folder', size, updatedAt: prev && prev.updatedAt > f.at ? prev.updatedAt : f.at });
+      }
+    }
+    return [...out.values()].sort((a, b) => (a.kind === b.kind ? a.path.localeCompare(b.path) : a.kind === 'folder' ? -1 : 1));
   };
 
   const summary = (t: TaskDetail): Task => {
@@ -163,8 +213,8 @@ export function createMockApi(): SkyApi {
     };
   };
 
-  const logActivity = (kind: ActivityEvent['kind'], text: string, taskId?: string) => {
-    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind, summary: text, taskId };
+  const logActivity = (kind: ActivityEvent['kind'], text: string, taskId?: string, starId?: string) => {
+    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind, summary: text, taskId, starId };
     db.activity.unshift(ev);
     emit({ type: 'activity', data: ev });
   };
@@ -663,6 +713,18 @@ export function createMockApi(): SkyApi {
     async browserInput(starId, input) {
       await wait(120);
       const s = tab(starId);
+      // Using the live view takes the tab; it goes back by itself after 2 quiet minutes.
+      if (s.control !== 'person') { setControl(s, 'person', null); idle[starId] = true; }
+      if (idle[starId]) {
+        window.clearTimeout(idleTimers[starId]);
+        idleTimers[starId] = window.setTimeout(() => { if (idle[starId] && s.control === 'person' && !s.recordingId) { idle[starId] = false; setControl(s, 'star', null); } }, 120_000);
+      }
+      const at = s.url;
+      if (input.type === 'navigate') recordStep(starId, { kind: 'open', value: /^[a-z]+:\/\//i.test(input.url) ? input.url : `https://${input.url}` }, at);
+      else if (input.type === 'click') recordStep(starId, { kind: 'click', target: ['Search', 'Sign in', 'Continue', 'My account', 'Add to cart'][(db.recordings.find((r) => r.status === 'recording')?.steps.length ?? 0) % 5] }, at);
+      else if (input.type === 'type') recordStep(starId, { kind: 'type', target: 'Search', value: input.text }, at);
+      else if (input.type === 'key') recordStep(starId, { kind: 'key', value: input.key }, at);
+      else if (input.type === 'back') recordStep(starId, { kind: 'back' }, at);
       if (input.type === 'navigate') {
         const url = /^[a-z]+:\/\//i.test(input.url) ? input.url : `https://${input.url}`;
         s.url = url;
@@ -680,6 +742,123 @@ export function createMockApi(): SkyApi {
       await wait();
       db.browser = db.browser.filter((b) => b.starId !== starId);
     },
+    async takeOverBrowser(starId, note) {
+      await wait(100);
+      const s = tab(starId);
+      idle[starId] = false;
+      setControl(s, 'person', note ?? null);
+      return clone(s);
+    },
+    async handBackBrowser(starId, note) {
+      await wait(100);
+      const s = db.browser.find((b) => b.starId === starId);
+      if (!s) throw new Error('That Star’s browser isn’t open.');
+      const r = db.recordings.find((x) => x.starId === starId && x.status === 'recording');
+      if (r) finishRecording(r);
+      setControl(s, 'star', note ?? null);
+      return clone(s);
+    },
+
+    async startRecording(starId, input) {
+      await wait();
+      if (db.recordings.some((r) => r.starId === starId && r.status === 'recording')) throw new Error('Already recording for this Star');
+      const s = tab(starId);
+      const r: Recording = { id: uid('rec'), starId, title: input?.title?.trim() || 'A task I showed you', status: 'recording', startedAt: iso(), endedAt: null, steps: [], draft: null, skillId: null };
+      db.recordings.unshift(r);
+      s.recordingId = r.id;
+      if (input?.url) {
+        s.url = /^[a-z]+:\/\//i.test(input.url) ? input.url : `https://${input.url}`;
+        try { s.title = new URL(s.url).hostname.replace(/^www\./, ''); } catch { s.title = s.url; }
+        r.steps.push({ at: iso(), kind: 'open', url: s.url, value: s.url });
+        db.clicks[starId] = [];
+      }
+      idle[starId] = false;
+      setControl(s, 'person', `Recording: ${r.title}`);
+      frame(s);
+      emit({ type: 'recording.updated', data: clone(r) });
+      return clone(r);
+    },
+    async stopRecording(starId) {
+      await wait(500);
+      const r = db.recordings.find((x) => x.starId === starId && x.status === 'recording');
+      if (!r) throw new Error('Nothing is recording');
+      finishRecording(r);
+      // Stopping hands the tab back, like the real server.
+      const s = db.browser.find((b) => b.starId === starId);
+      if (s) setControl(s, 'star', null);
+      return clone(r);
+    },
+    async listRecordings(starId) { await wait(); return clone(db.recordings.filter((r) => !starId || r.starId === starId)); },
+    async getRecording(id) {
+      await wait();
+      const r = db.recordings.find((x) => x.id === id);
+      if (!r) throw new Error('That recording is gone');
+      return clone(r);
+    },
+    async deleteRecording(id) { await wait(); db.recordings = db.recordings.filter((r) => r.id !== id); },
+    async saveRecordingAsSkill(id, input) {
+      await wait();
+      const r = db.recordings.find((x) => x.id === id);
+      if (!r) throw new Error('That recording is gone');
+      if (r.skillId) throw new Error('That recording is already a skill');
+      const d = r.draft ?? { name: r.title, whenToUse: '', steps: '' };
+      const k: Skill = { id: uid('sk'), name: (input.name ?? d.name).trim(), whenToUse: (input.whenToUse ?? d.whenToUse).trim(), steps: (input.steps ?? d.steps).trim(), starId: input.shared ? null : r.starId, source: 'taught', uses: 0, lastUsedAt: null, createdAt: iso(), updatedAt: iso() };
+      db.skills.unshift(k);
+      r.skillId = k.id;
+      emit({ type: 'skill.updated', data: clone(k) });
+      emit({ type: 'recording.updated', data: clone(r) });
+      const task = input.schedule?.trim() ? await api.createTask({ title: k.name, description: `Use the skill “${k.name}”.`, kind: 'recurring', schedule: input.schedule.trim(), starId: r.starId }) : null;
+      return { recording: clone(r), skill: clone(k), task };
+    },
+
+    async getWorkspace() { await wait(); return { sandbox: 'bwrap', reason: null, root: '~/.sky/workspaces' }; },
+    async listFiles(starId, path, recursive) {
+      await wait();
+      const files = listing(starId, path ?? '', !!recursive);
+      const usage = Object.values(filesOf(starId)).reduce((n, f) => n + new Blob([f.text]).size, 0);
+      return { files, usage };
+    },
+    fileUrl(starId, path) {
+      const f = filesOf(starId)[path];
+      return f ? `data:text/plain;charset=utf-8,${encodeURIComponent(f.text)}` : '';
+    },
+    async uploadFile(starId, path, file) {
+      await wait(300);
+      if (file.size > 10 * 1024 * 1024) throw new Error('Files can be up to 10 MB');
+      const text = await file.text();
+      filesOf(starId)[path] = { text, at: iso() };
+      emit({ type: 'workspace.changed', data: { starId, path } });
+      return { path, kind: 'file', size: file.size, updatedAt: iso() };
+    },
+    async deleteFile(starId, path) {
+      await wait();
+      const all = filesOf(starId);
+      for (const p of Object.keys(all)) if (p === path || p.startsWith(`${path}/`)) delete all[p];
+      emit({ type: 'workspace.changed', data: { starId, path } });
+    },
+
+    async listLogins() { await wait(); return { enabled: db.settings.passwordFill === true, logins: clone(db.logins) }; },
+    async createLogin(input) {
+      await wait();
+      let origin: string;
+      try { origin = new URL(input.origin.includes('://') ? input.origin : `https://${input.origin}`).origin; } catch { throw new Error('That isn’t a web address'); }
+      if (!origin.startsWith('https://') && !/^http:\/\/(localhost|127\.0\.0\.1)(:|$)/.test(origin)) throw new Error('Logins only work on https sites');
+      if (db.logins.some((l) => l.origin === origin && l.username === input.username)) throw new Error('That login is already saved');
+      const l: SavedLogin = { id: uid('lg'), origin, username: input.username, starIds: input.starIds ?? null, autoFill: !!input.autoFill, lastUsedAt: null, createdAt: iso(), updatedAt: iso() };
+      db.logins.push(l);
+      return clone(l);
+    },
+    async updateLogin(id, patch) {
+      await wait();
+      const l = db.logins.find((x) => x.id === id);
+      if (!l) throw new Error('That login is gone');
+      if (patch.username !== undefined) l.username = patch.username;
+      if (patch.starIds !== undefined) l.starIds = patch.starIds;
+      if (patch.autoFill !== undefined) l.autoFill = patch.autoFill;
+      l.updatedAt = iso();
+      return clone(l);
+    },
+    async deleteLogin(id) { await wait(); db.logins = db.logins.filter((l) => l.id !== id); },
 
     async listTasks(filter) {
       await wait();

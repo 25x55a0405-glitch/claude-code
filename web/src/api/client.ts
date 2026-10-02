@@ -46,6 +46,12 @@ import type {
   TriggerEvent,
   TriggerInput,
   TriggerSetup,
+  Recording,
+  SaveRecordingInput,
+  SavedLogin,
+  SavedLoginInput,
+  WorkspaceFile,
+  WorkspaceStatus,
 } from './types';
 
 /**
@@ -91,6 +97,31 @@ export interface SkyApi {
   browserFrameUrl(starId: string, frameId: string | null): string;
   browserInput(starId: string, input: BrowserInput): Promise<BrowserSession>;
   closeBrowserTab(starId: string): Promise<void>;
+  /** The person drives the tab until they hand it back (30 minutes at most). */
+  takeOverBrowser(starId: string, note?: string): Promise<BrowserSession>;
+  /** A task waiting on the browser carries on, with the note. */
+  handBackBrowser(starId: string, note?: string): Promise<BrowserSession>;
+
+  /** Takes over the tab and records what the person does, to teach a skill. */
+  startRecording(starId: string, input?: { title?: string; url?: string }): Promise<Recording>;
+  /** Ends the recording and drafts the skill. */
+  stopRecording(starId: string): Promise<Recording>;
+  listRecordings(starId?: string): Promise<Recording[]>;
+  getRecording(id: string): Promise<Recording>;
+  deleteRecording(id: string): Promise<void>;
+  saveRecordingAsSkill(id: string, input: SaveRecordingInput): Promise<{ recording: Recording; skill: Skill; task: Task | null }>;
+
+  getWorkspace(): Promise<WorkspaceStatus>;
+  listFiles(starId: string, path?: string, recursive?: boolean): Promise<{ files: WorkspaceFile[]; usage: number }>;
+  /** Where to load or download a file from. */
+  fileUrl(starId: string, path: string, download?: boolean): string;
+  uploadFile(starId: string, path: string, file: Blob): Promise<WorkspaceFile>;
+  deleteFile(starId: string, path: string): Promise<void>;
+
+  listLogins(): Promise<{ enabled: boolean; logins: SavedLogin[] }>;
+  createLogin(input: SavedLoginInput): Promise<SavedLogin>;
+  updateLogin(id: string, patch: Partial<Omit<SavedLoginInput, 'origin'>>): Promise<SavedLogin>;
+  deleteLogin(id: string): Promise<void>;
 
   /** With starId: the skills that Star can use (shared plus its own). */
   listSkills(starId?: string): Promise<Skill[]>;

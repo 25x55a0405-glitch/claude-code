@@ -17,6 +17,7 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: 'stars', label: 'Constellation', icon: 'sparkle' },
   { id: 'memory', label: 'Memory', icon: 'brain' },
   { id: 'skills', label: 'Skills', icon: 'note' },
+  { id: 'workspace', label: 'Workspace', icon: 'folder' },
   { id: 'tools', label: 'Tools', icon: 'plug' },
   { id: 'models', label: 'Models', icon: 'bolt' },
   { id: 'permissions', label: 'Permissions', icon: 'lock' },

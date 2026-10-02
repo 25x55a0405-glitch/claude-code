@@ -1,5 +1,7 @@
 import type {
   ActivityEvent,
+  Recording,
+  SavedLogin,
   Approval,
   Briefing,
   Connection,
@@ -44,6 +46,8 @@ export const seedSettings: Settings = {
   quietHours: { enabled: true, start: '22:30', end: '07:00' },
   proactiveResearch: true,
   channels: { web: true, email: true, push: true, slack: false, telegram: false },
+  guard: 'model',
+  passwordFill: false,
 };
 
 export const seedConnections: Connection[] = [
@@ -133,6 +137,9 @@ export const seedTasks: TaskDetail[] = [
       { id: 'f1', at: ago(70), kind: 'plan', summary: 'Compare 4 airlines and 2 aggregators for Oct 18 to 25' },
       { id: 'f2', at: ago(40), kind: 'tool', summary: 'Searched Google Flights and Kayak', connectionId: 'web' },
       { id: 'f3', at: ago(20), kind: 'result', summary: 'Cheapest morning option is $642 on TAP with one stop in Newark' },
+      { id: 'f4', at: ago(18), kind: 'tool', summary: 'Ran `python3 compare.py fares.csv` (exit 0)', detail: 'Read 48 fares from fares.csv\nMorning departures, at most one stop: 11\n\n  TAP       1 stop  EWR  07:40  $642\n  Iberia    1 stop  MAD  08:15  $658\n  United    nonstop      09:05  $711\n\nCheapest: TAP $642 (down 4% since yesterday)\nWrote best-fares.md' },
+      { id: 'f5', at: ago(17), kind: 'tool', summary: 'Ran `ls -la` (exit 0)', detail: 'total 24\ndrwxr-xr-x 3 sky sky 4096 .\n-rw-r--r-- 1 sky sky 1832 best-fares.md\n-rw-r--r-- 1 sky sky  912 compare.py\n-rw-r--r-- 1 sky sky 4210 fares.csv\ndrwxr-xr-x 2 sky sky 4096 notes' },
+      { id: 'f6', at: ago(16), kind: 'tool', summary: 'Ran `curl -s https://api.tap.example/fares` (exit 6)', detail: 'curl: (6) Could not resolve host: api.tap.example\n(No internet for this command. Ask with network on to reach outside.)' },
       { id: 'f4', at: ago(1), kind: 'thought', summary: 'Prices dipped 4% this week. Will keep checking before alerting.' },
     ],
   },
@@ -260,6 +267,11 @@ export const seedRules: Rule[] = [
 ];
 
 export const seedActivity: ActivityEvent[] = [
+  { id: 'e0', at: ago(0.5), kind: 'guard', summary: 'Guard asked about: Send an email (to fares-alerts@tap.example). What it’s about to send contains text that tries to give an assistant instructions, which usually comes from a page or message, not from you.', taskId: 't_flights', starId: 'star_scout' },
+  { id: 'e0b', at: ago(16), kind: 'guard', summary: 'Guard stopped: Run a command (the workspace). The command looks like deleting everything.', taskId: 't_flights', starId: 'star_scout' },
+  { id: 'e0c', at: ago(90), kind: 'browser', summary: 'Scout has the browser back: Signed in to TAP', starId: 'star_scout' },
+  { id: 'e0d', at: ago(95), kind: 'browser', summary: 'You took over Scout’s browser: Sign in to TAP Miles&Go', starId: 'star_scout' },
+  { id: 'e0e', at: ago(60 * 5), kind: 'guard', summary: 'Guard asked about: Run a command with internet access (the workspace). The command is running a script straight from the internet.', starId: 'star_post' },
   { id: 'e1', at: ago(1), kind: 'research', summary: 'Checked Lisbon fares across 6 sites', taskId: 't_flights' },
   { id: 'e2', at: ago(2), kind: 'approval_requested', summary: 'Asked to send a reply to Maya', taskId: 't_inbox' },
   { id: 'e3', at: ago(6), kind: 'task_started', summary: 'Started hourly inbox pass', taskId: 't_inbox' },
@@ -377,7 +389,41 @@ export const seedPresets: ProviderPreset[] = [
 ];
 
 export const seedBrowser: BrowserSession[] = [
-  { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1) },
+  { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1), control: 'star', controlNote: null, waitingTaskId: null, recordingId: null },
+];
+
+/** Each Star's folder, as path → text (folders are implied). */
+export const seedFiles: Record<string, Record<string, { text: string; at: string }>> = {
+  star_scout: {
+    'fares.csv': { at: ago(18), text: 'airline,stops,via,departs,price\nTAP,1,EWR,07:40,642\nIberia,1,MAD,08:15,658\nUnited,0,,09:05,711\nDelta,0,,10:30,733\n' },
+    'compare.py': { at: ago(60 * 20), text: 'import csv, sys\n\nrows = list(csv.DictReader(open(sys.argv[1])))\nmorning = [r for r in rows if r["departs"] < "12:00" and int(r["stops"]) <= 1]\nfor r in sorted(morning, key=lambda r: int(r["price"])):\n    print(f\'  {r["airline"]:<9} {r["stops"]} stop  {r["via"]:<4} {r["departs"]}  ${r["price"]}\')\n' },
+    'best-fares.md': { at: ago(18), text: '# Lisbon, Oct 18 to 25\n\n1. **TAP** $642, 1 stop in Newark, leaves 07:40\n2. **Iberia** $658, 1 stop in Madrid, leaves 08:15\n3. **United** $711, nonstop, leaves 09:05\n\nStill watching for under $600.\n' },
+    'notes/neighbourhoods.md': { at: ago(60 * 28), text: '# Where to stay\n\n- Príncipe Real: quiet, leafy, close to Bairro Alto\n- Alfama: old town, steep, lovely at night\n- Cais do Sodré: lively, by the river\n' },
+    'notes/packing.txt': { at: ago(60 * 27), text: 'Light jacket\nWalking shoes\nAdapter (type F)\n' },
+  },
+  star_post: {
+    'drafts/maya-thursday.txt': { at: ago(3), text: 'Hi Maya,\n\nThursday at 3pm works. I’ll move our review.\n\nd\n' },
+  },
+};
+
+export const seedRecordings: Recording[] = [
+  {
+    id: 'rec_tap', starId: 'star_scout', title: 'Check my TAP miles', status: 'done', startedAt: ago(96), endedAt: ago(92), skillId: null,
+    steps: [
+      { at: ago(96), kind: 'open', url: 'https://www.flytap.com/en-us', value: 'https://www.flytap.com/en-us' },
+      { at: ago(95.5), kind: 'click', url: 'https://www.flytap.com/en-us', target: 'Log in' },
+      { at: ago(95), kind: 'type', url: 'https://www.flytap.com/en-us/login', target: 'Miles&Go number', value: '{{AIRLINE_LOYALTY}}' },
+      { at: ago(94.8), kind: 'type', url: 'https://www.flytap.com/en-us/login', target: 'Password', value: '[password]' },
+      { at: ago(94.5), kind: 'key', url: 'https://www.flytap.com/en-us/login', value: 'Enter' },
+      { at: ago(93), kind: 'click', url: 'https://www.flytap.com/en-us/account', target: 'My miles' },
+      { at: ago(92.5), kind: 'scroll', url: 'https://www.flytap.com/en-us/account/miles' },
+    ],
+    draft: { name: 'Check my TAP miles', whenToUse: 'When d asks how many TAP miles they have, or before booking a TAP flight', steps: '1. Open flytap.com and choose Log in.\n2. Sign in with the saved TAP login (ask d if there isn’t one).\n3. Open My miles.\n4. Report the balance and anything expiring in the next 3 months.' },
+  },
+];
+
+export const seedLogins: SavedLogin[] = [
+  { id: 'lg_tap', origin: 'https://www.flytap.com', username: 'd@example.com', starIds: ['star_scout'], autoFill: false, lastUsedAt: null, createdAt: ago(60 * 24), updatedAt: ago(60 * 24) },
 ];
 
 export const seedSkills: Skill[] = [

@@ -72,6 +72,14 @@ export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () =>
             </div>
           )}
 
+          {star.id && (
+            <a className="ws-link" href={href('workspace', star.id)} onClick={onClose}>
+              <span className="glyph"><Icon name="folder" size={16} /></span>
+              <span className="grow"><strong>Workspace</strong><span className="t3 xs">Its files and terminal</span></span>
+              <Icon name="chevron" size={16} />
+            </a>
+          )}
+
           <div className="col">
             <Segmented label="Goals" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
             <div className="panel">
