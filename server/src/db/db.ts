@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS activity (
 );
 `;
 
-export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea' | 'star' | 'provider' | 'skill' | 'lesson' | 'secret' | 'push';
+export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea' | 'star' | 'provider' | 'skill' | 'lesson' | 'secret' | 'push' | 'mcp';
 
 export class Db {
   sql: DatabaseSync;
@@ -49,7 +49,12 @@ export class Db {
     return row ? (JSON.parse(row.value) as T) : undefined;
   }
 
+  /** Stores a value; undefined removes the key. */
   setKv(key: string, value: unknown) {
+    if (value === undefined) {
+      this.sql.prepare('DELETE FROM kv WHERE key = ?').run(key);
+      return;
+    }
     this.sql.prepare('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
       .run(key, JSON.stringify(value));
   }

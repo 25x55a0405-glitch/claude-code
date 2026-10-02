@@ -20,6 +20,8 @@ declare module '../../web/src/api/types.ts' {
   }
   interface CreateTaskInput {
     starId?: string;
+    /** Run on an event (see TaskTrigger). Needs kind "recurring"; the schedule is then optional. */
+    trigger?: unknown;
   }
   interface Approval {
     starId?: string;
@@ -55,7 +57,143 @@ declare module '../../web/src/api/types.ts' {
     ntfyTopic?: string | null;
     /** A self-hosted ntfy server instead of ntfy.sh. */
     ntfyServer?: string;
+    /** How often Sky checks Gmail for Star mail and email triggers, in minutes (2 to 60). */
+    mailPollMinutes?: number;
+    /** Where the template gallery lives: a GitHub "owner/repo", or an https URL to an index.json. Empty: built-in templates only. */
+    templateGallery?: string;
   }
+  interface Task {
+    /** Runs the task when something happens, as well as (or instead of) its schedule. */
+    trigger?: TaskTrigger;
+  }
+  interface Conversation {
+    /** A group chat: the person and these Stars (two or more). Absent for one-Star chats. */
+    starIds?: string[];
+  }
+  interface Message {
+    /** Where the person wrote this, when it wasn't the app. */
+    via?: 'telegram' | 'slack';
+  }
+}
+
+/**
+ * What starts a triggered task:
+ *  - webhook: any service POSTs to the task's secret URL
+ *  - github: a GitHub webhook to that URL, signed with the task's secret, filtered by event
+ *  - message: a message in a Slack channel or Telegram group the bot is in, containing `match`
+ *  - email: a new Gmail message matching a search
+ * What arrives is handed to the Star as content to work with, never as instructions.
+ */
+export interface TaskTrigger {
+  kind: 'webhook' | 'github' | 'message' | 'email';
+  /** github: event names like "push", "issues", "pull_request"; empty means every event. */
+  events?: string[];
+  /** message: where to listen. */
+  source?: 'slack' | 'telegram' | 'any';
+  /** message: only messages containing this text (case-insensitive); empty means every message. */
+  match?: string;
+  /** message: a Slack channel id or Telegram chat id to limit it to. */
+  channel?: string;
+  /** email: a Gmail search, like "from:alerts@bank.com subject:statement". */
+  query?: string;
+  fired: number;
+  lastFiredAt: string | null;
+}
+
+/** One thing that happened, waiting to be handled by its task. */
+export interface TriggerEvent {
+  id: string;
+  taskId: string;
+  /** Where it came from: "webhook", "github push", "Slack #general", "email". */
+  source: string;
+  /** One line for the timeline. */
+  summary: string;
+  /** What arrived, trimmed. Content to work with, not instructions. */
+  content: string;
+  at: string;
+}
+
+/** What the API returns for a task's trigger, including what to paste into the other service. */
+export interface TriggerSetup extends TaskTrigger {
+  /** webhook and github: the URL to call. */
+  url: string | null;
+  /** github: the secret to paste into the webhook's settings. */
+  secret: string | null;
+}
+
+/** A Model Context Protocol server whose tools the Stars can use. */
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  /** stdio: the command and its arguments, run on the Sky server. */
+  command: string | null;
+  args: string[];
+  /** http: the server's URL (Streamable HTTP). */
+  url: string | null;
+  /** Names of the environment variables (stdio) or headers (http) set; values stay on the server. Values may be {{secret:NAME}}. */
+  envKeys: string[];
+  headerKeys: string[];
+  enabled: boolean;
+  /** Overrides for what a tool does, which decides when it needs approval. */
+  toolEffects: Record<string, McpEffect>;
+  status: 'off' | 'connecting' | 'ready' | 'error';
+  error: string | null;
+  tools: McpToolInfo[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type McpEffect = 'read' | 'write' | 'send' | 'delete' | 'spend';
+
+export interface McpToolInfo {
+  /** The name the server uses. */
+  name: string;
+  /** The name the Stars see: mcp_<server>_<tool>. */
+  toolName: string;
+  description: string;
+  effect: McpEffect;
+}
+
+/** A shareable Star: everything but its memory, chats and secrets. */
+export interface StarTemplate {
+  format: 'sky.star';
+  version: 1;
+  name: string;
+  role: string;
+  description?: string;
+  instructions: string;
+  personality: string;
+  replyStyle: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  autonomy: Autonomy | null;
+  /** Connection ids it works with; null means every connected app. */
+  apps: string[] | null;
+  skills: { name: string; whenToUse: string; steps: string }[];
+  rules: string[];
+}
+
+/** A template on offer: built in, or from the gallery. */
+export interface TemplateEntry {
+  id: string;
+  source: 'builtIn' | 'gallery';
+  template: StarTemplate;
+  /** gallery: where it was read from. */
+  url?: string;
+}
+
+/** A messaging app the person can talk to their Stars through. */
+export interface MessagingStatus {
+  app: 'telegram' | 'slack';
+  /** off: not set up; pairing: waiting for the person's first message with the code; on: working. */
+  state: 'off' | 'pairing' | 'on' | 'error';
+  /** pairing: send this to the bot. */
+  pairCode: string | null;
+  /** telegram: a link that opens the bot with the code filled in. */
+  pairLink: string | null;
+  /** The bot's name in the app. */
+  botName: string | null;
+  error: string | null;
 }
 
 /**
@@ -86,6 +224,8 @@ export interface Star {
   replyStyle: string;
   /** When this Star pushes to your devices (Web Push and ntfy). */
   notify: { whenDone: boolean; whenNeedsYou: boolean };
+  /** MCP servers this Star may use; null means every enabled server. */
+  mcpServerIds: string[] | null;
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -104,6 +244,8 @@ export interface StarStatus {
 /** What the API returns for a Star: the record plus its live status. */
 export interface StarView extends Star {
   status: StarStatus;
+  /** The Star's own address (plus-addressing on the person's Gmail), once Gmail is connected. */
+  email: string | null;
 }
 
 export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
@@ -254,6 +396,9 @@ export type ServerEvent =
   | { type: 'skill.deleted'; data: { id: string } }
   | { type: 'lesson.learned'; data: Lesson }
   | { type: 'lesson.undone'; data: Lesson }
+  | { type: 'mcp.updated'; data: McpServer }
+  | { type: 'mcp.deleted'; data: { id: string } }
+  | { type: 'messaging.updated'; data: MessagingStatus }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
   | { type: 'constellation.message'; data: ConstellationMessage };

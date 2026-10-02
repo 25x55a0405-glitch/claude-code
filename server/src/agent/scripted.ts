@@ -34,6 +34,12 @@ export class ScriptedBrain implements Brain {
   async complete(_system: string, prompt: string): Promise<string> {
     if (prompt.startsWith('Rules the person set')) return this.ruleCheck(prompt);
     if (prompt.startsWith('A correction')) return this.lesson(prompt);
+    // The group chat router: the first Star whose role shares a word with the message, else the first listed.
+    if (prompt.startsWith('Pick who answers')) {
+      const stars = [...prompt.matchAll(/^- ([^:]+): (.*)$/gm)].map((m) => ({ name: m[1], role: m[2].toLowerCase() }));
+      const said = (/The person wrote: “([\s\S]*)”/.exec(prompt)?.[1] ?? '').toLowerCase();
+      return (stars.find((x) => (x.role.match(/[a-z]{5,}/g) ?? []).some((w) => said.includes(w))) ?? stars[0])?.name ?? '';
+    }
     return '';
   }
 
@@ -63,7 +69,11 @@ export class ScriptedBrain implements Brain {
 
   private lastUser(messages: BetaMessageParam[]) {
     const m = messages[messages.length - 1];
-    if (typeof m.content === 'string') return { text: m.content.replace(/^\[Context\][\s\S]*?\n\n/, ''), results: [] as BetaToolResultBlockParam[] };
+    // In a group chat the other Stars' words ride along as "[Name said] …"; the stand-in only acts on the person's.
+    if (typeof m.content === 'string') {
+      const text = m.content.replace(/^\[Context\][\s\S]*?\n\n/, '').split('\n\n').filter((p) => !/^\[[^\]]+ said\] /.test(p)).join('\n\n');
+      return { text, results: [] as BetaToolResultBlockParam[] };
+    }
     const results = m.content.filter((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
     return { text: '', results };
   }

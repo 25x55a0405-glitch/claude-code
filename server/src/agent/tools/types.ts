@@ -100,9 +100,11 @@ export function validateInput(tool: ClientToolSpec, input: unknown): string | nu
     if (obj[key] === undefined || obj[key] === null || obj[key] === '') return `missing required field "${key}"`;
   }
   for (const [key, value] of Object.entries(obj)) {
-    const prop = tool.input_schema.properties[key] as { type?: string; enum?: unknown[] } | undefined;
+    const prop = (tool.input_schema.properties ?? {})[key] as { type?: unknown; enum?: unknown[] } | undefined;
     if (!prop || value === undefined || value === null) continue;
     const t = prop.type;
+    // Schemas from MCP servers can be richer ("type": ["string", "null"]); those are left to the server.
+    if (t !== undefined && typeof t !== 'string') continue;
     const ok = t === 'array' ? Array.isArray(value) : t === 'integer' ? Number.isInteger(value) : !t || typeof value === t;
     if (!ok) return `"${key}" must be ${t}`;
     if (prop.enum && !prop.enum.includes(value)) return `"${key}" must be one of ${prop.enum.join(', ')}`;

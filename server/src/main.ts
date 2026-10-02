@@ -12,6 +12,11 @@ import { ModelRouter } from './models/router.ts';
 import { BrowserManager } from './browser/browser.ts';
 import { Vault } from './vault.ts';
 import { Push } from './push.ts';
+import { Triggers } from './triggers.ts';
+import { McpManager } from './mcp.ts';
+import { Messaging } from './messaging.ts';
+import { Templates } from './templates.ts';
+import { StarMail } from './mail.ts';
 
 export interface App {
   config: Config;
@@ -22,6 +27,13 @@ export interface App {
   browser: BrowserManager;
   vault: Vault;
   push: Push;
+  triggers: Triggers;
+  mcp: McpManager;
+  messaging: Messaging;
+  templates: Templates;
+  mail: StarMail;
+  /** Starts the clock, the messaging bridges, MCP servers and mail checks. */
+  start(): void;
   server: ReturnType<typeof createHttpServer>;
   close(): Promise<void>;
 }
@@ -36,11 +48,28 @@ export function createApp(config: Config, brain?: Brain): App {
   const vault = new Vault(store, config);
   // Through the providers' fetch, so tests can stand in for ntfy.
   const push = new Push(store, config, () => providers.fetch);
-  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser, { vault, push });
-  const server = createHttpServer(config, store, runtime, providers, models, browser, vault, push);
+  const triggers = new Triggers(store, config, providers);
+  const mcp = new McpManager(store, vault);
+  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser, { vault, push, triggers, mcp });
+  const messaging = new Messaging(store, config, providers, runtime, triggers);
+  runtime.messaging = messaging;
+  const mail = new StarMail(store, providers, runtime);
+  triggers.onStarMail = () => mail.check();
+  const templates = new Templates(store, providers);
+  const server = createHttpServer(config, { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail });
   return {
-    config, store, runtime, providers, models, browser, vault, push, server,
+    config, store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, server,
+    start() {
+      runtime.start();
+      messaging.start();
+      triggers.start();
+      void mcp.start();
+      void triggers.pollMail();
+    },
     async close() {
+      await messaging.stop();
+      await triggers.stop();
+      await mcp.stop();
       await runtime.stop();
       await browser.close();
       server.closeAllConnections();
@@ -53,7 +82,7 @@ export function createApp(config: Config, brain?: Brain): App {
 if (import.meta.main) {
   const config = loadConfig();
   const app = createApp(config);
-  app.runtime.start();
+  app.start();
   app.server.listen(config.port, config.host, () => {
     const chain = app.models.chain().map((p) => `${p.name} (${p.model})`);
     const brain = app.runtime.brain.name === 'scripted'

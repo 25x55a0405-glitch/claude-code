@@ -75,24 +75,36 @@ export const finishTask: ToolDef<{ outcome: string; failed?: boolean }> = {
   },
 };
 
-export const createTask: ToolDef<{ title: string; description: string; kind: TaskKind; schedule?: string }> = {
+export const createTask: ToolDef<{ title: string; description: string; kind: TaskKind; schedule?: string; trigger?: { kind: 'email' | 'message' | 'webhook'; query?: string; match?: string; source?: 'slack' | 'telegram' | 'any' } }> = {
   name: 'create_task',
   description: 'Start background work. Use one_off for something to do now, recurring for something on a schedule, '
     + 'and watch to monitor something and act on changes. Write the description as a complete brief: what to do, what good looks like, '
-    + 'and when to tell the person. Recurring and watch tasks need a plain-language schedule such as "Weekdays at 9:00" or "every 3 hours".',
+    + 'and when to tell the person. Recurring and watch tasks need a plain-language schedule such as "Weekdays at 9:00" or "every 3 hours". '
+    + 'A recurring task can instead run when something happens: give a trigger (an email matching a Gmail search, a Slack or Telegram '
+    + 'message containing some words, or a webhook, whose URL the person finds on the task).',
   input_schema: schema({
     title: str('Short title, like a to-do item'),
     description: str('Complete brief for the task'),
     kind: str('one_off, recurring or watch', { enum: ['one_off', 'recurring', 'watch'] }),
     schedule: str('Plain-language schedule for recurring and watch tasks'),
+    trigger: {
+      type: 'object', description: 'Run a recurring task when this happens, instead of (or as well as) a schedule',
+      properties: {
+        kind: str('email, message or webhook', { enum: ['email', 'message', 'webhook'] }),
+        query: str('email: a Gmail search, like "from:alerts@bank.com"'),
+        match: str('message: words the message must contain'),
+        source: str('message: slack, telegram or any', { enum: ['slack', 'telegram', 'any'] }),
+      },
+      required: ['kind'],
+    },
   }, ['title', 'description', 'kind']),
   effect: 'internal',
   scope: 'chat',
   label: (i) => `Created task: ${i.title}`,
   async run(i, ctx) {
-    const t = ctx.runtime.createTask({ title: i.title, description: i.description, kind: i.kind, schedule: i.schedule, starId: ctx.star.id }, ctx.source);
+    const t = ctx.runtime.createTask({ title: i.title, description: i.description, kind: i.trigger ? 'recurring' : i.kind, schedule: i.schedule, starId: ctx.star.id, trigger: i.trigger }, ctx.source);
     ctx.touchedTasks.add(t.id);
-    return `Created task ${t.id} (${t.status}${t.nextRunAt ? `, next run ${t.nextRunAt}` : ''}).`;
+    return `Created task ${t.id} (${t.status}${t.nextRunAt ? `, next run ${t.nextRunAt}` : ''}${t.trigger ? `, runs on its ${t.trigger.kind} trigger` : ''}).`;
   },
 };
 

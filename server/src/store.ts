@@ -7,10 +7,10 @@ import type {
   ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, ConstellationMessage, Conversation, Idea,
   Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep,
 } from './types.ts';
-import { ApiError, iso, notFound, uid } from './util.ts';
+import { ApiError, badRequest, iso, notFound, uid } from './util.ts';
 
 /** What can be set on a Star when making or editing it. */
-export type StarInput = Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify'>;
+export type StarInput = Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds'>;
 
 /** Stars saved by an older version gain the newer fields. */
 const starDefaults = (s: Star): Star => ({
@@ -19,6 +19,7 @@ const starDefaults = (s: Star): Star => ({
   personality: s.personality ?? '',
   replyStyle: s.replyStyle ?? '',
   notify: s.notify ?? { whenDone: false, whenNeedsYou: true },
+  mcpServerIds: s.mcpServerIds ?? null,
 });
 
 const pick = <T extends object, K extends keyof T>(o: T | undefined, keys: K[]): Partial<T> =>
@@ -62,7 +63,7 @@ export class Store {
       const star = this.db.put<Star>('star', {
         id: uid('star'), name: s.agentName, role: 'Your main Star: talks with you, runs your tasks and coordinates the others',
         instructions: '', avatar: s.avatar, main: true, autonomy: null, connectionIds: null, providerIds: null, paused: false,
-        personality: '', replyStyle: '', notify: { whenDone: false, whenNeedsYou: true },
+        personality: '', replyStyle: '', notify: { whenDone: false, whenNeedsYou: true }, mcpServerIds: null,
         conversationId: this.db.getKv<string>('mainConversation')!, createdAt: now, updatedAt: now,
       });
       this.db.setKv('mainStar', star.id);
@@ -254,8 +255,20 @@ export class Store {
 
   // ---- conversations -----------------------------------------------------
 
+  /** With a Star: its own chats and the group chats it's in. */
   listConversations(starId?: string): Conversation[] {
-    return this.db.all<Conversation>('conversation').filter((c) => !starId || c.starId === starId).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return this.db.all<Conversation>('conversation')
+      .filter((c) => !starId || c.starId === starId || c.starIds?.includes(starId))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  /** A group chat with the person and two or more Stars. */
+  createGroup(starIds: string[], title?: string): Conversation {
+    const stars = [...new Set(starIds)].map((id) => this.getStar(id));
+    if (stars.length < 2) throw badRequest('A group chat needs at least two Stars');
+    return this.db.put<Conversation>('conversation', {
+      id: uid('c'), main: false, title: title?.trim() || stars.map((x) => x.name).join(', '), updatedAt: iso(), preview: '', starIds: stars.map((x) => x.id),
+    });
   }
 
   getConversation(id: string): Conversation {
@@ -275,8 +288,8 @@ export class Store {
   }
 
   /** Posts a finished agent message (not a streamed reply) and tells the UI. */
-  postAgentMessage(conversationId: string, content: string, opts: { proactive?: boolean; cards?: MessageCard[]; lessonId?: string } = {}): Message {
-    const starId = this.getConversation(conversationId).starId;
+  postAgentMessage(conversationId: string, content: string, opts: { proactive?: boolean; cards?: MessageCard[]; lessonId?: string; starId?: string } = {}): Message {
+    const starId = opts.starId ?? this.getConversation(conversationId).starId;
     const m: Message = {
       id: uid('msg'), conversationId, role: 'agent', content, createdAt: iso(), status: 'done', ...(starId ? { starId } : {}),
       ...(opts.proactive ? { proactive: true } : {}), ...(opts.cards?.length ? { cards: opts.cards } : {}), ...(opts.lessonId ? { lessonId: opts.lessonId } : {}),
@@ -494,7 +507,36 @@ export class Store {
   }
 
   starView(star: Star): StarView {
-    return { ...star, status: this.starStatus(star) };
+    return { ...star, status: this.starStatus(star), email: this.starEmail(star) };
+  }
+
+  /**
+   * A Star's own address: plus-addressing on the person's Gmail
+   * (d+scout@gmail.com). The part after + is fixed when first given out, so
+   * renaming the Star doesn't break forwarding rules.
+   */
+  starEmail(star: Star): string | null {
+    const address = this.db.getKv<string>('gmailAddress');
+    if (!address || !this.db.get<{ status: string }>('connection', 'gmail') || this.db.get<{ status: string }>('connection', 'gmail')!.status !== 'connected') return null;
+    const [local, domain] = address.split('@');
+    return `${local.split('+')[0]}+${this.mailAlias(star)}@${domain}`;
+  }
+
+  mailAlias(star: Star): string {
+    const aliases = this.db.getKv<Record<string, string>>('mailAliases') ?? {};
+    if (aliases[star.id]) return aliases[star.id];
+    const base = star.name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]/g, '').slice(0, 20) || 'star';
+    let alias = base;
+    for (let n = 2; Object.values(aliases).includes(alias); n++) alias = `${base}${n}`;
+    this.db.setKv('mailAliases', { ...aliases, [star.id]: alias });
+    return alias;
+  }
+
+  /** The Star a plus-address belongs to. */
+  starByAlias(alias: string): Star | undefined {
+    const aliases = this.db.getKv<Record<string, string>>('mailAliases') ?? {};
+    const id = Object.entries(aliases).find(([, a]) => a === alias.toLowerCase())?.[0];
+    return id ? this.findStar(id) : undefined;
   }
 
   assertNameFree(name: string, exceptId?: string) {
@@ -537,6 +579,11 @@ export class Store {
     for (const m of this.db.all<MemoryItem>('memory')) if (m.starId === id) this.db.delete('memory', m.id);
     for (const r of this.db.all<Rule>('rule')) if (r.starId === id) this.db.delete('rule', r.id);
     for (const c of this.listConversations(id)) {
+      if (c.starIds) {
+        // A group chat carries on without it.
+        this.db.put('conversation', { ...c, starIds: c.starIds.filter((x) => x !== id) });
+        continue;
+      }
       this.db.sql.prepare('DELETE FROM messages WHERE conversation_id = ?').run(c.id);
       this.db.delete('conversation', c.id);
     }

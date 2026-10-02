@@ -123,6 +123,15 @@ export class Vault {
     return walk(input, (str) => str.replace(REF, (_m, name: string) => values.get(name) ?? '')) as T;
   }
 
+  /** Fills secrets into settings the person wrote themselves (an MCP server's environment), with no Star limit. */
+  fillAny<T>(input: T): T {
+    return walk(input, (str) => str.replace(REF, (_m, name: string) => {
+      const s = this.find(name);
+      if (!s) throw new Error(`There’s no secret called ${name}`);
+      return this.open(s.id);
+    })) as T;
+  }
+
   /** Replaces any secret value in text with [secret:NAME]. */
   redact(text: string): string {
     let out = text;

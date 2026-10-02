@@ -22,6 +22,9 @@ import type { Push } from '../push.ts';
 import type { Vault } from '../vault.ts';
 import { reflect, type Correction } from './learning.ts';
 import type { PushMessage } from '../push.ts';
+import type { Triggers } from '../triggers.ts';
+import type { McpManager } from '../mcp.ts';
+import type { Messaging } from '../messaging.ts';
 
 const WATCH_DEFAULT = 'every 3 hours';
 
@@ -57,11 +60,15 @@ export class Runtime implements RuntimeHooks {
   browser?: BrowserManager;
   vault?: Vault;
   push?: Push;
+  triggers?: Triggers;
+  mcp?: McpManager;
+  /** Set once the messaging bridges exist (they need the runtime first). */
+  messaging?: Messaging;
   deps: AgentDeps;
   /** Work started in the background (reflections, pushes) that idle() waits for. */
   private background = new Set<Promise<unknown>>();
 
-  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager, extras: { vault?: Vault; push?: Push } = {}) {
+  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager, extras: { vault?: Vault; push?: Push; triggers?: Triggers; mcp?: McpManager } = {}) {
     this.store = store;
     this.config = config;
     this.brain = brain;
@@ -69,10 +76,13 @@ export class Runtime implements RuntimeHooks {
     this.browser = browser;
     this.vault = extras.vault;
     this.push = extras.push;
+    this.triggers = extras.triggers;
+    this.mcp = extras.mcp;
+    if (this.triggers) this.triggers.hooks = this;
     this.policy = new Policy(store, brain);
     this.policy.browser = browser;
     this.policy.vault = extras.vault;
-    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this, browser, vault: extras.vault };
+    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this, browser, vault: extras.vault, triggers: extras.triggers, mcp: extras.mcp };
     this.deps = deps;
     this.runner = new TaskRunner(deps);
     this.chat = new ChatAgent(deps);
@@ -187,6 +197,8 @@ export class Runtime implements RuntimeHooks {
         this.stopRequested.delete(id);
         this.running = null;
         this.store.setActivity(null);
+        // Events that arrived during the run get their own run next.
+        if (this.triggers?.pending(id).length) this.runTriggered(id);
       }
     }
   }
@@ -206,7 +218,9 @@ export class Runtime implements RuntimeHooks {
     if (!['one_off', 'recurring', 'watch'].includes(input.kind)) throw badRequest('kind must be one_off, recurring or watch');
     let schedule = input.schedule?.trim() || undefined;
     if (input.kind === 'watch' && !schedule) schedule = WATCH_DEFAULT;
-    if (input.kind === 'recurring' && !schedule) throw badRequest('A recurring task needs a schedule, like “Weekdays at 9:00”');
+    const trigger = input.trigger === undefined || input.trigger === null ? undefined : this.triggers?.validate(input.trigger);
+    if (trigger && input.kind !== 'recurring') throw badRequest('A task with a trigger must be recurring: it runs each time the trigger fires');
+    if (input.kind === 'recurring' && !schedule && !trigger) throw badRequest('A recurring task needs a schedule, like “Weekdays at 9:00”, or a trigger');
     const parsed = schedule ? parseSchedule(schedule) : null;
     const now = iso();
     const task: Task = {
@@ -220,6 +234,7 @@ export class Runtime implements RuntimeHooks {
     if (!task.nextRunAt) delete task.nextRunAt;
     this.store.insertTask(task);
     this.store.addStep(task.id, { kind: 'plan', summary: `Created by ${origin}` });
+    if (trigger) this.triggers!.set(task.id, trigger);
     if (schedule) {
       this.store.addStep(task.id, {
         kind: 'note',
@@ -306,6 +321,14 @@ export class Runtime implements RuntimeHooks {
   private afterDecision(a: Approval, decision: ApprovalDecision | 'expired') {
     if (!this.runner.recordDecision(a, decision) || !a.taskId) return;
     this.wake(a.taskId);
+  }
+
+  /** An event arrived for a triggered task: run it now, or right after the run in progress. */
+  runTriggered(taskId: string) {
+    const task = this.store.findTask(taskId);
+    if (task?.status !== 'scheduled' || this.store.isPaused()) return;
+    this.store.patchTask(task.id, { status: 'active' });
+    this.enqueue(task.id);
   }
 
   /** Puts a task that was waiting on answers back in the queue. */
@@ -433,14 +456,19 @@ export class Runtime implements RuntimeHooks {
     if (this.inQuietHours() && !opts.urgent) return 'Posted in the app. Other channels are held during quiet hours.';
     const { channels } = settings;
     const attempts: Promise<void>[] = [];
-    if (channels.telegram && this.providers.isUsable('telegram')) {
+    const approvalId = cards.find((c) => c.kind === 'approval')?.approvalId;
+    if (channels.telegram && this.messaging?.telegram.ready()) {
+      attempts.push(this.messaging.telegram.send(message, approvalId).then(() => { delivered.push('Telegram'); }));
+    } else if (channels.telegram && this.providers.isUsable('telegram')) {
       attempts.push(this.sendTelegram(message).then(() => { delivered.push('Telegram'); }));
     }
     if (channels.email && this.providers.isUsable('gmail')) {
       attempts.push(this.emailSelf(message).then(() => { delivered.push('email'); }));
     }
     const slackChannel = process.env.SKY_SLACK_NOTIFY_CHANNEL ?? process.env.SKYS_SLACK_NOTIFY_CHANNEL;
-    if (channels.slack && this.providers.isUsable('slack') && slackChannel) {
+    if (channels.slack && this.messaging?.slack.ready()) {
+      attempts.push(this.messaging.slack.send(message, approvalId).then(() => { delivered.push('Slack'); }));
+    } else if (channels.slack && this.providers.isUsable('slack') && slackChannel) {
       attempts.push(this.providers.api('slack', 'https://slack.com/api/chat.postMessage', { method: 'POST', body: { channel: slackChannel, text: message } })
         .then(() => { delivered.push('Slack'); }));
     }

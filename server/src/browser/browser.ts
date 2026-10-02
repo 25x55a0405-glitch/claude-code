@@ -5,7 +5,7 @@ import type { BrowserContext, Page } from 'playwright-core';
 import type { Config } from '../config.ts';
 import type { Store } from '../store.ts';
 import type { BrowserSession } from '../types.ts';
-import { iso, uid } from '../util.ts';
+import { ApiError, badRequest, firstLine as oneLine, iso, uid } from '../util.ts';
 
 /** One interactive element from the last snapshot of a Star's tab. */
 export interface ElementInfo {
@@ -75,6 +75,14 @@ export class BrowserManager {
 
   /** Whether a browser can be used, and if not, why. */
   available(): { ok: boolean; running: boolean; reason: string | null } {
+    // Before the first launch, at least check the package is there.
+    if (!this.problem && !this.context) {
+      try {
+        import.meta.resolve('playwright-core');
+      } catch {
+        this.problem = MISSING_PACKAGE;
+      }
+    }
     return { ok: !this.problem, running: Boolean(this.context), reason: this.problem };
   }
 
@@ -94,7 +102,7 @@ export class BrowserManager {
         try {
           ({ chromium } = await import('playwright-core'));
         } catch {
-          throw this.fail('The browser needs the playwright-core package. Run npm install in server/.');
+          throw this.fail(MISSING_PACKAGE);
         }
         const proxyUrl = this.config.browserProxy;
         let proxy;
@@ -127,9 +135,10 @@ export class BrowserManager {
     return this.launching;
   }
 
+  /** The browser can't start: remembered for GET /browser, and a 503 with the reason for API callers. */
   private fail(message: string): Error {
     this.problem = message;
-    return new Error(message);
+    return new ApiError(503, 'browser_unavailable', message);
   }
 
   private async tab(starId: string): Promise<Tab> {
@@ -184,8 +193,8 @@ export class BrowserManager {
   }
 
   open(starId: string, url: string) {
-    const target = /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`;
-    if (!/^https?:/i.test(target)) throw new Error('Only http and https pages can be opened');
+    const target = pageUrl(url);
+    if (!target) throw new Error(`“${oneLine(url, 80)}” isn’t a web address Sky can open (only http and https pages)`);
     return this.act(starId, async (t) => { await t.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 45_000 }); });
   }
 
@@ -259,15 +268,24 @@ export class BrowserManager {
 
   /** The person acting in a Star's tab, e.g. to sign in. Returns the new session state. */
   async input(starId: string, i: ViewInput): Promise<BrowserSession> {
+    const target = i.type === 'navigate' ? pageUrl(i.url) : null;
+    if (i.type === 'navigate' && !target) throw badRequest(`“${oneLine(i.url, 80)}” isn’t a web address. Try something like example.com or https://example.com`);
     const tab = await this.tab(starId);
     const { page } = tab;
-    switch (i.type) {
-      case 'click': await page.mouse.click(i.x, i.y); break;
-      case 'type': await page.keyboard.type(i.text); break;
-      case 'key': await page.keyboard.press(i.key); break;
-      case 'scroll': await page.mouse.wheel(0, i.dy); break;
-      case 'navigate': await page.goto(/^https?:/i.test(i.url) ? i.url : `https://${i.url}`, { waitUntil: 'domcontentloaded', timeout: 45_000 }); break;
-      case 'back': await page.goBack().catch(() => {}); break;
+    try {
+      switch (i.type) {
+        case 'click': await page.mouse.click(i.x, i.y); break;
+        case 'type': await page.keyboard.type(i.text); break;
+        case 'key': await page.keyboard.press(i.key); break;
+        case 'scroll': await page.mouse.wheel(0, i.dy); break;
+        case 'navigate': await page.goto(target!, { waitUntil: 'domcontentloaded', timeout: 45_000 }); break;
+        case 'back': await page.goBack().catch(() => {}); break;
+      }
+    } catch (err) {
+      // A page that won't load (no such site, offline, refused) is the page's problem, not the server's.
+      const reason = (err instanceof Error ? err.message : String(err)).replace(/^page\.\w+:\s*/, '');
+      await this.capture(starId, tab).catch(() => {});
+      throw new ApiError(502, 'page_failed', i.type === 'navigate' ? `Couldn’t open ${target}: ${oneLine(reason, 160)}` : `That didn’t work: ${oneLine(reason, 160)}`);
     }
     await page.waitForTimeout(250);
     await this.capture(starId, tab);
@@ -329,6 +347,7 @@ export function describeSnapshot(s: Snapshot): string {
   return `Page: ${s.title || '(untitled)'} — ${s.url}\n\n${text || '(no text)'}\n\nWhat you can use (pass the ref to browser_click or browser_type):\n${lines.join('\n') || '(nothing interactive)'}`;
 }
 
+const MISSING_PACKAGE = 'The browser needs the playwright-core package. Run npm install in server/.';
 const firstLine = (s: string) => s.split('\n')[0].slice(0, 200);
 
 /** Runs in the page: tags visible interactive elements with data-sky-ref and returns them with the page text. */
@@ -355,3 +374,17 @@ const SNAPSHOT_SCRIPT = `(() => {
   const text = document.body ? document.body.innerText.replace(/\\n{3,}/g, '\\n\\n').trim() : '';
   return { elements: out, text };
 })()`;
+
+/** A typed address as a page URL: "example.com" gets https://. Null when it isn't an http(s) address. */
+export function pageUrl(raw: string): string | null {
+  const text = raw.trim();
+  if (!text || /\s/.test(text)) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(text) && !/^[^:/]+:\d+(\/|$)/.test(text) ? text : `https://${text}`;
+  try {
+    const u = new URL(withScheme);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname || (!u.hostname.includes('.') && u.hostname !== 'localhost' && !/^\[|^\d+\.\d+/.test(u.hostname))) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}

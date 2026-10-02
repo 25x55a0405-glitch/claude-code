@@ -79,8 +79,8 @@ fetch). The others need credentials on the server:
 | Gmail, Calendar, Drive | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | `SKY_PUBLIC_URL/api/v1/oauth/callback` |
 | GitHub | `SKY_GITHUB_TOKEN` (personal token), or `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` | same |
 | Notion | `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET` | same |
-| Slack | `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`; `SKY_SLACK_NOTIFY_CHANNEL` to get updates there | same |
-| Telegram | `SKY_TELEGRAM_BOT_TOKEN`, `SKY_TELEGRAM_CHAT_ID` | |
+| Slack | For two-way chat, nothing: make an app from the manifest at `/api/v1/messaging/slack/manifest` and paste its tokens in the app. For posting only: `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`; `SKY_SLACK_NOTIFY_CHANNEL` to get updates there | same |
+| Telegram | Nothing: connect a @BotFather bot in the app and pair it with the code. Or `SKY_TELEGRAM_BOT_TOKEN`, `SKY_TELEGRAM_CHAT_ID` | |
 
 Until they're set, "Connect" in the app explains which variables are missing.
 

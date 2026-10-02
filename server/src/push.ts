@@ -56,6 +56,11 @@ export class Push {
     if (!s || typeof s.endpoint !== 'string' || !/^https?:\/\//.test(s.endpoint) || typeof s.keys?.p256dh !== 'string' || typeof s.keys?.auth !== 'string') {
       throw badRequest('subscription must be the object from pushManager.subscribe(), with endpoint and keys');
     }
+    // A browser's keys: an uncompressed P-256 public key (65 bytes) and a 16-byte secret.
+    const p256dh = Buffer.from(s.keys.p256dh, 'base64url');
+    if (p256dh.length !== 65 || p256dh[0] !== 4 || Buffer.from(s.keys.auth, 'base64url').length !== 16) {
+      throw badRequest('subscription.keys don’t look like a browser’s push keys (p256dh and auth from pushManager.subscribe())');
+    }
     // The same device subscribing again replaces its old entry.
     for (const existing of this.list()) {
       if (this.store.db.getPrivate<PushSubscription>('push', existing.id)?.endpoint === s.endpoint) this.store.db.delete('push', existing.id);

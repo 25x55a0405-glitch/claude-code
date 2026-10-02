@@ -128,7 +128,7 @@ export class Providers {
     return this.store.putConnection({ ...conn, status: 'disconnected' });
   }
 
-  private markConnected(id: string): Connection {
+  markConnected(id: string): Connection {
     const conn = this.store.putConnection({ ...this.store.getConnection(id), status: 'connected', lastSyncAt: iso() });
     // Tasks that were blocked on this connection can carry on.
     for (const t of this.store.listTasks(['blocked'])) {

@@ -1,18 +1,11 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
-import type { Runtime } from '../agent/runtime.ts';
 import type { Config } from '../config.ts';
-import type { Providers } from '../connections/providers.ts';
-import type { Store } from '../store.ts';
 import { ApiError } from '../util.ts';
 import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
-import { registerRoutes } from './routes.ts';
-import type { Vault } from '../vault.ts';
-import type { Push } from '../push.ts';
-import type { ModelRouter } from '../models/router.ts';
-import type { BrowserManager } from '../browser/browser.ts';
+import { registerRoutes, type Services } from './routes.ts';
 import { Router, type Req } from './router.ts';
 
 const API = '/api/v1';
@@ -23,10 +16,11 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
 };
 
-export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push): Server {
+export function createHttpServer(config: Config, services: Services): Server {
+  const { store, runtime, models, browser, triggers, providers } = services;
   const auth = new Auth(config, store.db);
   const router = new Router();
-  registerRoutes(router, store, runtime, providers, models, browser, vault, push);
+  registerRoutes(router, services);
   const origins = new Set((config.webOrigin ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 
   const send = (res: ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}) => {
@@ -38,8 +32,7 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
   };
   const fail = (res: ServerResponse, status: number, code: string, message: string) => send(res, status, { error: { code, message } });
 
-  async function readBody(req: IncomingMessage): Promise<unknown> {
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') return undefined;
+  async function readRaw(req: IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req) {
@@ -47,7 +40,12 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
       if (size > MAX_BODY) throw new ApiError(413, 'too_large', 'That request is too large');
       chunks.push(chunk as Buffer);
     }
-    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    return Buffer.concat(chunks).toString('utf8');
+  }
+
+  async function readBody(req: IncomingMessage): Promise<unknown> {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') return undefined;
+    const raw = (await readRaw(req)).trim();
     if (!raw) return undefined;
     try {
       return JSON.parse(raw);
@@ -130,6 +128,12 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
         return send(res, 200, { signedIn: true }, { 'Set-Cookie': auth.sessionCookie(secure) });
       }
       if (req.method === 'DELETE') return send(res, 204, undefined, { 'Set-Cookie': auth.clearCookie() });
+    }
+    // Webhook triggers: the secret token in the URL is the sign-in.
+    const hook = /^\/hooks\/([\w-]{16,64})$/.exec(path);
+    if (hook && req.method === 'POST') {
+      const out = triggers.webhook(hook[1], req.headers, await readRaw(req));
+      return send(res, out.status, out.body);
     }
     if (!auth.isSignedIn(req)) return fail(res, 401, 'unauthorized', 'Please sign in to Sky first');
 
