@@ -23,8 +23,6 @@ declare module '../../web/src/api/types.ts' {
   }
   interface CreateTaskInput {
     starId?: string;
-    /** Run on an event (see TaskTrigger). Needs kind "recurring"; the schedule is then optional. */
-    trigger?: unknown;
   }
   interface Approval {
     /** Whether the person can edit the preview before approving. When false an edit is refused (400 not_editable), so the app shouldn't offer Edit. */

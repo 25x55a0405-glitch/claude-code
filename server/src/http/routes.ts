@@ -25,7 +25,7 @@ const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 's
 const TONES: Tone[] = ['warm', 'concise', 'playful', 'formal'];
 const AUTONOMY: Autonomy[] = ['ask', 'balanced', 'autonomous'];
 const ACCESS: Access[] = ['read', 'read_write'];
-const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
+const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop', 'star', 'sparkle', 'nova', 'comet'];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 
 const text = (v: unknown, field: string, max = 10_000): string => {

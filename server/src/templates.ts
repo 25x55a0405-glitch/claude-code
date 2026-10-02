@@ -3,7 +3,7 @@ import type { Store } from './store.ts';
 import type { AvatarCharacter, AvatarColor, Autonomy, Star, StarTemplate, TemplateEntry } from './types.ts';
 import { ApiError, badRequest } from './util.ts';
 
-const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
+const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop', 'star', 'sparkle', 'nova', 'comet'];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 const AUTONOMY: Autonomy[] = ['ask', 'balanced', 'autonomous'];
 const GALLERY_TTL_MS = 30 * 60_000;
