@@ -249,6 +249,10 @@ checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
 - **Approvals**: Edit shows only when `Approval.editable` is true (anything else gets `400 not_editable`). An opened preview scrolls, since file writes show their whole content (up to 20,000 characters).
 - **Teach a task**: a typed step stored as `[hidden]` (a card or secret field) shows as "something private".
 
+## Characters
+
+`AvatarCharacter` now also has `star`, `sparkle`, `nova` and `comet`. The server's list is still `cloud`, `dot` and `drop`, so the first save of a star character is refused with `400` (`avatar.character`). The app then sends `dot` and keeps the choice in this browser (`localStorage` key `sky.looks`), and shows it on every read and live event. When the server's `CHARACTERS` lists (in `http/routes.ts` and `templates.ts`) gain the four names, the saves go straight through and nothing is kept in the browser.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

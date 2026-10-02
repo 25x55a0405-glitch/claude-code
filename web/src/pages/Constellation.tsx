@@ -31,6 +31,14 @@ function layout(stars: StarView[]) {
   return pos;
 }
 
+/** A fixed scatter of faint stars behind the Stars, so the map reads as sky and not as a graph. */
+const FIELD: [number, number, number, number][] = Array.from({ length: 34 }, (_, i) => {
+  const a = Math.sin(i * 12.9898) * 43758.5453;
+  const b = Math.sin(i * 78.233) * 12345.6789;
+  const f = (v: number) => v - Math.floor(v);
+  return [3 + f(a) * 94, 4 + f(b) * 92, 0.18 + f(a * b) * 0.32, f(a + b) * 6];
+});
+
 function SkyMap({ stars, notes }: { stars: StarView[]; notes: ConstellationMessage[] }) {
   const pos = useMemo(() => layout(stars), [stars]);
   const links = useMemo(() => {
@@ -49,6 +57,9 @@ function SkyMap({ stars, notes }: { stars: StarView[]; notes: ConstellationMessa
 
   return (
     <div className="skymap" role="img" aria-label={`${stars.length} Stars and how they work together`}>
+      <div className="starfield" aria-hidden="true">
+        {FIELD.map(([x, y, r, d], i) => <i key={i} style={{ left: `${x}%`, top: `${y}%`, width: r * 6, height: r * 6, animationDelay: `${d}s` }} />)}
+      </div>
       <svg className="links" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
         {links.map((l) => {
           const p = pos.get(l.a);
@@ -60,7 +71,7 @@ function SkyMap({ stars, notes }: { stars: StarView[]; notes: ConstellationMessa
       {stars.map((s) => {
         const p = pos.get(s.id)!;
         return (
-          <a key={s.id} className="node" href={starChat(s)} style={{ left: `${p.x}%`, top: `${p.y}%` }} aria-label={`${s.name}’s chat`}>
+          <a key={s.id} className="node" data-av={s.avatar.color} href={starChat(s)} style={{ left: `${p.x}%`, top: `${p.y}%` }} aria-label={`${s.name}’s chat`}>
             <StarFace star={s} size={s.main ? 64 : 52} />
             <span className="nm">{s.name}</span>
           </a>

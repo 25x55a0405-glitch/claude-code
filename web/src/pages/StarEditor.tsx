@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api, type Autonomy, type AvatarCharacter, type AvatarColor, type Rule, type StarView } from '../api';
-import { Avatar } from '../components/Avatar';
+import { Avatar, CHARACTERS } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { PageHead, Segmented, Skeleton, Switch, useToast } from '../components/ui';
 import { starChat, useAgent } from '../lib/agent';
@@ -13,7 +13,6 @@ import { HealthChip } from './Models';
 import { downloadTemplate } from './Templates';
 import { LOGO } from './Permissions';
 
-const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 const STYLES = [
   { label: 'Short and direct', text: 'Short. Lead with the answer, then one line of why. No emoji.' },
@@ -31,10 +30,10 @@ const AUTONOMY: { value: Autonomy | null; title: string; body: string }[] = [
 
 /** Ready-made jobs for a new Star, so starting one is a tap. */
 const TEMPLATES: { label: string; name: string; role: string; instructions: string; avatar: { character: AvatarCharacter; color: AvatarColor }; apps?: string[]; autonomy?: Autonomy }[] = [
-  { label: 'Research', name: 'Scout', role: 'Researches trips, prices and places', instructions: 'Compare at least three sources and bring me the options with prices. Never book or pay.', avatar: { character: 'dot', color: 'mint' }, apps: ['web'], autonomy: 'ask' },
+  { label: 'Research', name: 'Scout', role: 'Researches trips, prices and places', instructions: 'Compare at least three sources and bring me the options with prices. Never book or pay.', avatar: { character: 'comet', color: 'mint' }, apps: ['web'], autonomy: 'ask' },
   { label: 'Inbox', name: 'Post', role: 'Looks after your inbox and replies', instructions: 'Keep my inbox at zero. Archive noise, draft replies in my voice, and ask before sending anything.', avatar: { character: 'drop', color: 'peach' }, apps: ['gmail'] },
-  { label: 'Calendar', name: 'Tempo', role: 'Plans your week and protects your focus time', instructions: 'Keep mornings free for deep work. Suggest times, and ask before accepting or moving anything.', avatar: { character: 'cloud', color: 'lilac' }, apps: ['calendar'] },
-  { label: 'Code', name: 'Patch', role: 'Watches your repos, reviews and builds', instructions: 'Tell me when a review or a failing build needs me. Summarise what changed.', avatar: { character: 'dot', color: 'sun' }, apps: ['github'] },
+  { label: 'Calendar', name: 'Tempo', role: 'Plans your week and protects your focus time', instructions: 'Keep mornings free for deep work. Suggest times, and ask before accepting or moving anything.', avatar: { character: 'sparkle', color: 'lilac' }, apps: ['calendar'] },
+  { label: 'Code', name: 'Patch', role: 'Watches your repos, reviews and builds', instructions: 'Tell me when a review or a failing build needs me. Summarise what changed.', avatar: { character: 'nova', color: 'sun' }, apps: ['github'] },
 ];
 
 interface Draft {
@@ -61,7 +60,7 @@ export function StarEditor({ id }: { id: string }) {
   const conns = useResource(() => api.listConnections(), []);
   const models = useResource(() => api.listProviders(), [], ['provider.updated', 'provider.deleted']);
   const rules = useResource(() => (isNew ? Promise.resolve([] as Rule[]) : api.listRules(id)), [id]);
-  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null, personality: '', replyStyle: '', voice: '', notify: { whenDone: false, whenNeedsYou: true } } : null);
+  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'star', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null, personality: '', replyStyle: '', voice: '', notify: { whenDone: false, whenNeedsYou: true } } : null);
   const [newRules, setNewRules] = useState<string[]>([]);
   const [ruleText, setRuleText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -178,9 +177,9 @@ export function StarEditor({ id }: { id: string }) {
           <div>
             <span className="label">Character</span>
             <div className="pick">
-              {CHARACTERS.map((c) => (
-                <button key={c} type="button" aria-pressed={draft.avatar.character === c} aria-label={c} title={c} onClick={() => set({ avatar: { ...draft.avatar, character: c } })}>
-                  <Avatar size={36} character={c} color={draft.avatar.color} label={c} />
+              {CHARACTERS.map(({ value: c, label }) => (
+                <button key={c} type="button" aria-pressed={draft.avatar.character === c} aria-label={label} title={label} onClick={() => set({ avatar: { ...draft.avatar, character: c } })}>
+                  <Avatar size={40} character={c} color={draft.avatar.color} label={label} />
                 </button>
               ))}
             </div>

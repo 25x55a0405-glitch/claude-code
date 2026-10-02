@@ -111,3 +111,7 @@ VITE_SKYS_API_URL=http://localhost:8787 npm run dev   # against a real back end
 ```
 
 The back-end contract is in [API.md](API.md).
+
+## Characters
+
+Seven characters: star, sparkle, nova and comet (the Stars), then cloud, dot and drop. Each has a soft grain, a rim of light, a glint and a small smile that changes with its state (working, needs you, paused). They float and sway out of step with each other, glance about when idle, and the big ones twinkle and squash when poked. Grain and rim only draw from 34px up, so the small ones stay crisp.

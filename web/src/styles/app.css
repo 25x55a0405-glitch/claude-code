@@ -533,21 +533,40 @@ a.card-inline:active { transform: scale(0.99); }
 /* ---- The character ------------------------------------------------- */
 
 .av { overflow: visible; flex: none; display: block; --look-x: 0px; --look-y: 0px; }
-.av-shadow { fill: var(--text); opacity: 0.08; transform-box: fill-box; transform-origin: center; animation: av-shadow 4s ease-in-out infinite; }
-.av-body { transform-box: fill-box; transform-origin: 50% 100%; animation: av-float 4s ease-in-out infinite; }
+.av-shadow { fill: var(--text); opacity: 0.08; transform-box: fill-box; transform-origin: center; animation: av-shadow calc(4s / var(--av-pace, 1)) ease-in-out var(--av-delay, 0s) infinite; }
+.av-body { transform-box: fill-box; transform-origin: 50% 100%; animation: av-float calc(4s / var(--av-pace, 1)) ease-in-out var(--av-delay, 0s) infinite, av-sway calc(7.3s / var(--av-pace, 1)) ease-in-out var(--av-delay, 0s) infinite; }
+.av[data-shape='star'] .av-body, .av[data-shape='nova'] .av-body { animation-name: av-float, av-sway-wide; }
+.av[data-shape='sparkle'] .av-body { animation-name: av-float, av-spin; animation-duration: calc(4s / var(--av-pace, 1)), calc(9s / var(--av-pace, 1)); }
 .av-squish { transform-box: fill-box; transform-origin: 50% 100%; }
 .av-cheek { fill: #ff7aa0; opacity: 0.32; }
 .av-eyes { transform: translate(var(--look-x), var(--look-y)); transition: transform 240ms var(--spring); }
-.av-eye { transform-box: fill-box; transform-origin: center; animation: av-blink 5.2s infinite; }
+.av-eye { transform-box: fill-box; transform-origin: center; animation: av-blink 5.2s var(--av-delay, 0s) infinite; }
+.av-glance { animation: av-glance 9s ease-in-out var(--av-delay, 0s) infinite; }
+.av-mouth { fill: none; stroke: #171a21; stroke-width: 1.7; stroke-linecap: round; opacity: 0.7; transition: d 300ms var(--spring); }
+.av-rim { opacity: 0.55; mix-blend-mode: soft-light; }
+[data-theme='dark'] .av-rim { opacity: 0.4; }
+.av-glint-soft { mix-blend-mode: soft-light; }
+.av-twinkles { fill: var(--av-2); }
+.av-tw { transform-box: fill-box; transform-origin: center; opacity: 0; animation: av-twinkle 3.8s ease-in-out infinite; }
+.av-tw.t2 { animation-delay: 1.2s; } .av-tw.t3 { animation-delay: 2.3s; }
 
 .av[data-state='working'] .av-squish { animation: av-breathe 1.6s ease-in-out infinite; }
-.av[data-state='working'] .av-eyes { animation: av-read 3.2s ease-in-out infinite; }
+.av[data-state='working'] .av-glance { animation: av-read 3.2s ease-in-out infinite; }
+.av[data-state='working'] .av-mouth { transform: translateY(-0.6px) scaleX(0.7); transform-box: fill-box; transform-origin: center; }
+.av[data-state='waiting'] .av-mouth { fill: #171a21; transform: translateY(0.8px) scale(0.55, 1.6); transform-box: fill-box; transform-origin: center; }
+.av[data-state='paused'] .av-mouth, .av[data-state='offline'] .av-mouth { opacity: 0.4; transform: scaleY(0.2); transform-box: fill-box; transform-origin: center; }
+.av[data-state='waiting'] .av-tw, .av[data-state='working'] .av-tw { animation-duration: 1.8s; }
 .av[data-state='waiting'] .av-body { animation: av-hop 2.6s var(--spring) infinite; }
 .av[data-state='waiting'] .av-shadow { animation: av-hop-shadow 2.6s var(--spring) infinite; }
 .av[data-state='paused'] .av-body, .av[data-state='offline'] .av-body { animation: av-doze 5s ease-in-out infinite; }
 .av[data-state='paused'] .av-eye, .av[data-state='offline'] .av-eye { animation: none; transform: scaleY(0.12); }
 .av[data-state='paused'], .av[data-state='offline'] { filter: saturate(0.25); }
 
+@keyframes av-sway { 0%, 100% { rotate: -1.2deg; } 50% { rotate: 1.4deg; } }
+@keyframes av-sway-wide { 0%, 100% { rotate: -3deg; } 50% { rotate: 3deg; } }
+@keyframes av-spin { 0%, 100% { rotate: -5deg; scale: 1; } 50% { rotate: 5deg; scale: 1.03; } }
+@keyframes av-glance { 0%, 34%, 52%, 100% { transform: translate(0, 0); } 38%, 44% { transform: translate(2.4px, -0.6px); } 66%, 72% { transform: translate(-2.2px, 0.4px); } 69% { transform: translate(-2.2px, 0.4px); } }
+@keyframes av-twinkle { 0%, 100% { opacity: 0; transform: scale(0.3) rotate(0); } 45%, 55% { opacity: 0.85; transform: scale(1) rotate(20deg); } }
 @keyframes av-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3.5px); } }
 @keyframes av-shadow { 0%, 100% { transform: scaleX(1); opacity: 0.09; } 50% { transform: scaleX(0.86); opacity: 0.05; } }
 @keyframes av-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
@@ -1091,3 +1110,30 @@ ol.how a { text-decoration: underline; }
 .pay-note { display: flex; gap: 7px; align-items: flex-start; font-size: 13.5px; color: var(--text-2); }
 .pay-note svg { flex: none; margin-top: 3px; }
 .voice-who { color: var(--text); font-weight: 600; }
+.rows > .r.goal { align-items: stretch; text-align: left; }
+
+/* ---- Polish: sky map, headers on phones --------------------------------- */
+.page-head .row { flex-wrap: wrap; }
+.skymap .starfield { position: absolute; inset: 0; pointer-events: none; }
+.skymap .starfield i { position: absolute; border-radius: 50%; background: var(--text-3); opacity: 0.3; animation: field-twinkle 5s ease-in-out infinite; }
+@keyframes field-twinkle { 0%, 100% { opacity: 0.14; } 50% { opacity: 0.55; } }
+.skymap .node::before {
+  content: ''; position: absolute; left: 50%; top: 38%; width: 150%; aspect-ratio: 1; translate: -50% -50%; z-index: -1; pointer-events: none;
+  background: radial-gradient(closest-side, var(--av-2), transparent); opacity: 0.2; border-radius: 50%;
+  transition: opacity 400ms ease;
+}
+.skymap .node:hover::before { opacity: 0.34; }
+[data-theme='dark'] .skymap .node::before { opacity: 0.16; }
+
+.av[data-poke] .av-squish { animation: av-poke 720ms var(--spring); }
+.av[data-poke] .av-eye { animation: av-happy 720ms ease-in-out; }
+.av[data-poke] .av-mouth { transform: scale(1.5, 1.6) translateY(-0.5px); transform-box: fill-box; transform-origin: center; }
+@keyframes av-poke {
+  0% { transform: scale(1, 1); }
+  18% { transform: scale(1.14, 0.82); }
+  48% { transform: translateY(-9px) scale(0.93, 1.1); }
+  74% { transform: scale(1.04, 0.96); }
+  100% { transform: none; }
+}
+@keyframes av-happy { 0%, 100% { transform: scaleY(1); } 15%, 75% { transform: scaleY(0.3); } }
+.studio-stage .av, .voice-face .av { cursor: pointer; }

@@ -1,5 +1,5 @@
 import type { SkyApi } from './client';
-import type { LiveEvent, LiveEventType } from './types';
+import type { AvatarCharacter, AvatarColor, LiveEvent, LiveEventType, Settings, StarView } from './types';
 
 const LIVE_EVENT_TYPES: LiveEventType[] = [
   'status',
@@ -47,6 +47,39 @@ export class HttpError extends Error {
 /** Fired on window whenever the server says the session is missing or expired. */
 export const UNAUTHORIZED_EVENT = 'sky:unauthorized';
 
+/**
+ * The server's list of characters is cloud, dot and drop. The star characters are
+ * newer: asked to save one, the server may refuse, so the app keeps that choice
+ * in this browser and sends the closest plain shape instead. Once the server
+ * takes the new names, they go through as they are and nothing is kept here.
+ */
+const LOOKS_KEY = 'sky.looks';
+const PLAIN: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
+const looks = (): Record<string, AvatarCharacter> => { try { return JSON.parse(localStorage.getItem(LOOKS_KEY) || '{}'); } catch { return {}; } };
+const remember = (key: string, c?: AvatarCharacter) => {
+  try {
+    const all = looks();
+    if (c) all[key] = c; else delete all[key];
+    localStorage.setItem(LOOKS_KEY, JSON.stringify(all));
+  } catch { /* private window: the star falls back to a plain shape */ }
+};
+const dressStar = <T extends StarView>(s: T): T => { const c = looks()[`star:${s.id}`]; return c ? { ...s, avatar: { ...s.avatar, character: c } } : s; };
+const dressSettings = (s: Settings): Settings => { const c = looks().settings; return c ? { ...s, avatar: { ...s.avatar, character: c } } : s; };
+let serverTakesStars: boolean | null = null;
+
+/** Send a write that carries an avatar; fall back to a plain shape if the server won't take a star one. */
+async function sendLook<I extends { avatar?: { character: AvatarCharacter; color: AvatarColor } }, R>(input: I, send: (i: I) => Promise<R>): Promise<{ res: R; kept?: AvatarCharacter }> {
+  const c = input.avatar?.character;
+  if (!c || PLAIN.includes(c) || serverTakesStars === true) return { res: await send(input) };
+  if (serverTakesStars !== false) {
+    try { const res = await send(input); serverTakesStars = true; return { res }; } catch (e) {
+      if (!(e instanceof HttpError && e.status === 400 && /avatar|character/i.test(`${e.code} ${e.message}`))) throw e;
+      serverTakesStars = false;
+    }
+  }
+  return { res: await send({ ...input, avatar: { ...input.avatar!, character: 'dot' } }), kept: c };
+}
+
 /** Talks to the Sky back end over the contract in docs/API.md. */
 export function createHttpApi(baseUrl: string): SkyApi {
   const root = baseUrl.replace(/\/$/, '') + '/api/v1';
@@ -83,6 +116,8 @@ export function createHttpApi(baseUrl: string): SkyApi {
     for (const type of LIVE_EVENT_TYPES) {
       source.addEventListener(type, (e) => {
         const event = { type, data: JSON.parse((e as MessageEvent).data) } as LiveEvent;
+        if (event.type === 'star.updated') event.data = dressStar(event.data);
+        else if (event.type === 'settings.updated') event.data = dressSettings(event.data);
         for (const h of [...handlers]) h(event);
       });
     }
@@ -108,10 +143,18 @@ export function createHttpApi(baseUrl: string): SkyApi {
     setPaused: (paused) => call('POST', '/status', { paused }),
     getBriefing: () => call('GET', '/briefing'),
 
-    listStars: () => call('GET', '/stars'),
-    createStar: (input) => call('POST', '/stars', input),
-    updateStar: (id, patch) => call('PATCH', `/stars/${id}`, patch),
-    deleteStar: (id) => call('DELETE', `/stars/${id}`),
+    listStars: async () => (await call<StarView[]>('GET', '/stars')).map(dressStar),
+    createStar: async (input) => {
+      const { res, kept } = await sendLook(input, (i) => call<StarView>('POST', '/stars', i));
+      remember(`star:${res.id}`, kept);
+      return dressStar(res);
+    },
+    updateStar: async (id, patch) => {
+      const { res, kept } = await sendLook(patch, (i) => call<StarView>('PATCH', `/stars/${id}`, i));
+      if (patch.avatar) remember(`star:${id}`, kept);
+      return dressStar(res);
+    },
+    deleteStar: async (id) => { await call('DELETE', `/stars/${id}`); remember(`star:${id}`); },
     pauseStar: (id, paused) => call('POST', `/stars/${id}/pause`, { paused }),
     listConstellationMessages: (starId) => call('GET', '/constellation/messages' + qs({ starId })),
 
@@ -265,8 +308,12 @@ export function createHttpApi(baseUrl: string): SkyApi {
 
     listActivity: (cursor) => call('GET', '/activity' + qs({ cursor })),
 
-    getSettings: () => call('GET', '/settings'),
-    updateSettings: (patch) => call('PATCH', '/settings', patch),
+    getSettings: async () => dressSettings(await call<Settings>('GET', '/settings')),
+    updateSettings: async (patch) => {
+      const { res, kept } = await sendLook(patch, (i) => call<Settings>('PATCH', '/settings', i));
+      if (patch.avatar) remember('settings', kept);
+      return dressSettings(res);
+    },
 
     subscribe(handler) {
       handlers.add(handler);

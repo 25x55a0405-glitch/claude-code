@@ -1,5 +1,5 @@
-import { api, type AvatarCharacter, type AvatarColor, type Settings as S, type Tone } from '../api';
-import { Avatar } from '../components/Avatar';
+import { api, type AvatarColor, type Settings as S, type Tone } from '../api';
+import { Avatar, CHARACTERS } from '../components/Avatar';
 import { Icon } from '../components/Icon';
 import { CompanionSetup } from '../components/CompanionSetup';
 import { VoiceSettings } from '../components/VoiceSettings';
@@ -9,11 +9,6 @@ import { PageHead, Segmented, Skeleton, Switch } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { useTheme, type ThemePref } from '../lib/theme';
 
-const CHARACTERS: { value: AvatarCharacter; label: string }[] = [
-  { value: 'cloud', label: 'Cloud' },
-  { value: 'dot', label: 'Dot' },
-  { value: 'drop', label: 'Drop' },
-];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 
 export function Settings() {
@@ -45,7 +40,7 @@ export function Settings() {
             <div className="pick">
               {CHARACTERS.map((c) => (
                 <button key={c.value} aria-pressed={d.avatar.character === c.value} aria-label={c.label} title={c.label} onClick={() => save({ avatar: { ...d.avatar, character: c.value } })}>
-                  <Avatar size={36} character={c.value} color={d.avatar.color} />
+                  <Avatar size={40} character={c.value} color={d.avatar.color} />
                 </button>
               ))}
             </div>

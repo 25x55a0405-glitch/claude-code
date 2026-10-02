@@ -292,7 +292,7 @@ export interface ActivityEvent {
 // ---- Settings ----------------------------------------------------------
 
 export type Tone = 'warm' | 'concise' | 'playful' | 'formal';
-export type AvatarCharacter = 'cloud' | 'dot' | 'drop';
+export type AvatarCharacter = 'cloud' | 'dot' | 'drop' | 'star' | 'sparkle' | 'nova' | 'comet';
 export type AvatarColor = 'sky' | 'peach' | 'mint' | 'lilac' | 'sun';
 
 export interface Settings {

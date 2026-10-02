@@ -380,14 +380,14 @@ export const seedStars: Star[] = [
   {
     id: 'star_scout', name: 'Scout', role: 'Researches trips, prices and places',
     instructions: 'Compare at least three sources. Never book or pay; bring me the options.',
-    avatar: { character: 'dot', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'browser', 'calendar'], paused: false, providerIds: ['p_groq', 'p_openrouter'],
+    avatar: { character: 'comet', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'browser', 'calendar'], paused: false, providerIds: ['p_groq', 'p_openrouter'],
     personality: 'Curious and thorough. Loves a good deal.', replyStyle: 'Bullet points with prices and links. Best option first.', notify: { whenDone: true, whenNeedsYou: true },
     conversationId: 'c_scout', createdAt: ago(60 * 24 * 2), updatedAt: ago(60 * 24 * 2),
   },
   {
     id: 'star_post', name: 'Post', role: 'Looks after your inbox and replies',
     instructions: 'Keep my inbox at zero. Draft replies in my voice and ask before sending anything.',
-    avatar: { character: 'drop', color: 'peach' }, main: false, autonomy: null, connectionIds: ['gmail'], paused: false,
+    avatar: { character: 'star', color: 'peach' }, main: false, autonomy: null, connectionIds: ['gmail'], paused: false,
     personality: '', replyStyle: 'Write like d: friendly, brief, no exclamation marks.', notify: { whenDone: false, whenNeedsYou: true },
     conversationId: 'c_post', createdAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 6),
   },
@@ -534,7 +534,7 @@ export const seedMcp: McpServer[] = [
   },
 ];
 
-const tpl = (name: string, role: string, description: string, character: 'cloud' | 'dot' | 'drop', color: 'sky' | 'peach' | 'mint' | 'lilac' | 'sun', apps: string[] | null, skills: { name: string; whenToUse: string; steps: string }[], rules: string[]) => ({
+const tpl = (name: string, role: string, description: string, character: import('./types').AvatarCharacter, color: 'sky' | 'peach' | 'mint' | 'lilac' | 'sun', apps: string[] | null, skills: { name: string; whenToUse: string; steps: string }[], rules: string[]) => ({
   format: 'sky.star' as const, version: 1 as const, name, role, description, instructions: '', personality: '', replyStyle: '', avatar: { character, color }, autonomy: null, apps, skills, rules,
 });
 
@@ -542,6 +542,6 @@ export const seedTemplates: TemplateEntry[] = [
   { id: 'builtin:scout', source: 'builtIn', template: tpl('Scout', 'Researches trips, prices and places', 'Compares at least three sources and brings you options.', 'dot', 'mint', ['web', 'browser'], [{ name: 'Compare prices', whenToUse: 'Finding the best price', steps: '1. Check three sites.\n2. Report the best three.' }], ['Never book or pay']) },
   { id: 'builtin:inbox', source: 'builtIn', template: tpl('Inbox', 'Looks after your inbox and replies', 'Archives the noise and drafts replies in your voice.', 'drop', 'peach', ['gmail'], [], ['Ask before sending anything']) },
   { id: 'builtin:builder', source: 'builtIn', template: tpl('Builder', 'Watches your repos, reviews and builds', 'Tells you when a review or a failing build needs you.', 'dot', 'sun', ['github'], [{ name: 'Summarise a PR', whenToUse: 'A pull request needs a quick read', steps: '1. Read the diff.\n2. Two lines on what changed and any risk.' }], []) },
-  { id: 'gallery:chef', source: 'gallery', url: 'https://raw.githubusercontent.com/sky-stars/gallery/main/chef.json', template: tpl('Chef', 'Plans meals and makes the shopping list', 'Plans a week of dinners around what you like.', 'cloud', 'sun', null, [], []) },
+  { id: 'gallery:chef', source: 'gallery', url: 'https://raw.githubusercontent.com/sky-stars/gallery/main/chef.json', template: tpl('Chef', 'Plans meals and makes the shopping list', 'Plans a week of dinners around what you like.', 'sparkle', 'sun', null, [], []) },
   { id: 'gallery:coach', source: 'gallery', url: 'https://raw.githubusercontent.com/sky-stars/gallery/main/coach.json', template: tpl('Coach', 'Keeps you on track with workouts', 'Gentle nudges and a weekly check-in.', 'drop', 'lilac', ['calendar'], [], []) },
 ];
