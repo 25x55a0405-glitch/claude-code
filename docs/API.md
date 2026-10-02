@@ -89,16 +89,27 @@ passwords) always produce an approval.
 
 | Method | Path | Body | Returns |
 | --- | --- | --- | --- |
-| GET | `/conversations` | | `Conversation[]`, newest `updatedAt` first |
+| GET | `/conversations` | | `Conversation[]`, newest `updatedAt` first, always including the main chat |
 | POST | `/conversations` | `{}` | `Conversation` |
 | GET | `/conversations/:id/messages` | | `Message[]`, oldest first |
 | POST | `/conversations/:id/messages` | `{ "content": string }` | the stored user `Message` |
 
+Every user has exactly one conversation with `main: true`. It is the one long
+chat the app opens to, and where proactive messages go. Others are side chats
+the user starts for a topic; title them from their first message.
+
 The agent's reply is not in the POST response. It streams over the event
 stream: one or more `message.delta` events with the same `messageId`, then a
-`message.done` with the final `Message`. If the reply starts or touches tasks,
-put their ids in `Message.taskIds` so the UI can link them. Title new
-conversations from the first message.
+`message.done` with the final `Message`.
+
+`Message.cards` puts structured cards under a message: `{ kind: "task", taskId }`
+shows a live goal card and `{ kind: "approval", approvalId }` shows an approval
+the user can answer right in chat. When Skys needs an approval, post a main-chat
+message with the approval card as well as creating the approval.
+
+Set `proactive: true` on messages Skys sends on its own (briefings, findings,
+requests for a decision). The UI labels them "Skys reached out". Keep the bar
+high: only send one when something is new or needs the user.
 
 ## Memory
 
@@ -142,6 +153,17 @@ The UI has logos for these `provider` keys: `gmail`, `calendar`, `github`,
 Rules are plain language and are given to the agent as hard constraints.
 `builtIn` rules can't be changed or deleted (return `403`).
 
+## Ideas
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| GET | `/ideas` | `Idea[]`, newest first |
+| POST | `/ideas/:id/dismiss` | `204` |
+
+Ideas are things Skys could do, generated from the user's goals and patterns.
+"Do it" in the UI sends `Idea.prompt` to the main chat and then dismisses the
+idea. Emit `idea.created` when a new one appears.
+
 ## Activity
 
 | Method | Path | Returns |
@@ -157,8 +179,10 @@ An append-only log of everything the agent did, including proactive research.
 | GET | `/settings` | | `Settings` |
 | PATCH | `/settings` | partial `Settings` | `Settings` |
 
-`autonomy` lives here and is echoed in `AgentStatus.autonomy`; changing it
-should emit a `status` event. Nested objects (`quietHours`, `channels`) are
+`avatar` is the user's choice of character (`cloud`, `dot`, `drop`) and colour
+(`sky`, `peach`, `mint`, `lilac`, `sun`); the UI draws it. `autonomy` lives
+here too and is echoed in `AgentStatus.autonomy`. Every change emits
+`settings.updated`, and an autonomy change also emits `status`. Nested objects (`quietHours`, `channels`) are
 sent whole.
 
 ## Live events
@@ -182,6 +206,8 @@ data: {"taskId":"t_inbox","step":{"id":"s7","at":"2026-10-02T09:40:00Z","kind":"
 | `message.done` | `Message` | agent reply finishes |
 | `activity` | `ActivityEvent` | an activity entry is appended |
 | `memory.learned` | `MemoryItem` | the agent saves a new memory on its own |
+| `idea.created` | `Idea` | a new idea is ready |
+| `settings.updated` | `Settings` | settings change, from any device |
 
 Send a comment line (`: ping`) every 25 seconds so proxies keep the stream
 open. The browser reconnects on its own; the UI refetches what it shows when

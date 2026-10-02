@@ -1,162 +1,133 @@
-import { api, type Settings as S, type Tone } from '../api';
+import { api, type AvatarCharacter, type AvatarColor, type Settings as S, type Tone } from '../api';
+import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
-import { ErrorNote, Orb, Segmented, Skeleton, Toggle, useToast } from '../components/ui';
-import { useResource } from '../lib/hooks';
-import { href } from '../lib/router';
-import { useStatus } from '../lib/status';
+import { PageHead, Segmented, Skeleton, Switch } from '../components/ui';
+import { useAgent } from '../lib/agent';
 import { useTheme, type ThemePref } from '../lib/theme';
 
+const CHARACTERS: { value: AvatarCharacter; label: string }[] = [
+  { value: 'cloud', label: 'Cloud' },
+  { value: 'dot', label: 'Dot' },
+  { value: 'drop', label: 'Drop' },
+];
+const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
+
 export function Settings() {
-  const toast = useToast();
-  const status = useStatus();
+  const { status, settings: d, setSettings } = useAgent();
   const [theme, setTheme] = useTheme();
-  const s = useResource(() => api.getSettings(), []);
 
   const save = async (patch: Partial<S>) => {
-    s.setData((cur) => cur && { ...cur, ...patch });
-    s.setData(await api.updateSettings(patch));
+    if (d) setSettings({ ...d, ...patch });
+    setSettings(await api.updateSettings(patch));
   };
 
-  if (s.error) return <div className="page"><ErrorNote error={s.error} retry={s.reload} /></div>;
-  const d = s.data;
+  if (!d) return <div className="page"><Skeleton h={180} n={2} /></div>;
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>Settings</h1>
-          <p className="sub">Make Skys yours.</p>
-        </div>
-      </div>
+      <PageHead title={`Your ${d.agentName}`} sub="Give it a name and a look. It’s yours." />
 
-      <section className="card row-between">
-        <div className="row">
-          <Orb state={status?.state ?? 'idle'} size="md" />
+      <section className="panel studio">
+        <div className="studio-stage"><Avatar size={120} track state={status?.state ?? 'idle'} character={d.avatar.character} color={d.avatar.color} /></div>
+        <div className="col-lg">
           <div>
-            <h2>{status?.state === 'paused' ? 'Skys is paused' : 'Skys is on'}</h2>
-            <p className="faint">{status?.state === 'paused' ? 'No background work or actions until you resume.' : 'Working in the background, even when this tab is closed.'}</p>
+            <label className="label" htmlFor="st-agent">Name</label>
+            <input id="st-agent" className="field" defaultValue={d.agentName} onBlur={(e) => e.target.value.trim() && e.target.value !== d.agentName && save({ agentName: e.target.value.trim() })} />
+          </div>
+          <div>
+            <span className="label">Character</span>
+            <div className="pick">
+              {CHARACTERS.map((c) => (
+                <button key={c.value} aria-pressed={d.avatar.character === c.value} aria-label={c.label} title={c.label} onClick={() => save({ avatar: { ...d.avatar, character: c.value } })}>
+                  <Avatar size={36} character={c.value} color={d.avatar.color} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="label">Colour</span>
+            <div className="row" style={{ gap: 10 }}>
+              {COLORS.map((c) => (
+                <button key={c} className="swatch" data-av={c} aria-pressed={d.avatar.color === c} aria-label={c} onClick={() => save({ avatar: { ...d.avatar, color: c } })} />
+              ))}
+            </div>
           </div>
         </div>
-        <button
-          className={`btn ${status?.state === 'paused' ? 'btn-primary' : ''}`}
-          onClick={async () => {
-            const paused = status?.state !== 'paused';
-            await api.setPaused(paused);
-            toast(paused ? 'Skys paused' : 'Skys resumed');
-          }}
-        >
-          <Icon name={status?.state === 'paused' ? 'play' : 'pause'} size={16} />
-          {status?.state === 'paused' ? 'Resume' : 'Pause everything'}
-        </button>
       </section>
 
-      {!d ? (
-        <Skeleton h={200} n={2} />
-      ) : (
-        <div className="grid-2">
-          <section className="card">
-            <div className="card-head"><h2>Personality</h2></div>
-            <div className="stack-lg">
-              <div>
-                <label className="lbl" htmlFor="st-name">What should Skys call you?</label>
-                <input id="st-name" className="field" defaultValue={d.userName} onBlur={(e) => e.target.value !== d.userName && save({ userName: e.target.value })} />
-              </div>
-              <div>
-                <label className="lbl" htmlFor="st-agent">Agent name</label>
-                <input id="st-agent" className="field" defaultValue={d.agentName} onBlur={(e) => e.target.value !== d.agentName && save({ agentName: e.target.value })} />
-              </div>
-              <div>
-                <span className="lbl">Tone</span>
-                <Segmented<Tone>
-                  label="Tone"
-                  value={d.tone}
-                  onChange={(tone) => save({ tone })}
-                  options={[{ value: 'warm', label: 'Warm' }, { value: 'concise', label: 'Concise' }, { value: 'playful', label: 'Playful' }, { value: 'formal', label: 'Formal' }]}
-                />
-              </div>
-              <div>
-                <span className="lbl">Appearance</span>
-                <Segmented<ThemePref>
-                  label="Appearance"
-                  value={theme}
-                  onChange={setTheme}
-                  options={[{ value: 'system', label: 'System' }, { value: 'dark', label: 'Night' }, { value: 'light', label: 'Day' }]}
-                />
-              </div>
+      <section>
+        <div className="section-title">Personality</div>
+        <div className="panel">
+          <div className="rows">
+            <div className="r between" style={{ flexWrap: 'wrap' }}>
+              <div><h3>Tone</h3><p className="t3 xs">How {d.agentName} talks to you.</p></div>
+              <Segmented<Tone> label="Tone" value={d.tone} onChange={(tone) => save({ tone })} options={[{ value: 'warm', label: 'Warm' }, { value: 'concise', label: 'Concise' }, { value: 'playful', label: 'Playful' }, { value: 'formal', label: 'Formal' }]} />
             </div>
-          </section>
+            <div className="r between">
+              <label htmlFor="st-name"><h3>What it calls you</h3></label>
+              <input id="st-name" className="field" style={{ maxWidth: 180 }} defaultValue={d.userName} onBlur={(e) => e.target.value.trim() && e.target.value !== d.userName && save({ userName: e.target.value.trim() })} />
+            </div>
+          </div>
+        </div>
+      </section>
 
-          <section className="card">
-            <div className="card-head"><h2>Rhythm</h2></div>
-            <div className="setting">
-              <div className="txt">
-                <h3>Daily briefing</h3>
-                <p className="faint">A summary of your day and what Skys did overnight.</p>
-              </div>
-              <div className="row">
-                {d.briefingTime !== null && (
-                  <input type="time" className="field" style={{ width: 120 }} value={d.briefingTime} onChange={(e) => save({ briefingTime: e.target.value })} aria-label="Briefing time" />
-                )}
-                <Toggle label="Daily briefing" checked={d.briefingTime !== null} onChange={(on) => save({ briefingTime: on ? '08:00' : null })} />
-              </div>
+      <section>
+        <div className="section-title">Rhythm</div>
+        <div className="panel">
+          <div className="rows">
+            <div className="r between">
+              <div className="grow"><h3>Morning briefing</h3><p className="t3 xs">A short message each morning with your day and what happened overnight.</p></div>
+              {d.briefingTime !== null && <input type="time" id="st-brief" className="field" style={{ width: 116 }} value={d.briefingTime} onChange={(e) => save({ briefingTime: e.target.value })} aria-label="Briefing time" />}
+              <Switch label="Morning briefing" checked={d.briefingTime !== null} onChange={(on) => save({ briefingTime: on ? '08:00' : null })} />
             </div>
-            <div className="setting">
-              <div className="txt">
-                <h3>Quiet hours</h3>
-                <p className="faint">Hold non-urgent notifications.</p>
-              </div>
-              <div className="row">
-                {d.quietHours.enabled && (
-                  <>
-                    <input type="time" className="field" style={{ width: 110 }} value={d.quietHours.start} onChange={(e) => save({ quietHours: { ...d.quietHours, start: e.target.value } })} aria-label="Quiet hours start" />
-                    <input type="time" className="field" style={{ width: 110 }} value={d.quietHours.end} onChange={(e) => save({ quietHours: { ...d.quietHours, end: e.target.value } })} aria-label="Quiet hours end" />
-                  </>
-                )}
-                <Toggle label="Quiet hours" checked={d.quietHours.enabled} onChange={(enabled) => save({ quietHours: { ...d.quietHours, enabled } })} />
-              </div>
+            <div className="r between" style={{ flexWrap: 'wrap' }}>
+              <div className="grow"><h3>Quiet hours</h3><p className="t3 xs">Holds anything that isn’t urgent.</p></div>
+              {d.quietHours.enabled && (
+                <div className="row">
+                  <input type="time" id="st-q1" className="field" style={{ width: 112 }} value={d.quietHours.start} onChange={(e) => save({ quietHours: { ...d.quietHours, start: e.target.value } })} aria-label="Quiet hours start" />
+                  <input type="time" id="st-q2" className="field" style={{ width: 112 }} value={d.quietHours.end} onChange={(e) => save({ quietHours: { ...d.quietHours, end: e.target.value } })} aria-label="Quiet hours end" />
+                </div>
+              )}
+              <Switch label="Quiet hours" checked={d.quietHours.enabled} onChange={(enabled) => save({ quietHours: { ...d.quietHours, enabled } })} />
             </div>
-            <div className="setting">
-              <div className="txt">
-                <h3>Proactive research</h3>
-                <p className="faint">Let Skys look into things on its own using read-only access.</p>
-              </div>
-              <Toggle label="Proactive research" checked={d.proactiveResearch} onChange={(proactiveResearch) => save({ proactiveResearch })} />
+            <div className="r between">
+              <div className="grow"><h3>Look into things on its own</h3><p className="t3 xs">Read-only research between conversations, so it can bring you ideas.</p></div>
+              <Switch label="Proactive research" checked={d.proactiveResearch} onChange={(proactiveResearch) => save({ proactiveResearch })} />
             </div>
-            <div className="setting">
-              <div className="txt">
-                <h3>Time zone</h3>
-                <p className="faint">{d.timezone}</p>
-              </div>
-            </div>
-          </section>
+          </div>
+        </div>
+      </section>
 
-          <section className="card">
-            <div className="card-head"><h2>Where Skys reaches you</h2></div>
-            {(
-              [
-                ['web', 'This app'],
-                ['push', 'Push notifications'],
-                ['email', 'Email'],
-                ['slack', 'Slack'],
-                ['telegram', 'Telegram'],
-              ] as [keyof S['channels'], string][]
-            ).map(([k, label]) => (
-              <div key={k} className="setting">
+      <section>
+        <div className="section-title">Where it reaches you</div>
+        <div className="panel">
+          <div className="rows">
+            {([['web', 'Here in the app'], ['push', 'Push notifications'], ['email', 'Email'], ['slack', 'Slack'], ['telegram', 'Telegram']] as [keyof S['channels'], string][]).map(([k, label]) => (
+              <div key={k} className="r between">
                 <h3>{label}</h3>
-                <Toggle label={label} checked={d.channels[k]} disabled={k === 'web'} onChange={(v) => save({ channels: { ...d.channels, [k]: v } })} />
+                <Switch label={label} checked={d.channels[k]} disabled={k === 'web'} onChange={(v) => save({ channels: { ...d.channels, [k]: v } })} />
               </div>
             ))}
-          </section>
-
-          <section className="card stack">
-            <div className="card-head"><h2>More</h2></div>
-            <a className="row" href={href('rules')}><Icon name="rules" /> Rules and autonomy <span className="spacer" /><Icon name="chevron" /></a>
-            <a className="row" href={href('connections')}><Icon name="plug" /> Connections <span className="spacer" /><Icon name="chevron" /></a>
-            <a className="row" href={href('memory')}><Icon name="brain" /> Memory <span className="spacer" /><Icon name="chevron" /></a>
-            <a className="row" href={href('activity')}><Icon name="activity" /> Activity log <span className="spacer" /><Icon name="chevron" /></a>
-          </section>
+          </div>
         </div>
-      )}
+      </section>
+
+      <section>
+        <div className="section-title">Appearance</div>
+        <div className="panel">
+          <div className="rows">
+            <div className="r between">
+              <h3>Theme</h3>
+              <Segmented<ThemePref> label="Theme" value={theme} onChange={setTheme} options={[{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }]} />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => api.setPaused(status?.state !== 'paused')}>
+        <Icon name={status?.state === 'paused' ? 'play' : 'pause'} size={15} />
+        {status?.state === 'paused' ? `Wake ${d.agentName} up` : `Pause ${d.agentName} everywhere`}
+      </button>
     </div>
   );
 }

@@ -1,71 +1,86 @@
 # Skys design
 
 Skys is an always-on personal agent. You hand it something once and it keeps
-working in the background: running tasks, watching for changes, researching on
-its own, and checking with you before anything risky. The design takes its
-cues from OpenAI's Dots (ongoing responsibility, approvals, learning your
-preferences), with GrokBot's conversational edge and Muse AI's personality.
+working in the background, comes back when something is new or needs you, and
+asks before anything it can't undo.
+
+The look follows three references the user picked:
+
+- **Grok**: quiet near-white and near-black surfaces, one centred task, pill
+  controls, hairline borders, almost no shadow. Colour comes from the surface,
+  not from a palette.
+- **OpenAI Dots**: the agent is a character you name and dress, not a logo. Its
+  profile shows what it's working on, what's upcoming and what's done.
+- **Meta Muse**: one long main chat with bubbles, side chats for topics,
+  proactive messages, a snippet under the avatar saying what it's doing, and
+  structured approval cards inside the conversation.
 
 ## Principles
 
-1. **Always visible, never noisy.** The orb shows what Skys is doing on every
-   screen. Detail is one click away, never pushed at you.
-2. **You stay in charge.** Anything that sends, spends or can't be undone
-   waits for your OK, with the exact content shown and editable.
-3. **Show the work.** Every task has a timeline of what Skys planned, thought,
-   did and found, so trust is earned, not assumed.
-4. **It's yours.** Memory, rules and connections are plain, editable lists.
-   Delete something and Skys forgets it.
+1. **Talk, don't operate.** The app opens on the main chat. Goals, approvals and
+   findings arrive there as messages and cards. Other screens exist to look
+   things up, not to run the day.
+2. **The character is the only colour.** Everything else is monochrome, so the
+   one living thing on screen is Skys. Warm orange is reserved for "needs you".
+3. **Always say what it's doing.** The line under the character updates live
+   and shimmers while it works.
+4. **You stay in charge.** Approvals show the exact email or event, can be
+   edited, and wait for a clear yes.
 
-## The look: night sky and day sky
+## Look
 
-- Dark "night sky" is the default; light "day sky" follows the system or a
-  setting. Tokens live in `web/src/styles/tokens.css`.
-- Accent is a sky-blue to violet gradient. Warm "dawn" orange means *needs
-  you*; green means done; amber means blocked; red is reserved for errors and
-  declines.
-- Type: Space Grotesk for headings, Inter for everything else.
-- Soft, large radii (12 to 26px), quiet borders, faint glows instead of heavy
-  shadows.
+- Tokens are in `web/src/styles/tokens.css`. Light and dark follow the system,
+  with a switch in Settings.
+- Type is the device's own system face (SF Pro on Apple, Segoe UI Variable on
+  Windows), with Geist loaded for everything else. Tight tracking on headings.
+- Radii: 10 to 28px, pills for every control. Hairline borders, shadows only on
+  the composer and overlays.
 
-## The orb
+## The character
 
-The orb is Skys' face and the one signature element.
+Three shapes (cloud, dot, drop) in five pastel colours, drawn as SVG in
+`web/src/components/Avatar.tsx`.
 
-| State | Look |
+| State | Behaviour |
 | --- | --- |
-| Idle | Sky and violet, slow breathing |
-| Working | Spinning sheen and an outward ripple |
-| Needs you | Turns dawn orange, faster pulse |
-| Paused / offline | Desaturated and still |
+| Idle | Floats gently, blinks every few seconds |
+| Working | Breathes and its eyes read side to side |
+| Needs you | Hops with a little squash and stretch |
+| Paused | Eyes closed, colour drained, dozing |
 
-It respects `prefers-reduced-motion`.
+On the empty chat, the profile and Settings, its eyes follow your pointer.
+All motion stops under `prefers-reduced-motion`.
+
+## Motion
+
+One family of curves (`--spring`, `--sheet`). Messages rise in, the profile
+sheet slides like an iOS sheet, toggles and buttons have a small press. No
+decorative animation beyond the character.
 
 ## Screens
 
-| Screen | Purpose |
+| Screen | What it's for |
 | --- | --- |
-| **Home** | Greeting and briefing, what Skys is doing now, a quick-ask box, counts, the top approval, and active tasks |
-| **Chat** | Conversations with streaming replies; replies that start work link to the task |
-| **Tasks** | Everything Skys is responsible for: one-off, recurring, and watching. Filter by in progress, scheduled, finished |
-| **Task detail** | Status, schedule, progress, pending approvals for this task, and the step timeline. Pause, resume, run now, stop |
-| **Approvals** | Waiting actions with reason, risk, exact preview, edit-before-approve, and a note Skys remembers. History tab |
-| **Memory** | What Skys knows about you by category; add, edit, pin, forget |
-| **Connections** | Apps Skys can use, with read-only vs read-and-act per app; connect, reconnect, disconnect |
-| **Rules** | Autonomy level (Ask first, Balanced, Hands-off) and plain-language rules. Built-in safety rules can't be turned off |
-| **Activity** | The full log, grouped by day |
-| **Settings** | Pause everything, name and tone, appearance, briefing time, quiet hours, proactive research, channels |
+| **Chat** | The main chat: bubbles, "reached out" messages, inline goal and approval cards, a capsule composer. An empty chat shows the character, one question and a few ideas |
+| **Side chats** | Extra conversations for a topic, listed in the sidebar |
+| **Profile** (tap the character) | Name, handle, live status, counts, Working on / Upcoming / Done, links to the rest, pause |
+| **Goals** | Everything Skys has taken on, with progress and schedule, plus a goal's step-by-step history |
+| **Ideas** | Suggestions Skys came up with. "Do it" sends it to chat |
+| **Approvals** | Everything waiting for a yes, and the history |
+| **Memory** | What it knows about you; add, edit, pin, forget |
+| **Permissions** | Independence level, apps with look-only or look-and-act access, and rules |
+| **Activity** | Everything it has done, by day |
+| **Settings** | Name, character and colour, tone, briefing, quiet hours, channels, theme |
 
-Desktop uses a sidebar; phones get a bottom tab bar with Home, Chat, Tasks,
-Approvals and Settings, and the rest are reached from Settings.
+On phones the sidebar becomes a drawer and the profile becomes a bottom sheet.
 
 ## Running it
 
 ```
 cd web
 npm install
-npm run dev          # runs on the built-in mock with sample data
+npm run dev          # runs on built-in sample data
 VITE_SKYS_API_URL=http://localhost:8787 npm run dev   # against a real back end
 ```
 
-The back end contract is in [API.md](API.md).
+The back-end contract is in [API.md](API.md).

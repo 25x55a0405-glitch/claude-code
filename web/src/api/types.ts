@@ -137,6 +137,8 @@ export type Role = 'user' | 'agent' | 'system';
 
 export interface Conversation {
   id: string;
+  /** The one long main chat. Every other conversation is a side chat. */
+  main: boolean;
   title: string;
   updatedAt: string;
   preview: string;
@@ -149,9 +151,14 @@ export interface Message {
   content: string;
   createdAt: string;
   status: 'streaming' | 'done' | 'error';
-  /** Tasks this message created or refers to, rendered as chips. */
-  taskIds?: string[];
+  /** True when Skys reached out on its own rather than replying. */
+  proactive?: boolean;
+  /** Structured cards rendered under the message text. */
+  cards?: MessageCard[];
 }
+
+/** A task or approval shown inline in the chat, like Muse's approval cards. */
+export type MessageCard = { kind: 'task'; taskId: string } | { kind: 'approval'; approvalId: string };
 
 // ---- Memory ------------------------------------------------------------
 
@@ -217,10 +224,13 @@ export interface ActivityEvent {
 // ---- Settings ----------------------------------------------------------
 
 export type Tone = 'warm' | 'concise' | 'playful' | 'formal';
+export type AvatarCharacter = 'cloud' | 'dot' | 'drop';
+export type AvatarColor = 'sky' | 'peach' | 'mint' | 'lilac' | 'sun';
 
 export interface Settings {
   userName: string;
   agentName: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
   tone: Tone;
   timezone: string;
   autonomy: Autonomy;
@@ -229,6 +239,21 @@ export interface Settings {
   quietHours: { enabled: boolean; start: string; end: string };
   proactiveResearch: boolean;
   channels: { web: boolean; email: boolean; push: boolean; slack: boolean; telegram: boolean };
+}
+
+// ---- Ideas -------------------------------------------------------------
+
+export type IdeaKind = 'suggestion' | 'tip' | 'plan_update';
+
+/** Something Skys thinks it could do for you, based on your goals and patterns. */
+export interface Idea {
+  id: string;
+  kind: IdeaKind;
+  title: string;
+  detail: string;
+  /** What gets sent to the main chat when you say "Do it". */
+  prompt: string;
+  createdAt: string;
 }
 
 // ---- Pagination --------------------------------------------------------
@@ -250,7 +275,9 @@ export type LiveEvent =
   | { type: 'message.delta'; data: { conversationId: string; messageId: string; delta: string } }
   | { type: 'message.done'; data: Message }
   | { type: 'activity'; data: ActivityEvent }
-  | { type: 'memory.learned'; data: MemoryItem };
+  | { type: 'memory.learned'; data: MemoryItem }
+  | { type: 'idea.created'; data: Idea }
+  | { type: 'settings.updated'; data: Settings };
 
 export type LiveEventType = LiveEvent['type'];
 
