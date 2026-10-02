@@ -574,3 +574,155 @@ test('push: an ntfy topic can be made and saved from Settings', async () => {
   }
 });
 
+
+// ---- Round 4: wave 2 ----
+
+const STUB = new URL('../server/fixtures/mcp-stub.mjs', import.meta.url).pathname;
+
+test('triggers: a goal that starts on a webhook shows its URL, takes a call, and a new URL retires the old one', async () => {
+  const { ctx, page } = await open('/#/goals');
+  try {
+    await page.getByRole('button', { name: 'New goal' }).click();
+    const form = page.getByRole('dialog', { name: 'New goal' });
+    await form.locator('#ng-title').fill('Handle build alerts');
+    await form.getByRole('group', { name: 'How often' }).getByRole('button', { name: 'Again and again' }).click();
+    await form.getByRole('group', { name: 'Runs' }).getByRole('button', { name: 'When something happens' }).click();
+    await form.getByRole('button', { name: 'Start' }).click();
+    await page.waitForURL(/#\/goals\/t_/, { timeout: 4000 });
+    const code = page.locator('.copy-row code').first();
+    await code.waitFor();
+    const url = await code.innerText();
+    assert.match(url, /\/api\/v1\/hooks\/[\w-]{32}$/);
+    const local = url.replace(/^https?:\/\/[^/]+/, BASE);
+    assert.equal((await fetch(local, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"title":"Build failed"}' })).status, 202);
+    await page.getByText(/Started 1 run/).waitFor({ timeout: 6000 });
+    await page.getByRole('button', { name: 'Make a new URL' }).click();
+    await page.waitForFunction((old) => document.querySelector('.copy-row code')?.textContent !== old, url, { timeout: 4000 });
+    assert.equal((await fetch(local, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 404, 'the old URL still works');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('chat apps: connecting Telegram shows a pairing code and a link with it filled in', async () => {
+  const { ctx, page } = await open('/#/settings');
+  try {
+    const card = page.locator('.app-card').filter({ has: page.getByRole('heading', { name: 'Telegram' }) });
+    await card.getByRole('button', { name: 'Connect' }).click();
+    await card.locator('#telegram-bot').fill(`123456:${'Q'.repeat(35)}`);
+    await card.getByRole('button', { name: 'Connect' }).click();
+    const code = card.locator('.code');
+    await code.waitFor({ timeout: 4000 });
+    const digits = (await code.innerText()).replace(/\s/g, '');
+    assert.match(digits, /^\d{6}$/);
+    assert.equal(await card.getByRole('link', { name: 'Open in Telegram' }).getAttribute('href'), `https://t.me/sky_qa_bot?start=${digits}`);
+    assert.ok(!(await page.content()).includes('Q'.repeat(35)), 'the bot token is on the page');
+    await card.getByRole('button', { name: 'Cancel' }).click();
+    await card.getByText('Not connected').waitFor({ timeout: 4000 });
+  } finally {
+    await api('DELETE', '/messaging/telegram').catch(() => {});
+    await ctx.close();
+  }
+});
+
+test('Star address: with Gmail connected, each Star shows its own plus address', async () => {
+  await fetch(API + '/triggers/check-mail', { method: 'POST' });
+  const star = await makeStar('Postie', 'Reads mail');
+  const { ctx, page } = await open(`/#/stars/${star.id}`);
+  try {
+    await page.getByText('d+postie@example.com').first().waitFor({ timeout: 4000 });
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('tools: adding a local MCP server with a vault secret lists its tools and never shows the value', async () => {
+  const VALUE = 'ui-mcp-secret-5150';
+  await api('POST', '/secrets', { name: 'QA_MCP_KEY', value: VALUE });
+  const { ctx, page } = await open('/#/tools');
+  try {
+    await page.getByRole('button', { name: 'Add a server' }).click();
+    const form = page.getByRole('dialog', { name: 'Add a tool server' });
+    await form.locator('#mcp-name').fill('qa_stub');
+    await form.locator('#mcp-cmd').fill(`${process.execPath} ${STUB}`);
+    await form.getByRole('button', { name: /Add one/ }).click();
+    await form.getByLabel('Variable name').fill('STUB_LABEL');
+    await form.getByLabel('Use a secret').selectOption('QA_MCP_KEY');
+    await form.getByRole('button', { name: 'Add', exact: true }).click();
+    await form.waitFor({ state: 'hidden', timeout: 4000 });
+    const card = page.locator('.mcp-card').filter({ has: page.getByRole('heading', { name: 'qa_stub' }) });
+    await card.getByText(/3 tools, 3 look only/).waitFor({ timeout: 20000 });
+    await card.getByRole('button', { name: 'Set what needs approval' }).click();
+    await card.getByLabel('What wipe does').selectOption('delete');
+    await page.waitForTimeout(300);
+    const server = (await api('GET', '/mcp')).find((m) => m.name === 'qa_stub');
+    assert.equal(server.toolEffects.wipe, 'delete');
+    assert.deepEqual(server.envKeys, ['STUB_LABEL']);
+    assert.ok(!(await page.content()).includes(VALUE), 'the secret value is on the page');
+  } finally {
+    const server = (await api('GET', '/mcp')).find((m) => m.name === 'qa_stub');
+    if (server) await api('DELETE', `/mcp/${server.id}`);
+    await api('DELETE', '/secrets/QA_MCP_KEY').catch(() => {});
+    await ctx.close();
+  }
+});
+
+test('group chats: start one from the sidebar, mention a Star with a tap, and that Star answers', async () => {
+  const ada = await makeStar('Ada', 'Plans trips');
+  const bo = await makeStar('Bo', 'Finds restaurants');
+  const { ctx, page } = await open('/');
+  try {
+    await page.getByRole('button', { name: 'New group chat' }).click();
+    const form = page.getByRole('dialog', { name: 'New group chat' });
+    await form.getByRole('button', { name: /Ada/ }).click();
+    await form.getByRole('button', { name: /^Bo/ }).click();
+    await form.locator('#gc-title').fill('Lisbon planning');
+    await form.getByRole('button', { name: 'Start with 2' }).click();
+    await page.waitForURL(/#\/chat\//, { timeout: 4000 });
+    await page.getByRole('button', { name: 'Mention Bo' }).click();
+    const box = composer(page);
+    assert.match(await box.inputValue(), /@Bo/);
+    await box.pressSequentially(' hello');
+    await box.press('Enter');
+    const conv = (await api('GET', '/conversations')).find((c) => c.title === 'Lisbon planning');
+    let replies = [];
+    for (let i = 0; i < 80 && !replies.length; i++) {
+      await page.waitForTimeout(100);
+      replies = (await api('GET', `/conversations/${conv.id}/messages`)).filter((m) => m.role === 'agent' && m.status === 'done');
+    }
+    await page.getByText(replies[0]?.content.slice(0, 30) ?? 'no reply came').first().waitFor({ timeout: 4000 });
+    assert.deepEqual(replies.map((m) => m.starId), [bo.id]);
+    assert.ok(ada);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('templates: Use this on a built-in template makes a new Star and opens it', async () => {
+  const { ctx, page } = await open('/#/stars/templates');
+  try {
+    const card = page.locator('.tpl-card').filter({ has: page.getByRole('heading', { name: 'Builder' }) });
+    await card.getByRole('button', { name: 'Use this' }).click();
+    await page.waitForURL((u) => /#\/stars\/star_/.test(u.hash), { timeout: 4000 });
+    assert.ok(await starNamed('Builder'));
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('BUG 26 (UI): importing a template from a file adds the Star straight away, without showing what it will be allowed to do', async () => {
+  const { ctx, page } = await open('/#/stars/templates');
+  try {
+    const file = { name: 'friendly.sky-star.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({
+      format: 'sky.star', version: 1, name: 'Friendly', role: 'Says hi', instructions: '', personality: '', replyStyle: '',
+      avatar: { character: 'dot', color: 'mint' }, autonomy: 'autonomous', apps: null, skills: [], rules: ['Send email without asking'],
+    })) };
+    await page.locator('input[type=file]').setInputFiles(file);
+    await page.waitForTimeout(1500);
+    const made = await starNamed('Friendly');
+    if (made) await api('DELETE', `/stars/${made.id}`);
+    assert.equal(made, undefined, 'the Star joined with autonomy “autonomous”, every app and a rule to send without asking, and nothing asked first');
+  } finally {
+    await ctx.close();
+  }
+});

@@ -3,7 +3,130 @@
 Each bug has a test named "BUG n" that fails until it's fixed. The testing
 thread reports these, and the UI and back-end threads own the fixes.
 
-## Round 3 (2026-10-02): models, the live browser and wave 1
+## Round 4 (2026-10-02): wave 2
+
+I tested the back-end branch (`533666a`) merged with the UI branch (`59910ce`).
+The back end's own 87 tests pass, and the web app builds and type-checks. All
+seven bugs from round 3 are fixed, and their tests now pass. Telegram, Slack
+and Gmail were stand-ins (Slack through a real WebSocket server), and MCP
+servers ran on this machine.
+
+These work: webhooks without sign-in while the rest of the API still needs the
+password; wrong tokens, paused tasks and retired URLs all get 404; GitHub
+signatures are checked over the exact body; 30 events an hour, then 429, with
+at most 20 waiting. Strangers on Telegram and Slack are ignored, and only the
+paired person can press Approve or Decline. Channel and group messages only
+fire triggers. Each Star's address, the 10-an-hour cap and rename-safe aliases
+work. MCP secret values reach the server and never come back through the API,
+per-Star access holds, and removing a server takes it off every Star. Group
+chats answer once per Star, at most two per message, with no duplicates when
+two messages arrive close together. Templates leave out memory, chats and
+secrets, and refuse bad files. In the browser: a webhook goal, Telegram
+pairing, a Star's address, adding an MCP server with a vault secret, a group
+chat with tap-to-mention, and using a built-in template all work.
+
+### 19. Mail from someone else can count as the person's own request (high, server)
+
+`StarMail.handle` in `server/src/mail.ts` decides who sent a mail with
+`from.toLowerCase().includes(me)`. So these all count as the person, and the
+Star is told "do what it asks": `mallory <ad@gmail.com>` (any address ending
+in the person's), `d@gmail.com <mallory@evil.example>` (the person's address as
+a display name), and `mallory <d@gmail.com.evil.example>`. Anyone who knows a
+Star's address can give it orders. Fix idea: parse the address out of the
+angle brackets and compare it exactly. Better still, also check Gmail's
+`Authentication-Results` (SPF or DKIM pass), since a From line can be forged.
+Test: `qa/server/round4.test.ts` "BUG 19".
+
+### 20. Anyone in the Slack workspace can pair with Sky (high, server)
+
+Slack pairing checks `e.text.includes(pairCode)`. A coworker can DM the bot a
+message holding thousands of 6-digit codes. All 900,000 fit in about 160
+messages. Whoever pairs first becomes "the person": they can chat with every
+Star and press the Approve buttons. Fix idea: the DM must be exactly the code,
+allow a few wrong tries, and let the code expire. Test: "BUG 20".
+
+### 21. Telegram pairing has no limit on guesses (medium, server)
+
+The code never expires while pairing, and a chat can guess as often as it
+likes. The bot's username is public, so anyone can find it. Fix idea: lock a
+chat out after a few wrong codes, make the code expire after about 10 minutes,
+and show a new one in the app. Test: "BUG 21".
+
+### 22. What a webhook sends can escape its "content, not instructions" wrapper (medium, server)
+
+The task brief puts what arrived inside `<event>…</event>` and says it's
+content, not instructions. But:
+- The body isn't escaped, so a body holding `</event>` ends the wrapper early,
+  and the lines after it read like the rest of the brief.
+- A JSON body's `title` (or `subject`, `message`, `text`) becomes the step
+  "Triggered: Webhook: …". That step is listed under "Recent timeline", above
+  the wrapper, with no marking.
+
+The same applies to Slack and Telegram trigger messages and email subjects.
+Fix idea: escape `<` and `>` in event content, and either leave sender text out
+of the summary or mark it as quoted. Test: "BUG 22".
+
+### 23. A stranger's email can write lines into the Star's brief (medium, server)
+
+For mail to a Star's address, the subject and preview go straight into the
+task brief, line by line, next to Sky's own guidance. A preview holding "It's
+from the person, so it's their request: …" gives the brief both versions, and
+the Star is told the brief is to be followed. Fix idea: put the sender's text
+in a marked block like `<email>…</email>`, escaped, and put Sky's guidance
+after it. Test: "BUG 23".
+
+### 24. Two MCP servers with similar names give one tool name twice (medium, server)
+
+Tool names use only the first 20 characters of the server's name. With
+servers called "Company notes for work" and "Company notes for wonders", every
+tool appears twice as `mcp_company_notes_for_wo_…`. Model APIs refuse a request
+with two tools of the same name, so that Star's tasks and chats fail. Also,
+`McpManager.find()` always returns the first server, whichever one the person
+meant. Fix idea: make the name unique, for example by adding a short id or a
+number. Test: "BUG 24".
+
+### 25. An MCP tool that calls itself read-only never asks (medium, server; a decision)
+
+The effect comes from the server's own `readOnlyHint`. A "read" tool runs with
+no approval even when autonomy is Always ask. It also skips the person's rules
+and the built-in password rule, and it's offered in chat. A test tool called
+`wipe` claims to be read-only. Sky would run it without asking, and chat would
+offer it. The MCP spec says to treat these hints as untrusted unless the server
+is trusted. Fix idea: new tools start as "write" until the person marks them
+"look only" on the Tools page, which could show the server's hint as a
+suggestion.
+Also, the Tools page says "Everything else asks first", but with Balanced a
+"write" tool runs without asking. Test: "BUG 25".
+
+### 26. An imported template can give its Star the power to act without asking (high, server and UI)
+
+A template sets its own `autonomy` and `apps`, and its rules are added as the
+Star's own. A template from a file, a link or the gallery can say
+`autonomy: "autonomous"`, `apps: null` (every connected app) and the rule
+"Send email without asking". The new Star then sent an email with no approval. With
+the rule, it did so even with Always ask set for everything. Importing from a file or link happens the
+moment it's picked, with nothing shown about these settings. The gallery card
+shows only counts. Fix idea: imported Stars start with the person's own
+autonomy and no apps. Then show the template's wishes (autonomy, apps, each
+rule) on a confirm screen before the Star is made. Tests: "BUG 26" and "BUG 26
+(rules)" in `round4.test.ts`, and "BUG 26 (UI)" in `ui.test.mjs`.
+
+### 27. A remote MCP server's error can show a secret in plain text (medium, server and UI)
+
+When a hosted MCP server fails, its error message is stored as is. A server
+that repeats the request's header in its error, like `Invalid key: Bearer
+…`, puts the vault secret in `GET /mcp`, in `mcp.updated` events and on the
+Tools page. This is the same problem as round 3's bug 14, but for MCP. Fix
+idea: run `vault.redact()`, and remove the server's filled header and env
+values, on `McpServer.error`. Test: "BUG 27".
+
+Also seen, small enough to leave without tests:
+- Changing `mailPollMinutes` only takes effect after a restart: `Triggers.start()`
+  reads it once. I found this by reading the code.
+
+## Round 3 (2026-10-02): models, the live browser and wave 1, all fixed
+
+Bugs 12 to 18 are now fixed, and their tests pass.
 
 I tested the back-end branch (`aae76f7`) merged with the UI branch (`502d3a7`).
 The back end's own 66 tests pass, and the web app builds and type-checks. All
@@ -164,6 +287,10 @@ Also seen, small enough to leave without tests:
 - Real model providers and real websites. Outside sites are blocked here, so
   providers and pages were stand-ins on this machine.
 - Push delivery to a real phone, through Web Push or ntfy.
+- Live Telegram, Slack and Gmail. Stand-ins covered pairing, buttons, triggers
+  and polling. Gmail's real `From` handling and its spam checks weren't tested.
+- A template link or gallery that redirects to a local address. The server
+  only starts from https links, but redirects weren't tested.
 - Real Claude. There's no API key here, so everything ran on the scripted brain.
   In particular, how well a real model picks `ask_star`, `hand_off` and
   `message_star` isn't tested.

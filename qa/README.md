@@ -16,9 +16,14 @@ checkout that has both the UI branch and the back-end branch merged.
 - `server/round3.test.ts`: model providers and fallback, the Stars' real browser,
   and wave 1 (lessons, secrets, push). Stand-in providers and pages run as local
   HTTP servers, since outside sites are blocked.
+- `server/round4.test.ts`: wave 2. Triggers and webhooks, Telegram and Slack
+  (stand-ins, with a real WebSocket server for Slack), each Star's address on a
+  fake Gmail, MCP tools (`server/fixtures/mcp-stub.mjs`, a local MCP server),
+  group chats and templates.
 - `e2e/server.ts`: the real server with an in-memory database, the model router
   (on the scripted brain until a test adds a provider), real Chromium for the
-  Stars' browser, the built web app at `/`, and a fake Gmail so approvals can be tested end to end.
+  Stars' browser, the built web app at `/`, a fake Gmail so approvals can be tested end to end,
+  and a fake Telegram for pairing.
 - `e2e/ui.test.mjs`: Playwright tests of the real UI against that server. Uses the
   globally installed `playwright`; set `PLAYWRIGHT_FROM` to another
   `node_modules` folder if yours is elsewhere.
