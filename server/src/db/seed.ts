@@ -3,6 +3,7 @@ import type { Connection, Rule, Settings } from '../types.ts';
 export const defaultSettings = (userName: string): Settings => ({
   userName,
   agentName: 'Skys',
+  avatar: { character: 'cloud', color: 'sky' },
   tone: 'warm',
   timezone: process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   autonomy: 'balanced',

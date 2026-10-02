@@ -104,7 +104,7 @@ export class ChatAgent {
       reply.content = `${reply.content}${reply.content ? '\n\n' : ''}Sorry, I couldn’t finish that reply: ${message}`;
       reply.status = 'error';
     }
-    if (ctx.touchedTasks.size) reply.taskIds = [...ctx.touchedTasks];
+    if (ctx.touchedTasks.size) reply.cards = [...ctx.touchedTasks].map((taskId) => ({ kind: 'task' as const, taskId }));
     store.saveMessage(reply);
     store.patchConversation(conversationId, { updatedAt: iso(), preview: firstLine(reply.content, 120) });
     bus.emit({ type: 'message.done', data: reply });

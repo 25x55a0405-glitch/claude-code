@@ -66,8 +66,8 @@ export class ScriptedBrain implements Brain {
       if (failed) return [this.text(`That didn’t work: ${String(results[0].content).replace(/^Error: /, '')}`)];
       if (used?.name === 'create_task') {
         return [this.text(used.input.kind === 'one_off'
-          ? 'On it. I started a task for this and I’ll keep working in the background. You’ll see progress in **Tasks**.'
-          : `Done. I set that up as a ${used.input.kind === 'watch' ? 'watch' : 'recurring'} task (${used.input.schedule}). You can change it any time from **Tasks**.`)];
+          ? 'On it. I started a task for this and I’ll keep working in the background. You’ll see progress in **Goals**.'
+          : `Done. I set that up as a ${used.input.kind === 'watch' ? 'watch' : 'recurring'} task (${used.input.schedule}). You can change it any time from **Goals**.`)];
       }
       if (used?.name === 'remember') return [this.text('Got it. I’ll remember that.')];
       if (used?.name === 'list_tasks') return [this.text(`Here’s what I’m on:\n${String(results[0].content)}`)];

@@ -2,7 +2,7 @@ import type { Runtime } from '../agent/runtime.ts';
 import { validTimeZone, parseHHMM } from '../agent/time.ts';
 import type { Providers } from '../connections/providers.ts';
 import type { Store } from '../store.ts';
-import type { Access, ApprovalStatus, Autonomy, MemoryCategory, Message, Settings, TaskStatus, Tone } from '../types.ts';
+import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, TaskStatus, Tone } from '../types.ts';
 import { badRequest, firstLine, iso, uid } from '../util.ts';
 import type { Router } from './router.ts';
 
@@ -11,6 +11,8 @@ const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 's
 const TONES: Tone[] = ['warm', 'concise', 'playful', 'formal'];
 const AUTONOMY: Autonomy[] = ['ask', 'balanced', 'autonomous'];
 const ACCESS: Access[] = ['read', 'read_write'];
+const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
+const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 
 const text = (v: unknown, field: string, max = 10_000): string => {
   if (typeof v !== 'string' || !v.trim()) throw badRequest(`${field} is required`);
@@ -79,7 +81,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     store.saveMessage(m);
     store.patchConversation(conv.id, {
       updatedAt: m.createdAt, preview: firstLine(content, 120),
-      ...(conv.title === 'New conversation' ? { title: firstLine(content, 40) } : {}),
+      ...(!conv.main && (conv.title === 'New chat' || conv.title === 'New conversation') ? { title: firstLine(content, 40) } : {}),
     });
     store.log('message', `You said: ${firstLine(content, 100)}`);
     void runtime.chat.reply(conv.id);
@@ -114,6 +116,10 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   }));
   r.delete('/rules/:id', ({ params }) => store.deleteRule(params.id));
 
+  // ---- ideas ----
+  r.get('/ideas', () => store.listIdeas());
+  r.post('/ideas/:id/dismiss', ({ params }) => store.dismissIdea(params.id));
+
   // ---- activity ----
   r.get('/activity', ({ query }) => store.activity(query.get('cursor')));
 
@@ -123,6 +129,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     const patch = validateSettings(body ?? {});
     const before = store.settings();
     const next = store.updateSettings(patch);
+    if (patch.agentName) store.patchConversation(store.mainConversation().id, { title: patch.agentName });
     if (patch.timezone && patch.timezone !== before.timezone) {
       // Wall-clock schedules move with the person's time zone.
       for (const t of store.listTasks(['scheduled'])) store.patchTask(t.id, { nextRunAt: runtime.nextRunAt({ ...t, lastRunAt: undefined }, new Date()) });
@@ -135,6 +142,11 @@ function validateSettings(b: Record<string, unknown>): Partial<Settings> {
   const p: Partial<Settings> = {};
   if (b.userName !== undefined) p.userName = text(b.userName, 'userName', 80);
   if (b.agentName !== undefined) p.agentName = text(b.agentName, 'agentName', 40);
+  if (b.avatar !== undefined) {
+    const a = b.avatar as Record<string, unknown>;
+    if (!a || typeof a !== 'object') throw badRequest('avatar must be an object');
+    p.avatar = { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
+  }
   if (b.tone !== undefined) p.tone = oneOf(b.tone, TONES, 'tone');
   if (b.autonomy !== undefined) p.autonomy = oneOf(b.autonomy, AUTONOMY, 'autonomy');
   if (b.timezone !== undefined) {

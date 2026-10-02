@@ -2,9 +2,10 @@ import type { BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages
 import type { Config } from '../config.ts';
 import type { Providers } from '../connections/providers.ts';
 import type { Store } from '../store.ts';
-import type { Approval, ApprovalDecision, CreateTaskInput, Message, Task, TaskCommand } from '../types.ts';
+import type { Approval, ApprovalDecision, CreateTaskInput, MessageCard, Task, TaskCommand } from '../types.ts';
 import { ApiError, badRequest, firstLine, iso, uid } from '../util.ts';
 import { generateBriefing } from './briefing.ts';
+import { refreshIdeas } from './ideas.ts';
 import { BrainUnavailable, type Brain } from './brain.ts';
 import { ChatAgent } from './chat.ts';
 import type { AgentDeps } from './deps.ts';
@@ -91,7 +92,25 @@ export class Runtime implements RuntimeHooks {
     }
     for (const t of this.store.listTasks(['active'])) this.enqueue(t.id);
     await this.maybeBrief(now);
+    await this.maybeIdeas();
     await this.maybeResearch(now);
+  }
+
+  private ideasBusy = false;
+
+  /** New ideas at most every few hours, from what's connected and what Skys knows. */
+  private async maybeIdeas() {
+    const last = this.store.db.getKv<number>('lastIdeas') ?? 0;
+    if (this.ideasBusy || Date.now() - last < 6 * 3_600_000) return;
+    this.ideasBusy = true;
+    try {
+      this.store.db.setKv('lastIdeas', Date.now());
+      await refreshIdeas(this.store, this.providers, this.brain);
+    } catch (err) {
+      console.error('[runtime] ideas failed', err);
+    } finally {
+      this.ideasBusy = false;
+    }
   }
 
   enqueue(taskId: string) {
@@ -254,22 +273,15 @@ export class Runtime implements RuntimeHooks {
     return quietHours.enabled && start !== null && end !== null && inWindow(localMinutes(now, timezone), start, end);
   }
 
-  /** Posts into the "Updates from Skys" conversation and, outside quiet hours, the person's other channels. */
-  async notify(message: string, opts: { urgent?: boolean; taskId?: string } = {}): Promise<string> {
+  /**
+   * Skys reaching out on its own: a proactive message in the main chat and,
+   * outside quiet hours, the person's other channels.
+   */
+  async notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[] } = {}): Promise<string> {
     const settings = this.store.settings();
     const delivered: string[] = ['the app'];
-    let convId = this.store.db.getKv<string>('updatesConversation');
-    if (!convId || !this.store.db.get('conversation', convId)) {
-      convId = this.store.createConversation(`Updates from ${settings.agentName}`).id;
-      this.store.db.setKv('updatesConversation', convId);
-    }
-    const msg: Message = {
-      id: uid('msg'), conversationId: convId, role: 'agent', content: message, createdAt: iso(), status: 'done',
-      ...(opts.taskId ? { taskIds: [opts.taskId] } : {}),
-    };
-    this.store.saveMessage(msg);
-    this.store.patchConversation(convId, { updatedAt: msg.createdAt, preview: firstLine(message, 120) });
-    this.store.bus.emit({ type: 'message.done', data: msg });
+    const cards = opts.cards ?? (opts.taskId ? [{ kind: 'task' as const, taskId: opts.taskId }] : []);
+    this.store.postAgentMessage(this.store.mainConversation().id, message, { proactive: true, cards });
     this.store.log('message', `Told you: ${firstLine(message, 120)}`, opts.taskId);
 
     if (this.inQuietHours() && !opts.urgent) return 'Posted in the app. Other channels are held during quiet hours.';

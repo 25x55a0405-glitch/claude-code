@@ -14,6 +14,8 @@ const QUIET_STEPS = new Set(['finish_task']);
  */
 export async function executeTool(deps: AgentDeps, tool: ToolDef, input: any, ctx: ToolContext, toolUseId: string): Promise<BetaToolResultBlockParam> {
   const task = ctx.task;
+  // Link first, so a token that turns out to be expired blocks this task too.
+  if (task && tool.connection) linkConnection(deps, task.id, tool.connection);
   try {
     const out = await tool.run(input, ctx);
     const res = typeof out === 'string' ? { content: out } : out;
@@ -23,14 +25,12 @@ export async function executeTool(deps: AgentDeps, tool: ToolDef, input: any, ct
       const detail = res.content.length > 0 && res.content !== 'Noted.' && res.content !== summary ? truncate(res.content, 4000) : undefined;
       deps.store.addStep(task.id, { kind, summary: firstLine(summary, 160), ...(detail ? { detail } : {}), ...(tool.connection ? { connectionId: tool.connection } : {}) });
       deps.store.setActivity(firstLine(summary, 80), task.id);
-      if (tool.connection) linkConnection(deps, task.id, tool.connection);
     }
     return { type: 'tool_result', tool_use_id: toolUseId, content: res.content };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (task) {
       deps.store.addStep(task.id, { kind: 'error', summary: firstLine(`${tool.label(input)} failed: ${message}`, 160), detail: message, ...(tool.connection ? { connectionId: tool.connection } : {}) });
-      if (tool.connection) linkConnection(deps, task.id, tool.connection);
     }
     return { type: 'tool_result', tool_use_id: toolUseId, content: `Error: ${message}`, is_error: true };
   }

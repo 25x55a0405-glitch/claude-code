@@ -1,7 +1,7 @@
 import type { Config } from '../../config.ts';
 import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
-import type { CreateTaskInput, Risk, Task, TaskCommand } from '../../types.ts';
+import type { CreateTaskInput, MessageCard, Risk, Task, TaskCommand } from '../../types.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
@@ -19,7 +19,7 @@ export type Effect = 'internal' | 'read' | 'write' | 'send' | 'delete' | 'spend'
 export interface RuntimeHooks {
   createTask(input: CreateTaskInput, origin: string): Task;
   commandTask(id: string, command: TaskCommand): Task;
-  notify(message: string, opts: { urgent?: boolean; taskId?: string }): Promise<string>;
+  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[] }): Promise<string>;
   /** When a recurring or watch task should next run. */
   nextRunAt(task: Task, after: Date): string | undefined;
 }

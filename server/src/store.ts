@@ -4,8 +4,8 @@ import { builtInRules, connectionCatalog, defaultSettings } from './db/seed.ts';
 import type { EventBus } from './events.ts';
 import { startOfLocalDay } from './agent/time.ts';
 import type {
-  ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, Conversation,
-  MemoryCategory, MemoryItem, Message, Page, Rule, Settings, Task, TaskDetail, TaskStatus, TaskStep,
+  ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, Conversation, Idea,
+  MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Task, TaskDetail, TaskStatus, TaskStep,
 } from './types.ts';
 import { ApiError, iso, notFound, uid } from './util.ts';
 
@@ -23,15 +23,21 @@ export class Store {
   /** What the runtime is doing right now; drives AgentStatus. */
   private live = { activity: null as string | null, taskId: null as string | null, since: iso(), offline: false };
   private lastStatusJson = '';
+  private userName: string;
 
   constructor(db: Db, bus: EventBus, config: Pick<Config, 'userName'>) {
     this.db = db;
     this.bus = bus;
+    this.userName = config.userName;
     this.seed(config.userName);
   }
 
   private seed(userName: string) {
     if (!this.db.getKv('settings')) this.db.setKv('settings', defaultSettings(userName));
+    if (!this.db.getKv('mainConversation')) {
+      const main = this.db.put<Conversation>('conversation', { id: uid('c'), main: true, title: this.settings().agentName, updatedAt: iso(), preview: '' });
+      this.db.setKv('mainConversation', main.id);
+    }
     const now = iso();
     for (const r of builtInRules(now)) if (!this.db.get('rule', r.id)) this.db.put('rule', r);
     for (const c of connectionCatalog) {
@@ -44,12 +50,14 @@ export class Store {
   // ---- settings and status ---------------------------------------------
 
   settings(): Settings {
-    return this.db.getKv<Settings>('settings')!;
+    // Defaults first, so settings saved by an older version gain new fields.
+    return { ...defaultSettings(this.userName), ...this.db.getKv<Settings>('settings') };
   }
 
   updateSettings(patch: Partial<Settings>): Settings {
     const next = { ...this.settings(), ...patch };
     this.db.setKv('settings', next);
+    this.bus.emit({ type: 'settings.updated', data: next });
     this.emitStatus();
     return next;
   }
@@ -210,8 +218,25 @@ export class Store {
     return c;
   }
 
-  createConversation(title = 'New conversation'): Conversation {
-    return this.db.put<Conversation>('conversation', { id: uid('c'), title, updatedAt: iso(), preview: '' });
+  /** The one long chat the app opens to, where proactive messages go. */
+  mainConversation(): Conversation {
+    return this.getConversation(this.db.getKv<string>('mainConversation')!);
+  }
+
+  createConversation(title = 'New chat'): Conversation {
+    return this.db.put<Conversation>('conversation', { id: uid('c'), main: false, title, updatedAt: iso(), preview: '' });
+  }
+
+  /** Posts a finished agent message (not a streamed reply) and tells the UI. */
+  postAgentMessage(conversationId: string, content: string, opts: { proactive?: boolean; cards?: MessageCard[] } = {}): Message {
+    const m: Message = {
+      id: uid('msg'), conversationId, role: 'agent', content, createdAt: iso(), status: 'done',
+      ...(opts.proactive ? { proactive: true } : {}), ...(opts.cards?.length ? { cards: opts.cards } : {}),
+    };
+    this.saveMessage(m);
+    this.patchConversation(conversationId, { updatedAt: m.createdAt, preview: content.split('\n')[0].slice(0, 120) });
+    this.bus.emit({ type: 'message.done', data: m });
+    return m;
   }
 
   patchConversation(id: string, patch: Partial<Conversation>): Conversation {
@@ -334,6 +359,31 @@ export class Store {
   activitySince(since: string): ActivityEvent[] {
     const rows = this.db.sql.prepare('SELECT data FROM activity WHERE at >= ? ORDER BY seq DESC').all(since) as { data: string }[];
     return rows.map((r) => JSON.parse(r.data) as ActivityEvent);
+  }
+
+  // ---- ideas -------------------------------------------------------------
+
+  listIdeas(): Idea[] {
+    return this.db.all<Idea>('idea').sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  /** Titles already offered, so dismissed ideas don't come back. */
+  seenIdeaTitles(): Set<string> {
+    return new Set(this.db.getKv<string[]>('seenIdeas') ?? []);
+  }
+
+  addIdea(input: Omit<Idea, 'id' | 'createdAt'>): Idea | null {
+    const seen = this.seenIdeaTitles();
+    const key = input.title.trim().toLowerCase();
+    if (seen.has(key)) return null;
+    this.db.setKv('seenIdeas', [...seen, key].slice(-500));
+    const idea = this.db.put<Idea>('idea', { id: uid('i'), createdAt: iso(), ...input });
+    this.bus.emit({ type: 'idea.created', data: idea });
+    return idea;
+  }
+
+  dismissIdea(id: string) {
+    if (!this.db.delete('idea', id)) throw notFound('Idea', id);
   }
 
   // ---- briefing ----------------------------------------------------------

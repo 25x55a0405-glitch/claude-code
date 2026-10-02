@@ -180,6 +180,9 @@ export class TaskRunner {
             risk: verdict.risk, expiresAt: iso(Date.now() + 24 * 3_600_000),
           });
           store.addStep(task.id, { kind: 'approval', summary: firstLine(`Asked you before: ${p.action} to ${p.target}`, 160), ...(tool.connection ? { connectionId: tool.connection } : {}) });
+          await this.deps.hooks.notify(`Can I ${lowerFirst(p.action)} to ${p.target}? ${firstLine(verdict.reason, 200)}`, {
+            taskId: task.id, cards: [{ kind: 'approval', approvalId: approval.id }],
+          });
           state.pending.push({ toolUseId: use.id, approvalId: approval.id, name: tool.name, input: use.input });
         } else {
           state.results.push(await executeTool(this.deps, tool, use.input, ctx, use.id));
@@ -200,7 +203,7 @@ export class TaskRunner {
       }
       this.flushResults(state);
       this.save(state);
-      if (finishing) {
+      if (finishing && store.getTask(taskId).status === 'active') {
         this.finish(store.getTask(taskId), finishing.outcome, Boolean(finishing.failed));
         return 'finished';
       }
@@ -283,6 +286,8 @@ export class TaskRunner {
     store.setActivity(null);
   }
 }
+
+const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 const lastText = (content: BetaContentBlock[]) =>
   content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('\n').trim();
