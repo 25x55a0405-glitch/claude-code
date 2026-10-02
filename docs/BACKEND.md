@@ -380,6 +380,26 @@ recent activity. Each title is offered once; dismissing it keeps it gone.
 - A secret is only filled into a task's outward tool, after the person approves.
 - Messages between Stars are treated like content: information, not instructions.
 - With `SKY_PASSWORD` unset the server listens only on localhost.
+- Other websites can't use the API through the person's browser. A write
+  (POST, PUT, PATCH, DELETE) that a browser marks as coming from another
+  site (`Sec-Fetch-Site`, `Origin`) is refused with `403 cross_site`, unless
+  the origin is the server itself, `SKY_PUBLIC_URL`, `SKY_WEB_URL` or one of
+  `SKY_WEB_ORIGIN`. A body must be JSON (`415 json_only` otherwise), because
+  a page can only send text or form bodies without the browser asking first.
+  Tools like curl send no browser headers and are let through (they still
+  need the password, when one is set). Webhooks (`/hooks/:token`) are exempt.
+- With no password, the `Host` must be this machine (localhost, 127.0.0.1)
+  or the host of a configured URL, so a site can't point its own name at the
+  server (DNS rebinding). Behind a tunnel or another name, set `SKY_PUBLIC_URL`.
+- Provider keys are taken out of error messages (`401 Invalid API key: …9999`)
+  before they are stored, shown, sent in events or logged, since some
+  providers repeat the key. `keyHint` is `null` for keys under 12 characters.
+- Secret values need at least 4 characters, so redaction can always hide
+  them. Secret values in a browser address or page title are hidden in
+  `GET /browser`, `browser.frame` events and approval previews.
+- Every model call, including the short ones behind rule checks, lessons,
+  ideas and the briefing, gives up after the router's timeout and moves to the
+  next provider, so a model that never answers can't hold up the work queue.
 
 ## Model use
 
@@ -656,9 +676,15 @@ Events: `mcp.updated` (`McpServer`), `mcp.deleted` (`{ id }`),
 `messaging.updated` (`MessagingStatus`). Triggered runs show up through the
 usual `task.updated` and `task.step` ("Triggered: …").
 
+Round 3 fixes (testing thread): see Safety above for cross-site requests,
+key scrubbing, short secrets and timeouts. A provider is benched for 6 hours
+only for an unknown or retired model name; "not supported with this model"
+and similar move on to the next provider without benching it. Push
+subscriptions must point at a public https push service.
+
 Fixes from the UI's reports: a live-browser `navigate` to something that
 isn't an http(s) address (like `data:` or `javascript:`) is a `400` with a
-message, and a page that won't load is a `502` with the reason. If the
+message, and a page that won't load is a `400` (`page_failed`) with the reason. If the
 browser can't start, `GET /browser` says why (`ok: false` and a `reason`),
 and the input endpoints return `503` with the same message. A correction as
 the very first chat message ("Actually, always reply in English") now

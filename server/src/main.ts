@@ -46,6 +46,7 @@ export function createApp(config: Config, brain?: Brain): App {
   const models = new ModelRouter(new ModelRegistry(store, config), config);
   const browser = new BrowserManager(store, config);
   const vault = new Vault(store, config);
+  browser.redact = (t) => vault.redact(t);
   // Through the providers' fetch, so tests can stand in for ntfy.
   const push = new Push(store, config, () => providers.fetch);
   const triggers = new Triggers(store, config, providers);

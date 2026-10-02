@@ -62,7 +62,7 @@ through approvals, but it doesn't really think. It's what the tests use.
 | `SKY_PASSWORD` | | Turns on sign-in. Visit `/login` once; the browser keeps a session cookie |
 | `SKY_API_TOKEN` | | Bearer token for scripts, accepted alongside the password |
 | `SKY_PUBLIC_URL` | `http://localhost:PORT` | This server's public URL, used for OAuth redirects |
-| `SKY_WEB_ORIGIN` | | Web app origin(s) allowed to call the API with cookies (comma-separated) |
+| `SKY_WEB_ORIGIN` | | Web app origin(s) allowed to call the API (comma-separated). Writes from any other site are refused, so a web app on another address, like the Vite dev server without its proxy, must be listed here |
 | `SKY_WEB_URL` | web origin or public URL | Where to send people after OAuth or sign-in |
 | `SKY_USER_NAME` | `there` | Name used until it's changed in Settings |
 | `SKY_TICK_MS` | `15000` | How often the clock checks schedules and expiries |

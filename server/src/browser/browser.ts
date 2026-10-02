@@ -178,8 +178,11 @@ export class BrowserManager {
     }
   }
 
+  /** Hides secret values that ended up in an address or a title (set to the vault's redact). */
+  redact: (text: string) => string = (t) => t;
+
   private session(starId: string, tab: Tab): BrowserSession {
-    return { starId, url: tab.url, title: tab.title, frameId: tab.frameId, updatedAt: tab.updatedAt };
+    return { starId, url: this.redact(tab.url), title: this.redact(tab.title), frameId: tab.frameId, updatedAt: tab.updatedAt };
   }
 
   private async act(starId: string, action: (tab: Tab) => Promise<void>): Promise<Snapshot> {
@@ -221,7 +224,7 @@ export class BrowserManager {
 
   currentPage(starId: string): { url: string; title: string } | undefined {
     const t = this.tabs.get(starId);
-    return t ? { url: t.page.url(), title: t.title } : undefined;
+    return t ? { url: this.redact(t.page.url()), title: this.redact(t.title) } : undefined;
   }
 
   click(starId: string, target: { ref?: string; text?: string }) {
@@ -285,7 +288,7 @@ export class BrowserManager {
       // A page that won't load (no such site, offline, refused) is the page's problem, not the server's.
       const reason = (err instanceof Error ? err.message : String(err)).replace(/^page\.\w+:\s*/, '');
       await this.capture(starId, tab).catch(() => {});
-      throw new ApiError(502, 'page_failed', i.type === 'navigate' ? `Couldn’t open ${target}: ${oneLine(reason, 160)}` : `That didn’t work: ${oneLine(reason, 160)}`);
+      throw new ApiError(400, 'page_failed', i.type === 'navigate' ? `Couldn’t open ${target}: ${oneLine(reason, 160)}` : `That didn’t work: ${oneLine(reason, 160)}`);
     }
     await page.waitForTimeout(250);
     await this.capture(starId, tab);

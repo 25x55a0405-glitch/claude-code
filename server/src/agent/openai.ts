@@ -134,12 +134,12 @@ export class OpenAICompatBrain implements Brain {
     return { content, stopReason: stop };
   }
 
-  async complete(system: string, prompt: string, maxTokens = 2_000): Promise<string> {
+  async complete(system: string, prompt: string, maxTokens = 2_000, _chain?: string[] | null, signal?: AbortSignal): Promise<string> {
     const res = await this.post({
       model: this.opts.model,
       messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
       max_tokens: maxTokens,
-    });
+    }, signal);
     const body = await res.json() as any;
     return String(body.choices?.[0]?.message?.content ?? '').trim();
   }

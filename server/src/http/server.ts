@@ -47,6 +47,10 @@ export function createHttpServer(config: Config, services: Services): Server {
     if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') return undefined;
     const raw = (await readRaw(req)).trim();
     if (!raw) return undefined;
+    // A page on another site can only send text/plain or form bodies without the browser asking first.
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+      throw new ApiError(415, 'json_only', 'Send the body as JSON, with Content-Type: application/json');
+    }
     try {
       return JSON.parse(raw);
     } catch {
@@ -84,6 +88,34 @@ export function createHttpServer(config: Config, services: Services): Server {
     return true;
   }
 
+  // Where the web app may call from, besides this server itself.
+  const trusted = new Set([...origins, originOf(config.publicUrl), originOf(config.webUrl)].filter(Boolean) as string[]);
+  const localNames = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+  const knownHosts = new Set([...trusted].map((o) => new URL(o).host));
+
+  /**
+   * Stops other websites from using the API through the person's browser.
+   *  - Writes from a browser must come from this server's own pages or a
+   *    configured web app (SKY_WEB_ORIGIN). Browsers mark every request with
+   *    Sec-Fetch-Site and Origin, which pages can't fake; tools like curl send
+   *    neither and are let through (they still need the password, if set).
+   *  - With no password, the Host must be this machine or a configured
+   *    address, so a site can't point its own name at 127.0.0.1 (DNS rebinding).
+   */
+  function crossSite(req: IncomingMessage): string | null {
+    const host = req.headers.host ?? '';
+    if (!auth.enabled && host && !localNames.has(host.replace(/:\d+$/, '')) && !knownHosts.has(host)) {
+      return `Requests for ${host} aren’t accepted. Set SKY_PUBLIC_URL to the address you use for Sky.`;
+    }
+    if (!WRITES.has(req.method ?? '')) return null;
+    const site = req.headers['sec-fetch-site'];
+    if (site === 'same-origin' || site === 'none') return null;
+    const origin = req.headers.origin;
+    if (!origin && !site) return null;
+    if (origin && origin !== 'null' && (trusted.has(origin) || origin === `http://${host}` || origin === `https://${host}`)) return null;
+    return `Requests from ${origin && origin !== 'null' ? origin : 'another site'} aren’t allowed. If that’s your Sky web app, add it to SKY_WEB_ORIGIN.`;
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://local');
     const origin = req.headers.origin;
@@ -118,6 +150,10 @@ export function createHttpServer(config: Config, services: Services): Server {
       const first = runtime.brain.name === 'scripted' ? null : models.chain()[0];
       send(res, 200, { ok: true, brain: runtime.brain.name, model: first?.model ?? null, browser: browser.available() });
       return;
+    }
+    if (!/^\/hooks\//.test(path)) {
+      const refused = crossSite(req);
+      if (refused) return fail(res, 403, 'cross_site', refused);
     }
     if (path === '/session') {
       if (req.method === 'GET') return send(res, 200, { signedIn: auth.isSignedIn(req), authRequired: auth.enabled });
@@ -186,4 +222,14 @@ export function createHttpServer(config: Config, services: Services): Server {
       fail(res, 500, 'internal', 'Something went wrong on the server');
     });
   });
+}
+
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function originOf(url: string | null | undefined): string | null {
+  try {
+    return url ? new URL(url).origin : null;
+  } catch {
+    return null;
+  }
 }
