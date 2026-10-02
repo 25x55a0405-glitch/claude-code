@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { api, type MemoryCategory, type MemoryItem } from '../api';
 import { Icon } from '../components/Icon';
-import { Empty, ErrorNote, PageHead, Segmented, Skeleton, useToast } from '../components/ui';
+import { Empty, ErrorNote, PageHead, Segmented, Skeleton, StarFace, Switch, useToast } from '../components/ui';
+import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
 
@@ -13,9 +14,13 @@ const CATS: { value: MemoryCategory; label: string }[] = [
   { value: 'fact', label: 'Facts' },
 ];
 
+const TRIGGER = { declined: 'after you said no', edited: 'after you edited a draft', failed: 'after a task failed', chat: 'after you corrected it' } as const;
+
 export function Memory() {
   const toast = useToast();
   const mem = useResource(() => api.listMemory(), [], ['memory.learned']);
+  const { stars, settings, setSettings } = useAgent();
+  const lessons = useResource(() => api.listLessons().catch(() => null), [], ['lesson.learned', 'lesson.undone']);
   const [cat, setCat] = useState<MemoryCategory | 'all'>('all');
   const [adding, setAdding] = useState('');
   const [addCat, setAddCat] = useState<MemoryCategory>('preference');
@@ -34,7 +39,7 @@ export function Memory() {
 
   return (
     <div className="page">
-      <PageHead title="Memory" sub="What Sky knows about you. Change or delete anything and it takes effect right away." />
+      <PageHead title="Memory" sub="What your Stars know about you. Most of it is shared by every Star. Change or delete anything and it takes effect right away." />
 
       <form
         className="composer"
@@ -77,7 +82,7 @@ export function Memory() {
                   ) : (
                     <p>{m.pinned && <Icon name="pin" size={13} className="pin" />} {m.content}</p>
                   )}
-                  <p className="t3 xs" style={{ marginTop: 3 }}>{CATS.find((c) => c.value === m.category)?.label} · {m.source} · {relTime(m.createdAt)}</p>
+                  <p className="t3 xs" style={{ marginTop: 3 }}>{CATS.find((c) => c.value === m.category)?.label} · {m.source} · {relTime(m.createdAt)}{m.starId ? ` · Only ${stars?.find((x) => x.id === m.starId)?.name ?? 'one Star'} uses this` : ''}</p>
                 </div>
                 <div className="row" style={{ gap: 0 }}>
                   <button className="icon-btn" onClick={() => patch(m, { pinned: !m.pinned })} aria-pressed={m.pinned} aria-label={m.pinned ? 'Unpin' : 'Pin'} style={m.pinned ? { color: 'var(--text)' } : undefined}><Icon name="pin" size={16} /></button>
@@ -88,6 +93,41 @@ export function Memory() {
             ))}
           </div>
         </div>
+      )}
+
+      {lessons.data && (
+        <section>
+          <div className="between" style={{ marginBottom: 10 }}>
+            <div className="section-title" style={{ margin: 0 }}>Learned from your corrections</div>
+            {settings && settings.learnFromCorrections !== undefined && (
+              <label className="row" style={{ gap: 10 }}>
+                <span className="t3">Learn from corrections</span>
+                <Switch label="Learn from my corrections" checked={settings.learnFromCorrections} onChange={async (v) => { try { setSettings(await api.updateSettings({ learnFromCorrections: v })); } catch (e) { toast((e as Error).message); } }} />
+              </label>
+            )}
+          </div>
+          {lessons.data.filter((l) => !l.undone).length === 0 ? (
+            <p className="t3">When you decline something, edit a draft or say “actually…”, the Star works out one general lesson and keeps it. They show up here, and you can undo any of them.</p>
+          ) : (
+            <div className="panel">
+              <div className="rows">
+                {lessons.data.filter((l) => !l.undone).slice(0, 8).map((l) => {
+                  const s = stars?.find((x) => x.id === l.starId);
+                  return (
+                    <div key={l.id} className="r">
+                      {s ? <StarFace star={s} size={26} still /> : <Icon name="brain" size={18} />}
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <p style={{ fontSize: 14.5 }}>{l.lesson}</p>
+                        <p className="t3 xs">{s?.name ?? 'A Star'} · {TRIGGER[l.trigger]} · {l.skillId ? 'on a skill' : 'in memory'} · {relTime(l.createdAt)}</p>
+                      </div>
+                      <button className="btn sm quiet" onClick={async () => { try { await api.undoLesson(l.id); lessons.reload(); mem.reload(); toast('Forgotten'); } catch (e) { toast((e as Error).message); } }}>Undo</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </section>
       )}
     </div>
   );

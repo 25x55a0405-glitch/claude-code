@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { api, type TaskKind, type TaskStatus } from '../api';
+import { api, type TaskKind, type TaskStatus, type TriggerInput } from '../api';
+import { TriggerFields, blankTrigger, triggerLine } from '../components/Triggers';
 import { Icon } from '../components/Icon';
-import { Bar, Empty, ErrorNote, PageHead, Segmented, Skeleton, StatusChip, kindMeta, useToast } from '../components/ui';
+import { Bar, Empty, ErrorNote, PageHead, Segmented, Skeleton, StarFace, StatusChip, kindMeta, useToast } from '../components/ui';
+import { mainStar, useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
 import { href, navigate } from '../lib/router';
@@ -16,14 +18,28 @@ const TABS: Record<Tab, TaskStatus[]> = {
 export function Goals() {
   const [tab, setTab] = useState<Tab>('now');
   const [creating, setCreating] = useState(false);
-  const tasks = useResource(() => api.listTasks({ status: TABS[tab] }), [tab], ['task.updated']);
+  const [who, setWho] = useState<string | null>(null);
+  const { stars } = useAgent();
+  const many = (stars?.length ?? 0) > 1;
+  const tasks = useResource(() => api.listTasks({ status: TABS[tab], starId: who ?? undefined }), [tab, who], ['task.updated']);
+  const starOf = (id?: string) => (id && stars?.find((s) => s.id === id)) || mainStar(stars);
 
   return (
     <div className="page">
-      <PageHead title="Goals" sub="Everything Sky has taken on for you. It keeps going between conversations.">
+      <PageHead title="Goals" sub="Everything your Stars have taken on for you. They keep going between conversations.">
         <button className="btn ink" onClick={() => setCreating(true)}><Icon name="plus" size={16} /> New goal</button>
       </PageHead>
-      <Segmented label="Show" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
+      <div className="row wrap" style={{ gap: 10 }}>
+        <Segmented label="Show" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
+        {many && (
+          <div className="who-filter" role="group" aria-label="Whose goals">
+            <button aria-pressed={who === null} onClick={() => setWho(null)}>Everyone</button>
+            {stars!.map((s) => (
+              <button key={s.id} aria-pressed={who === s.id} onClick={() => setWho(s.id)}><StarFace star={s} size={18} still />{s.name}</button>
+            ))}
+          </div>
+        )}
+      </div>
       {tasks.error ? (
         <ErrorNote error={tasks.error} retry={tasks.reload} />
       ) : !tasks.data ? (
@@ -41,8 +57,9 @@ export function Goals() {
                   {t.lastOutcome && <span className="t2" style={{ fontSize: 14 }}>{t.lastOutcome}</span>}
                   {t.progress !== undefined && t.status !== 'done' && <Bar value={t.progress} />}
                   <div className="meta">
+                    {many && starOf(t.starId) && <><StarFace star={starOf(t.starId)!} size={16} still /><span>{starOf(t.starId)!.name}{t.requestedBy ? `, for ${starOf(t.requestedBy.starId)?.name ?? 'another Star'}` : ''}</span><span>·</span></>}
                     <Icon name={kind.icon} size={13} />
-                    <span>{t.schedule ?? kind.label}</span>
+                    <span>{t.trigger && !t.schedule ? triggerLine(t.trigger) : t.schedule ?? kind.label}</span>
                     <span>·</span>
                     <span>{t.nextRunAt && t.status !== 'done' ? `Next ${relTime(t.nextRunAt)}` : `Updated ${relTime(t.updatedAt)}`}</span>
                   </div>
@@ -63,9 +80,15 @@ function NewGoal({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<TaskKind>('one_off');
   const [schedule, setSchedule] = useState('');
+  const [when, setWhen] = useState<'schedule' | 'event'>('schedule');
+  const [trigger, setTrigger] = useState<TriggerInput>(blankTrigger());
+  const { stars } = useAgent();
+  const [starId, setStarId] = useState<string | undefined>(undefined);
+  const owner = (starId && stars?.find((s) => s.id === starId)) || mainStar(stars);
 
   const submit = async () => {
-    const t = await api.createTask({ title: title.trim(), description, kind, schedule: kind === 'one_off' ? undefined : schedule || undefined });
+    const onEvent = kind === 'recurring' && when === 'event';
+    const t = await api.createTask({ title: title.trim(), description, kind, schedule: kind === 'one_off' || onEvent ? undefined : schedule || undefined, ...(starId ? { starId } : {}), ...(onEvent ? { trigger } : {}) });
     toast('Goal started');
     onClose();
     navigate('goals', t.id);
@@ -79,18 +102,32 @@ function NewGoal({ onClose }: { onClose: () => void }) {
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
         </div>
         <div>
-          <label className="label" htmlFor="ng-title">What should Sky take care of?</label>
+          <label className="label" htmlFor="ng-title">What should {owner?.name ?? 'Sky'} take care of?</label>
           <input id="ng-title" className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Find a birthday gift for Sam" />
         </div>
         <div>
           <label className="label" htmlFor="ng-desc">Anything it should know</label>
           <textarea id="ng-desc" className="field" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Around $80. Sam loves coffee and hiking." />
         </div>
+        {stars && stars.length > 1 && (
+          <div>
+            <span className="label">Who takes it</span>
+            <div className="who-filter" role="group" aria-label="Who takes it">
+              {stars.map((s) => (
+                <button key={s.id} type="button" aria-pressed={owner?.id === s.id} onClick={() => setStarId(s.main ? undefined : s.id)}><StarFace star={s} size={18} still />{s.name}</button>
+              ))}
+            </div>
+          </div>
+        )}
         <div>
           <span className="label">How often</span>
-          <Segmented label="How often" value={kind} onChange={setKind} options={[{ value: 'one_off', label: 'Once' }, { value: 'recurring', label: 'On a schedule' }, { value: 'watch', label: 'Keep watching' }]} />
+          <Segmented label="How often" value={kind} onChange={setKind} options={[{ value: 'one_off', label: 'Once' }, { value: 'recurring', label: 'Again and again' }, { value: 'watch', label: 'Keep watching' }]} />
         </div>
-        {kind !== 'one_off' && (
+        {kind === 'recurring' && (
+          <Segmented label="Runs" value={when} onChange={setWhen} options={[{ value: 'schedule', label: 'At set times' }, { value: 'event', label: 'When something happens' }]} />
+        )}
+        {kind === 'recurring' && when === 'event' && <TriggerFields value={trigger} onChange={setTrigger} />}
+        {kind !== 'one_off' && !(kind === 'recurring' && when === 'event') && (
           <div>
             <label className="label" htmlFor="ng-sched">{kind === 'watch' ? 'Check how often' : 'When'}</label>
             <input id="ng-sched" className="field" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder={kind === 'watch' ? 'Every 3 hours' : 'Weekdays at 9:00'} />
@@ -98,7 +135,7 @@ function NewGoal({ onClose }: { onClose: () => void }) {
         )}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn quiet" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn ink" disabled={!title.trim()}>Start</button>
+          <button type="submit" className="btn ink" disabled={!title.trim() || (kind === 'recurring' && when === 'event' && trigger.kind === 'email' && !trigger.query?.trim())}>Start</button>
         </div>
       </form>
     </div>

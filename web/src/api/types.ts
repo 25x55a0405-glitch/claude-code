@@ -15,6 +15,8 @@ export interface AgentStatus {
   taskId: string | null;
   since: string;
   autonomy: Autonomy;
+  /** The Star doing the current activity, if any. */
+  starId?: string | null;
   counts: {
     activeTasks: number;
     pendingApprovals: number;
@@ -83,8 +85,14 @@ export interface Task {
   nextRunAt?: string;
   lastRunAt?: string;
   connectionIds: string[];
+  /** What starts a run besides (or instead of) the schedule. */
+  trigger?: TaskTrigger;
   /** Short line summarising the latest outcome, shown on cards. */
   lastOutcome?: string;
+  /** The Star that owns the task. */
+  starId?: string;
+  /** Set when another Star asked for this work with ask_star or hand_off. */
+  requestedBy?: { starId: string; taskId?: string; depth?: number };
 }
 
 export interface TaskDetail extends Task {
@@ -96,6 +104,45 @@ export interface CreateTaskInput {
   description: string;
   kind: TaskKind;
   schedule?: string;
+  starId?: string;
+  /** Recurring tasks only. */
+  trigger?: TriggerInput;
+}
+
+export type TriggerKind = 'webhook' | 'github' | 'message' | 'email';
+
+export interface TaskTrigger {
+  kind: TriggerKind;
+  /** github: e.g. ['push', 'issues']; empty means every event. */
+  events?: string[];
+  /** message: where it listens. */
+  source?: 'slack' | 'telegram' | 'any';
+  /** message: must contain this (case-insensitive). */
+  match?: string;
+  /** message: Slack channel id or #name, Telegram chat id. */
+  channel?: string;
+  /** email: a Gmail search. */
+  query?: string;
+  fired: number;
+  lastFiredAt: string | null;
+}
+
+export type TriggerInput = Omit<TaskTrigger, 'fired' | 'lastFiredAt'>;
+
+/** A trigger with the URL and secret to paste elsewhere. */
+export interface TriggerSetup extends TaskTrigger {
+  url: string | null;
+  secret: string | null;
+}
+
+/** An event waiting for its run. */
+export interface TriggerEvent {
+  id: string;
+  taskId: string;
+  source: string;
+  summary: string;
+  content: string;
+  at: string;
 }
 
 export type TaskCommand = 'pause' | 'resume' | 'run_now' | 'cancel';
@@ -121,6 +168,9 @@ export interface Approval {
   status: ApprovalStatus;
   createdAt: string;
   expiresAt?: string;
+  starId?: string;
+  /** Whether the content can be changed before saying yes. Only then is Edit shown. */
+  editable?: boolean;
 }
 
 export interface ApprovalDecision {
@@ -142,6 +192,9 @@ export interface Conversation {
   title: string;
   updatedAt: string;
   preview: string;
+  starId?: string;
+  /** Two or more Stars: a group chat. */
+  starIds?: string[];
 }
 
 export interface Message {
@@ -155,6 +208,12 @@ export interface Message {
   proactive?: boolean;
   /** Structured cards rendered under the message text. */
   cards?: MessageCard[];
+  /** The Star that wrote an agent message. */
+  starId?: string;
+  /** Came in from a messaging app. */
+  via?: 'telegram' | 'slack' | 'voice';
+  /** Set on "Got it. I'll remember: …" messages, so the UI can offer Undo. */
+  lessonId?: string;
 }
 
 /** A task or approval shown inline in the chat, like Muse's approval cards. */
@@ -172,6 +231,8 @@ export interface MemoryItem {
   source: string;
   createdAt: string;
   pinned: boolean;
+  /** Private to one Star; absent or null means every Star shares it. */
+  starId?: string | null;
 }
 
 // ---- Connections -------------------------------------------------------
@@ -199,6 +260,10 @@ export interface Rule {
   /** Built-in rules cannot be deleted or disabled. */
   builtIn: boolean;
   createdAt: string;
+  /** Applies to one Star only; absent or null means every Star. */
+  starId?: string | null;
+  /** Came with a template: it can only make a Star ask or stop, never skip asking. */
+  askOnly?: boolean;
 }
 
 // ---- Activity ----------------------------------------------------------
@@ -211,7 +276,9 @@ export type ActivityKind =
   | 'approval_resolved'
   | 'memory_learned'
   | 'research'
-  | 'message';
+  | 'message'
+  | 'guard'
+  | 'browser';
 
 export interface ActivityEvent {
   id: string;
@@ -219,12 +286,13 @@ export interface ActivityEvent {
   kind: ActivityKind;
   summary: string;
   taskId?: string;
+  starId?: string;
 }
 
 // ---- Settings ----------------------------------------------------------
 
 export type Tone = 'warm' | 'concise' | 'playful' | 'formal';
-export type AvatarCharacter = 'cloud' | 'dot' | 'drop';
+export type AvatarCharacter = 'cloud' | 'dot' | 'drop' | 'star' | 'sparkle' | 'nova' | 'comet';
 export type AvatarColor = 'sky' | 'peach' | 'mint' | 'lilac' | 'sun';
 
 export interface Settings {
@@ -239,6 +307,22 @@ export interface Settings {
   quietHours: { enabled: boolean; start: string; end: string };
   proactiveResearch: boolean;
   channels: { web: boolean; email: boolean; push: boolean; slack: boolean; telegram: boolean };
+  /** Stars turn corrections into lessons. Absent on older servers. */
+  learnFromCorrections?: boolean;
+  /** The model chain used to write lessons; null means the Star's own. */
+  smallProviderIds?: string[] | null;
+  /** ntfy topic for phone notifications, or null when off. */
+  ntfyTopic?: string | null;
+  /** '' means https://ntfy.sh. */
+  ntfyServer?: string;
+  /** How often email triggers check Gmail, 2 to 60. */
+  mailPollMinutes?: number;
+  /** '' | 'owner/repo' | an https URL to index.json. */
+  templateGallery?: string;
+  /** The second check on outward actions. Default model. */
+  guard?: GuardMode;
+  /** Stars may sign in with saved logins. Off by default. */
+  passwordFill?: boolean;
 }
 
 // ---- Ideas -------------------------------------------------------------
@@ -254,6 +338,476 @@ export interface Idea {
   /** What gets sent to the main chat when you say "Do it". */
   prompt: string;
   createdAt: string;
+}
+
+// ---- Stars and the constellation --------------------------------------
+
+/**
+ * A Star is one of the person's agents. Each has its own role, instructions,
+ * memory, apps, rules, autonomy and chat; together they form a constellation
+ * that can ask each other for help and hand work over.
+ */
+export interface Star {
+  id: string;
+  name: string;
+  /** One line: what this Star is for, e.g. "Finds and compares flights". */
+  role: string;
+  /** Longer standing instructions, like a job description. */
+  instructions: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  /** The first Star. It can't be deleted and its name is Settings.agentName. */
+  main: boolean;
+  /** null means use the global autonomy from Settings. */
+  autonomy: Autonomy | null;
+  /** Connection ids this Star may use; null means every connected app. */
+  connectionIds: string[] | null;
+  paused: boolean;
+  /** Model providers this Star uses, in order; null means the global order. Absent on older servers. */
+  providerIds?: string[] | null;
+  /** MCP servers this Star gets; null means all. Absent on older servers. */
+  mcpServerIds?: string[] | null;
+  /** The voice it speaks with (like "nova"). Absent or null: the default. */
+  voice?: string | null;
+  /** Its character, in its own words. '' means none. Absent on older servers. */
+  personality?: string;
+  /** How its replies look: length, format, emoji. */
+  replyStyle?: string;
+  /** When it pings you on your devices. Defaults: whenDone off, whenNeedsYou on. */
+  notify?: { whenDone: boolean; whenNeedsYou: boolean };
+  /** This Star's own chat (for the main Star, the main chat). */
+  conversationId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StarStatus {
+  state: AgentState;
+  activity: string | null;
+  taskId: string | null;
+  activeTasks: number;
+  pendingApprovals: number;
+}
+
+/** What the API returns for a Star: the record plus its live status. */
+export interface StarView extends Star {
+  status: StarStatus;
+  /** Its own address (plus-addressing on your Gmail), once Gmail is connected. */
+  email?: string | null;
+}
+
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'mcpServerIds' | 'voice'>> & { notify?: Partial<NonNullable<Star['notify']>> };
+
+export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
+
+/** One Star talking to another. */
+export interface ConstellationMessage {
+  id: string;
+  fromStarId: string;
+  toStarId: string;
+  /** request: ask_star asked for help; reply: the answer; handoff: work passed over; message: an FYI. */
+  kind: ConstellationMessageKind;
+  content: string;
+  /** The task the message is about (the new task for request and handoff). */
+  taskId?: string;
+  createdAt: string;
+  /** Whether the receiving Star has seen it yet. */
+  read: boolean;
+}
+
+// ---- Model providers --------------------------------------------------
+
+/** anthropic: the Anthropic Messages format. openai: the Chat Completions format. */
+export type ProviderKind = 'anthropic' | 'openai';
+
+export interface ProviderHealth {
+  /** unknown: not used yet; ok: last call worked; cooling: skipped until cooldownUntil; failing: needs fixing (bad key, unknown model). */
+  state: 'unknown' | 'ok' | 'cooling' | 'failing';
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  cooldownUntil: string | null;
+  /** Failures in a row. */
+  failures: number;
+  latencyMs: number | null;
+}
+
+/** A model the Stars can think with. The API key never leaves the server. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  hasKey: boolean;
+  /** Last four characters of the key, for recognising it. */
+  keyHint: string | null;
+  /** Comes from the server's ANTHROPIC_API_KEY; can't be edited or removed here. */
+  builtIn: boolean;
+  health: ProviderHealth;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderPreset {
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  /** An example model id; providers change their lists often. */
+  exampleModel: string;
+  needsKey: boolean;
+  keyUrl: string | null;
+  note: string;
+}
+
+/** apiKey is write-only: send a string to set it, null to remove it, or leave it out to keep it. */
+export interface ProviderInput {
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  apiKey?: string | null;
+  enabled?: boolean;
+}
+
+export interface ProviderTest {
+  ok: boolean;
+  latencyMs: number;
+  reply?: string;
+  error?: string;
+}
+
+// ---- Browser ----------------------------------------------------------
+
+/** A Star's tab in the shared real browser. */
+export interface BrowserSession {
+  starId: string;
+  url: string;
+  title: string;
+  /** Changes whenever a new screenshot is ready. */
+  frameId: string | null;
+  updatedAt: string;
+  /** Who is driving the tab. Using the live view takes it for the person; it goes back after 2 idle minutes. */
+  control?: 'star' | 'person';
+  /** While the person has it: their own note, or what the Star asked them to do. */
+  controlNote?: string | null;
+  /** A task waiting for the person to hand the browser back. */
+  waitingTaskId?: string | null;
+  /** Set while the person is recording a task to teach. */
+  recordingId?: string | null;
+  /** A Star stopped at payment: waiting for your OK, then your turn to pay. */
+  checkout?: CheckoutHandover | null;
+}
+
+export interface CheckoutHandover {
+  taskId: string;
+  total: string;
+  merchant: string;
+  summary: string;
+  url: string;
+  /** waiting_ok: the approval is waiting; paying: your turn, then hand back. */
+  stage: 'waiting_ok' | 'paying';
+}
+
+// ---- Voice -------------------------------------------------------------
+
+export interface VoiceSettings {
+  sttProviderIds: string[];
+  sttModel: string;
+  ttsProviderIds: string[];
+  ttsModel: string;
+  ttsVoice: string;
+}
+
+export interface VoiceStatus {
+  speechToText: { id: string; name: string }[];
+  textToSpeech: { id: string; name: string }[];
+  /** false: use the browser's own speech recognition. */
+  serverSpeechToText: boolean;
+  /** false: use the browser's speechSynthesis. */
+  serverTextToSpeech: boolean;
+  settings: VoiceSettings;
+}
+
+export interface VoiceTurn {
+  heard: string;
+  provider: string;
+  message: Message;
+  /** The Star's answer, or null if it's still coming (it streams as usual). */
+  reply: Message | null;
+}
+
+// ---- Your computer (the Sky companion) ----------------------------------
+
+export interface CompanionDevice {
+  id: string;
+  name: string;
+  platform: string;
+  /** The switch in the app. */
+  enabled: boolean;
+  /** The switch on the computer (press o in the companion). */
+  localEnabled: boolean;
+  connected: boolean;
+  /** Set on the computer; shown read-only. */
+  allow: { folders: string[]; commands: string[]; openUrls: boolean };
+  /** Also asks on the computer before each action. */
+  confirmLocally: boolean;
+  pairedAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface CompanionPairing {
+  code: string;
+  expiresAt: string;
+  /** What to run on the computer. */
+  command: string;
+}
+
+// ---- Teach a task ------------------------------------------------------
+
+/** One thing the person did while recording. Typed passwords are stored as "[password]", and card or secret fields as "[hidden]". */
+export interface RecordedStep {
+  at: string;
+  kind: 'open' | 'click' | 'type' | 'key' | 'scroll' | 'back';
+  url: string;
+  target?: string;
+  value?: string;
+}
+
+export interface Recording {
+  id: string;
+  starId: string;
+  title: string;
+  status: 'recording' | 'done';
+  startedAt: string;
+  endedAt: string | null;
+  steps: RecordedStep[];
+  /** The skill drafted once recording stops. */
+  draft: { name: string; whenToUse: string; steps: string } | null;
+  skillId: string | null;
+}
+
+export interface SaveRecordingInput {
+  name?: string;
+  whenToUse?: string;
+  steps?: string;
+  /** Every Star gets the skill. */
+  shared?: boolean;
+  /** Plain language, like "every Monday at 9:00": also sets up a recurring task that uses it. */
+  schedule?: string;
+}
+
+// ---- Workspace ---------------------------------------------------------
+
+export interface WorkspaceFile {
+  /** Relative to the Star's folder, with forward slashes. */
+  path: string;
+  kind: 'file' | 'folder';
+  size: number;
+  updatedAt: string;
+}
+
+export interface WorkspaceStatus {
+  sandbox: 'bwrap' | 'none';
+  reason: string | null;
+  root: string;
+}
+
+// ---- Saved logins (password fill) ---------------------------------------
+
+/** The password is write-only: it goes in, and never comes back. */
+export interface SavedLogin {
+  id: string;
+  origin: string;
+  username: string;
+  starIds: string[] | null;
+  autoFill: boolean;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SavedLoginInput {
+  origin: string;
+  username: string;
+  password: string;
+  starIds?: string[] | null;
+  autoFill?: boolean;
+}
+
+export type GuardMode = 'model' | 'rules' | 'off';
+
+export interface BrowserState {
+  ok: boolean;
+  running: boolean;
+  /** Why the browser can't start, when it can't. */
+  reason?: string | null;
+  sessions: BrowserSession[];
+}
+
+/** What the person does in a Star's tab. Clicks are in the 1280×800 page. */
+export type BrowserInput =
+  | { type: 'click'; x: number; y: number }
+  | { type: 'type'; text: string }
+  | { type: 'key'; key: string }
+  | { type: 'scroll'; dy: number }
+  | { type: 'navigate'; url: string }
+  | { type: 'back' };
+
+// ---- Skills, lessons, secrets, push -----------------------------------
+
+export type SkillSource = 'you' | 'star' | 'builtIn' | 'taught';
+
+/** A saved recipe a Star can follow. */
+export interface Skill {
+  id: string;
+  name: string;
+  whenToUse: string;
+  steps: string;
+  /** null: every Star can use it. */
+  starId: string | null;
+  source: SkillSource;
+  uses: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SkillInput = Pick<Skill, 'name' | 'whenToUse' | 'steps'> & { starId?: string | null };
+
+/** Something a Star took away from a correction. */
+export interface Lesson {
+  id: string;
+  starId: string;
+  lesson: string;
+  trigger: 'declined' | 'edited' | 'failed' | 'chat';
+  memoryId?: string;
+  skillId?: string;
+  taskId?: string;
+  undone: boolean;
+  createdAt: string;
+}
+
+/** A stored secret. The value never comes back. */
+export interface Secret {
+  id: string;
+  name: string;
+  description: string;
+  /** null: every Star. */
+  starIds: string[] | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretList {
+  /** Where the encryption key lives. memory: it's lost when the server restarts. */
+  keySource: 'env' | 'file' | 'memory';
+  secrets: Secret[];
+}
+
+export interface SecretInput {
+  name: string;
+  value: string;
+  description?: string;
+  starIds?: string[] | null;
+}
+
+export interface PushSubscriptionInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastSentAt: string | null;
+}
+
+export interface PushTestResult {
+  delivered: string[];
+  failed: string[];
+}
+
+// ---- Messaging apps, MCP, templates -----------------------------------
+
+export type MessagingApp = 'telegram' | 'slack';
+
+export interface MessagingStatus {
+  app: MessagingApp;
+  state: 'off' | 'pairing' | 'on' | 'error';
+  /** Show while pairing: "Send 482913 to your bot". */
+  pairCode: string | null;
+  /** telegram: https://t.me/<bot>?start=<code> */
+  pairLink: string | null;
+  /** Telegram bot username, or the Slack workspace. */
+  botName: string | null;
+  error: string | null;
+  /** When the pairing code stops working. */
+  pairExpiresAt?: string | null;
+  /** Too many wrong codes: pairCode is null until a new one is made. */
+  pairLocked?: boolean;
+}
+
+export type ToolEffect = 'read' | 'write' | 'send' | 'delete' | 'spend';
+
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  command: string | null;
+  args: string[];
+  url: string | null;
+  /** Names only; values stay on the server. */
+  envKeys: string[];
+  headerKeys: string[];
+  enabled: boolean;
+  toolEffects: Record<string, ToolEffect>;
+  status: 'off' | 'connecting' | 'ready' | 'error';
+  error: string | null;
+  /** effect: your choice, or the server's hint until you choose. Unconfirmed tools ask every time. */
+  tools: { name: string; toolName: string; description: string; effect: string; hint?: ToolEffect; confirmed?: boolean }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpInput {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  toolEffects?: Record<string, ToolEffect>;
+}
+
+/** What a template asks for, and what it would actually get here. Makes nothing. */
+export interface TemplatePreview {
+  template: StarTemplate;
+  wants: { autonomy: Autonomy | null; apps: string[] | null; rules: string[]; skills: string[] };
+  gets: { autonomy: Autonomy | null; connectionIds: string[] | null; rulesAskOnly: boolean };
+  skipped: string[];
+}
+
+export interface StarTemplate {
+  format: 'sky.star';
+  version: 1;
+  name: string;
+  role: string;
+  description?: string;
+  instructions: string;
+  personality: string;
+  replyStyle: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  autonomy: Autonomy | null;
+  apps: string[] | null;
+  skills: { name: string; whenToUse: string; steps: string }[];
+  rules: string[];
+}
+
+export interface TemplateEntry {
+  id: string;
+  source: 'builtIn' | 'gallery';
+  template: StarTemplate;
+  url?: string;
 }
 
 // ---- Pagination --------------------------------------------------------
@@ -277,7 +831,26 @@ export type LiveEvent =
   | { type: 'activity'; data: ActivityEvent }
   | { type: 'memory.learned'; data: MemoryItem }
   | { type: 'idea.created'; data: Idea }
-  | { type: 'settings.updated'; data: Settings };
+  | { type: 'settings.updated'; data: Settings }
+  | { type: 'provider.updated'; data: ModelProvider }
+  | { type: 'provider.deleted'; data: { id: string } }
+  | { type: 'browser.frame'; data: BrowserSession }
+  | { type: 'star.updated'; data: StarView }
+  | { type: 'star.deleted'; data: { id: string } }
+  | { type: 'constellation.message'; data: ConstellationMessage }
+  | { type: 'star.activity'; data: { starId: string; activity: string | null; taskId: string | null; at: string } }
+  | { type: 'skill.updated'; data: Skill }
+  | { type: 'skill.deleted'; data: { id: string } }
+  | { type: 'lesson.learned'; data: Lesson }
+  | { type: 'lesson.undone'; data: Lesson }
+  | { type: 'mcp.updated'; data: McpServer }
+  | { type: 'mcp.deleted'; data: { id: string } }
+  | { type: 'messaging.updated'; data: MessagingStatus }
+  | { type: 'browser.control'; data: BrowserSession }
+  | { type: 'recording.updated'; data: Recording }
+  | { type: 'workspace.changed'; data: { starId: string; path: string } }
+  | { type: 'companion.updated'; data: CompanionDevice }
+  | { type: 'companion.deleted'; data: { id: string } };
 
 export type LiveEventType = LiveEvent['type'];
 

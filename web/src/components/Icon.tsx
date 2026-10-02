@@ -21,6 +21,7 @@ const paths: Record<string, string> = {
   x: 'M6 6l12 12M18 6 6 18',
   pause: 'M8 5v14M16 5v14',
   play: 'M7 5v14l12-7z',
+  cursor: 'M5 3l14 7-6.5 2L10 18.5z',
   bolt: 'M13 3 4 14h7l-1 7 9-11h-7z',
   pin: 'M15 4l5 5-3 1-4 4 1 5-2 1-3-4-5 5M9 11 4 6',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
@@ -41,6 +42,17 @@ const paths: Record<string, string> = {
   dot: 'M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   wrench: 'M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.5-.5-.5-2.5z',
   note: 'M5 4h10l4 4v12H5zM14 4v5h5',
+  folder: 'M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z',
+  terminal: 'M4 5h16v14H4zM7.5 9.5l3 2.5-3 2.5M12.5 15h4',
+  upload: 'M12 15V4M7.5 8.5 12 4l4.5 4.5M4 15v4h16v-4',
+  download: 'M12 4v11M7.5 10.5 12 15l4.5-4.5M4 15v4h16v-4',
+  shield: 'M12 3 4.5 6v5.5c0 4.6 3.2 8.4 7.5 9.5 4.3-1.1 7.5-4.9 7.5-9.5V6z',
+  key: 'M14.5 13.5a4.5 4.5 0 1 0-4.2-2.9L3 18v3h3v-2h2v-2h2l1.6-1.6a4.5 4.5 0 0 0 2.9.1zM16 8.5h.01',
+  record: 'M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
+  stop: 'M7 7h10v10H7z',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
+  laptop: 'M5 5h14v10H5zM3 19h18',
+  card: 'M3 6h18v12H3zM3 10h18M7 15h4',
 };
 
 export type IconName = keyof typeof paths;

@@ -1,15 +1,14 @@
-import { api, type AvatarCharacter, type AvatarColor, type Settings as S, type Tone } from '../api';
-import { Avatar } from '../components/Avatar';
+import { api, type AvatarColor, type Settings as S, type Tone } from '../api';
+import { Avatar, CHARACTERS } from '../components/Avatar';
 import { Icon } from '../components/Icon';
+import { CompanionSetup } from '../components/CompanionSetup';
+import { VoiceSettings } from '../components/VoiceSettings';
+import { MessagingSetup } from '../components/MessagingSetup';
+import { PushSetup } from '../components/PushSetup';
 import { PageHead, Segmented, Skeleton, Switch } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { useTheme, type ThemePref } from '../lib/theme';
 
-const CHARACTERS: { value: AvatarCharacter; label: string }[] = [
-  { value: 'cloud', label: 'Cloud' },
-  { value: 'dot', label: 'Dot' },
-  { value: 'drop', label: 'Drop' },
-];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
 
 export function Settings() {
@@ -25,7 +24,9 @@ export function Settings() {
 
   return (
     <div className="page">
-      <PageHead title={`Your ${d.agentName}`} sub="Every agent in Sky is a Star. Give yours a name and a look." />
+      <PageHead title={`Your ${d.agentName}`} sub="Your main Star. Give it a name and a look; your other Stars are in the constellation.">
+        <a className="btn" href="#/stars"><Icon name="sparkle" size={15} /> Constellation</a>
+      </PageHead>
 
       <section className="panel studio">
         <div className="studio-stage"><Avatar size={120} track state={status?.state ?? 'idle'} character={d.avatar.character} color={d.avatar.color} /></div>
@@ -39,7 +40,7 @@ export function Settings() {
             <div className="pick">
               {CHARACTERS.map((c) => (
                 <button key={c.value} aria-pressed={d.avatar.character === c.value} aria-label={c.label} title={c.label} onClick={() => save({ avatar: { ...d.avatar, character: c.value } })}>
-                  <Avatar size={36} character={c.value} color={d.avatar.color} />
+                  <Avatar size={40} character={c.value} color={d.avatar.color} />
                 </button>
               ))}
             </div>
@@ -112,6 +113,14 @@ export function Settings() {
         </div>
       </section>
 
+      <PushSetup />
+
+      <MessagingSetup />
+
+      <VoiceSettings />
+
+      <CompanionSetup />
+
       <section>
         <div className="section-title">Appearance</div>
         <div className="panel">
@@ -126,7 +135,7 @@ export function Settings() {
 
       <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => api.setPaused(status?.state !== 'paused')}>
         <Icon name={status?.state === 'paused' ? 'play' : 'pause'} size={15} />
-        {status?.state === 'paused' ? `Wake ${d.agentName} up` : `Pause ${d.agentName} everywhere`}
+        {status?.state === 'paused' ? 'Wake every Star' : 'Pause every Star'}
       </button>
     </div>
   );

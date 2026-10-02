@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { api, type Autonomy, type Connection } from '../api';
 import { Icon } from '../components/Icon';
+import { PasswordFill } from '../components/PasswordFill';
+import { SecretsVault } from '../components/SecretsVault';
+import { loadGuardDecisions } from './Guard';
 import { ConnectionChip, ErrorNote, PageHead, Segmented, Skeleton, Switch, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
+import { href } from '../lib/router';
 
 const AUTONOMY: { value: Autonomy; title: string; body: string }[] = [
   { value: 'ask', title: 'Ask first', body: 'Researches and drafts, then checks with you before every action.' },
@@ -12,11 +16,11 @@ const AUTONOMY: { value: Autonomy; title: string; body: string }[] = [
   { value: 'autonomous', title: 'Hands-off', body: 'Acts on its own and tells you after. Safety rules still apply.' },
 ];
 
-const LOGO: Record<string, string> = { gmail: '#ea4335', calendar: '#1a73e8', github: '#24292f', web: '#6b7280', notion: '#191919', slack: '#4a154b', drive: '#188038', telegram: '#229ed9' };
+export const LOGO: Record<string, string> = { gmail: '#ea4335', calendar: '#1a73e8', github: '#24292f', web: '#6b7280', notion: '#191919', slack: '#4a154b', drive: '#188038', telegram: '#229ed9', computer: '#374151' };
 
 export function Permissions() {
   const toast = useToast();
-  const { settings, setSettings } = useAgent();
+  const { settings, setSettings, stars } = useAgent();
   const conns = useResource(() => api.listConnections(), []);
   const rules = useResource(() => api.listRules(), []);
   const [text, setText] = useState('');
@@ -37,7 +41,7 @@ export function Permissions() {
 
   return (
     <div className="page">
-      <PageHead title="Permissions" sub="How far Sky can go on its own, which apps it can use, and the lines it never crosses." />
+      <PageHead title="Permissions" sub="How far your Stars can go on their own, which apps they can use, and the lines they never cross. Each Star can be set tighter on its own page." />
 
       <section>
         <div className="section-title">Independence</div>
@@ -90,6 +94,7 @@ export function Permissions() {
                 <div className="grow">
                   <p style={{ opacity: r.enabled ? 1 : 0.5 }}>{r.text}</p>
                   {r.builtIn && <p className="t3 xs">Always on</p>}
+                  {r.starId && <p className="t3 xs">Only for {stars?.find((s) => s.id === r.starId)?.name ?? 'one Star'}{r.askOnly ? '. Came with a template, so it can only make it ask or stop' : ''}</p>}
                 </div>
                 {!r.builtIn && <button className="icon-btn" aria-label="Delete rule" onClick={async () => { await api.deleteRule(r.id); rules.setData((d) => d && d.filter((x) => x.id !== r.id)); }}><Icon name="trash" size={16} /></button>}
                 <Switch label={r.text} checked={r.enabled} disabled={r.builtIn} onChange={async (enabled) => { const u = await api.updateRule(r.id, { enabled }); rules.setData((d) => d && d.map((x) => (x.id === r.id ? u : x))); }} />
@@ -102,6 +107,46 @@ export function Permissions() {
           </div>
         </div>
       </section>
+
+      <GuardSummary />
+
+      <PasswordFill />
+
+      <SecretsVault />
     </div>
+  );
+}
+
+const GUARD_LABEL = { model: 'Quick checks and a second look', rules: 'Quick checks only', off: 'Off' };
+
+/** The guard's setting and its latest calls, linking to the full view. */
+function GuardSummary() {
+  const { settings } = useAgent();
+  const recent = useResource(() => loadGuardDecisions(3), [], ['activity']);
+  const mode = settings?.guard ?? 'model';
+  return (
+    <section>
+      <div className="section-title">Safety guard</div>
+      <div className="panel">
+        <div className="rows">
+          <a className="r" href={href('guard')}>
+            <span className="glyph"><Icon name="shield" size={16} /></span>
+            <div className="grow">
+              <h3>{GUARD_LABEL[mode]}</h3>
+              <p className="t3 xs">A second check on anything that sends, deletes, spends or runs. It can stop an action or ask you, never loosen your rules.</p>
+            </div>
+            {mode === 'off' ? <span className="chip warn">Off</span> : <span className="chip ok"><span className="dot" />On</span>}
+            <Icon name="chevron" size={16} />
+          </a>
+          {recent.data?.map((d) => (
+            <a key={d.id} className="r" href={href('guard')}>
+              <span className={`chip ${d.verdict === 'block' ? 'danger' : 'attn'}`} style={{ flex: 'none' }}>{d.verdict === 'block' ? 'Stopped' : 'Asked you'}</span>
+              <span className="grow" style={{ minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.what}</span>
+              <span className="t3 xs">{relTime(d.at)}</span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }

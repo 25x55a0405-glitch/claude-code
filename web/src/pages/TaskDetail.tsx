@@ -2,7 +2,9 @@ import { useState } from 'react';
 import { api, type StepKind, type TaskCommand, type TaskStep } from '../api';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { Icon, type IconName } from '../components/Icon';
-import { Bar, ErrorNote, Skeleton, StatusChip, kindMeta, useToast } from '../components/ui';
+import { TriggerPanel, triggerLine } from '../components/Triggers';
+import { Bar, ErrorNote, Skeleton, StarFace, StatusChip, kindMeta, useToast } from '../components/ui';
+import { useAgent } from '../lib/agent';
 import { clockTime, dayLabel, relTime } from '../lib/format';
 import { useLiveEvents, useResource } from '../lib/hooks';
 import { href } from '../lib/router';
@@ -16,6 +18,7 @@ export function TaskDetailPage({ id }: { id: string }) {
   const task = useResource(() => api.getTask(id), [id], ['task.updated']);
   const approvals = useResource(async () => (await api.listApprovals('pending')).filter((a) => a.taskId === id), [id], ['approval.created', 'approval.updated']);
   const connections = useResource(() => api.listConnections(), []);
+  const { stars } = useAgent();
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Set<string>>(new Set());
 
@@ -57,7 +60,18 @@ export function TaskDetailPage({ id }: { id: string }) {
       <div className="col">
         <div className="row wrap">
           <StatusChip status={t.status} />
-          <span className="chip"><Icon name={kind.icon} size={12} /> {t.schedule ?? kind.label}</span>
+          {stars && stars.length > 1 && (() => {
+            const owner = stars.find((s) => s.id === t.starId);
+            const asker = t.requestedBy && stars.find((s) => s.id === t.requestedBy!.starId);
+            return (
+              <>
+                {owner && <a className="chip" href={href('stars', owner.id)}><StarFace star={owner} size={14} still /> {owner.name}</a>}
+                {asker && <span className="chip">Asked by {asker.name}</span>}
+              </>
+            );
+          })()}
+          {(t.schedule || !t.trigger) && <span className="chip"><Icon name={kind.icon} size={12} /> {t.schedule ?? kind.label}</span>}
+          {t.trigger && <span className="chip"><Icon name="bolt" size={12} /> {triggerLine(t.trigger)}</span>}
           {t.connectionIds.map((c) => <span key={c} className="chip">{conn(c) ?? c}</span>)}
         </div>
         <h1>{t.title}</h1>
@@ -88,6 +102,8 @@ export function TaskDetailPage({ id }: { id: string }) {
 
       {approvals.data?.map((a) => <ApprovalCard key={a.id} approval={a} onDecided={() => approvals.reload()} />)}
 
+      {!finished && <TriggerPanel task={t} onChanged={task.reload} />}
+
       <section>
         <div className="section-title">What Sky did</div>
         <div className="panel pad col-lg">
@@ -100,9 +116,10 @@ export function TaskDetailPage({ id }: { id: string }) {
                     <div className="pip"><Icon name={stepIcon[s.kind]} size={12} /></div>
                     <div style={{ minWidth: 0 }}>
                       <div>{s.summary}</div>
+                      {/^Triggered by/.test(s.summary) && s.detail && <p className="said">{s.detail}</p>}
                       <div className="when">
                         {clockTime(s.at)}{conn(s.connectionId) && ` · ${conn(s.connectionId)}`}
-                        {s.detail && (
+                        {s.detail && !/^Triggered by/.test(s.summary) && (
                           <>{' · '}<button className="linkish" aria-expanded={open.has(s.id)} onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })}>{open.has(s.id) ? 'Hide details' : 'Details'}</button></>
                         )}
                       </div>

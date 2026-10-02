@@ -185,6 +185,74 @@ here too and is echoed in `AgentStatus.autonomy`. Every change emits
 `settings.updated`, and an autonomy change also emits `status`. Nested objects (`quietHours`, `channels`) are
 sent whole.
 
+## Stars
+
+The UI's Star screens use the endpoints and events in
+[BACKEND.md](BACKEND.md#stars-and-the-constellation-for-the-ui-to-build-on)
+(`/stars`, `/stars/:id/pause`, `/constellation/messages`, `star.updated`,
+`star.deleted`, `constellation.message`) and the optional `starId` fields and
+filters listed there. The shapes are `Star`, `StarView` and
+`ConstellationMessage` in `web/src/api/types.ts`. A server without `/stars`
+still works: the UI shows a single Star built from Settings.
+
+## Models and the browser
+
+The Models screen uses `/providers`, `/providers/presets`,
+`/providers/:id/test` and `/providers/order`, plus `providerIds` on a Star, all
+in [BACKEND.md](BACKEND.md). The UI only sends `apiKey` when the person types a
+new one (or `null` to remove it) and only ever shows `hasKey` and `keyHint`.
+The live browser shows `GET /browser/:starId/screenshot?f=<frameId>`, refreshed
+on each `browser.frame` event (not the MJPEG stream, so it doesn't hold a
+connection open per tab), and sends what the person does to
+`POST /browser/:starId/input` in the 1280×800 page's coordinates. Taking over
+pauses the Star with `POST /stars/:id/pause`; handing back resumes it.
+
+## Wave 1
+
+Personality, skills, lessons, secrets and push use the Wave 1 endpoints and
+events in [BACKEND.md](BACKEND.md). Secret values only go up, never come back.
+`web/public/sw.js` shows push messages (`{ title, body, url, tag }`) and opens
+`url`; `manifest.webmanifest` and the icons let iPhone add Sky to the Home
+Screen, which iOS needs for web push. `#/tasks/:id` links open the goal.
+
+## Wave 2
+
+Triggers, chat apps, Star addresses, MCP, group chats and templates use the
+Wave 2 endpoints and events in [BACKEND.md](BACKEND.md). Every write sends
+`Content-Type: application/json`, so the server's JSON-only and same-origin
+checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
+
+## Wave 3
+
+- **Workspace** (`#/workspace/:starId`): `getWorkspace`, `listFiles`, `fileUrl`, `uploadFile` (the raw file as the body; plain text goes up as `application/octet-stream`, because the server refuses `text/plain` and form types), `deleteFile`. The terminal is read-only: it shows the Star's `Ran \`…\`` steps from its latest goals, with the output from `detail`.
+- **Browser**: `takeOverBrowser`, `handBackBrowser` (with a note). The live view follows `BrowserSession.control`, shows `controlNote` while `waitingTaskId` is set, and says so when control went back by itself after 2 quiet minutes.
+- **Teach a task**: `startRecording`, `stopRecording`, `listRecordings`, `getRecording`, `deleteRecording`, `saveRecordingAsSkill`. Recordings not yet saved are listed on Skills.
+- **Guard** (`#/guard`, linked from Permissions): `settings.guard`, and the decisions read from Activity entries with `kind: "guard"`.
+- **Password fill** (Permissions, Signing in): `settings.passwordFill` is off until the person confirms what it relaxes. `listLogins`, `createLogin`, `updateLogin`, `deleteLogin`; passwords are write-only.
+- Events: `browser.control`, `recording.updated`, `workspace.changed`.
+
+## Round 4
+
+- **Templates**: "Use this" and imports call `previewTemplate` (`POST /templates/preview`) first and show what it wants, what it gets under your settings, and what was left out, before `importTemplate`.
+- **Tools**: a tool with `confirmed: false` asks every time until you choose; its `hint` is offered as the suggestion and it isn't counted as looking only.
+- **Chat apps**: the pairing code shows `pairExpiresAt` and `pairLocked`, with `newPairCode` (`POST /messaging/:app/code`).
+- **Goals**: "Triggered by …" steps show the sender's text from `detail`.
+
+## Wave 4
+
+- **Voice**: `getVoice` first. With server speech, the mic records audio for `sendVoice` (`POST /conversations/:id/voice`) and replies play from `speak` (`POST /voice/speak`); otherwise the browser's own speech recognition and synthesis are used and the text goes through `sendMessage(…, "voice")`. `setVoice` (`PUT /voice`) in Settings; `Star.voice` on a Star's page.
+- **Your computer** (Settings): `listCompanion`, `pairCompanion`, `updateCompanionDevice` (`{ enabled }`), `deleteCompanionDevice`. The allowlist is read-only here. Which Stars can use it is the `computer` entry in each Star's `connectionIds`. Events: `companion.updated`, `companion.deleted`.
+- **Checkout**: `BrowserSession.checkout`. At `waiting_ok` the approval shows the total and "OK, I’ll pay"; at `paying` the browser is the person's, and "I’ve paid, hand back" returns it. Stars never enter card details.
+
+## Round 5
+
+- **Approvals**: Edit shows only when `Approval.editable` is true (anything else gets `400 not_editable`). An opened preview scrolls, since file writes show their whole content (up to 20,000 characters).
+- **Teach a task**: a typed step stored as `[hidden]` (a card or secret field) shows as "something private".
+
+## Characters
+
+`AvatarCharacter` now also has `star`, `sparkle`, `nova` and `comet`. The server's list is still `cloud`, `dot` and `drop`, so the first save of a star character is refused with `400` (`avatar.character`). The app then sends `dot` and keeps the choice in this browser (`localStorage` key `sky.looks`), and shows it on every read and live event. When the server's `CHARACTERS` lists (in `http/routes.ts` and `templates.ts`) gain the four names, the saves go straight through and nothing is kept in the browser.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

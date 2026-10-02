@@ -7,7 +7,7 @@ import { href } from '../lib/router';
 
 const ICON: Record<ActivityKind, IconName> = {
   task_started: 'play', task_completed: 'check', task_failed: 'alert', approval_requested: 'bolt',
-  approval_resolved: 'approve', memory_learned: 'brain', research: 'search', message: 'chat',
+  approval_resolved: 'approve', memory_learned: 'brain', research: 'search', message: 'chat', guard: 'shield', browser: 'cursor',
 };
 
 export function Activity() {
@@ -31,7 +31,7 @@ export function Activity() {
               {items.map((e) => {
                 const inner = (
                   <>
-                    <div className="glyph" style={e.kind === 'approval_requested' ? { color: 'var(--attn)' } : e.kind === 'task_failed' ? { color: 'var(--danger)' } : e.kind === 'task_completed' ? { color: 'var(--ok)' } : undefined}><Icon name={ICON[e.kind]} size={16} /></div>
+                    <div className="glyph" style={e.kind === 'approval_requested' ? { color: 'var(--attn)' } : e.kind === 'task_failed' ? { color: 'var(--danger)' } : e.kind === 'task_completed' ? { color: 'var(--ok)' } : e.kind === 'guard' ? { color: /^Guard stopped/.test(e.summary) ? 'var(--danger)' : 'var(--warn)' } : undefined}><Icon name={ICON[e.kind]} size={16} /></div>
                     <span className="grow">{e.summary}</span>
                     <span className="t3 xs num">{clockTime(e.at)}</span>
                   </>
