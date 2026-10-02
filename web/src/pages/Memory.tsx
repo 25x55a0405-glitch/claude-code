@@ -34,7 +34,7 @@ export function Memory() {
 
   return (
     <div className="page">
-      <PageHead title="Memory" sub="What Skys knows about you. Change or delete anything and it takes effect right away." />
+      <PageHead title="Memory" sub="What Sky knows about you. Change or delete anything and it takes effect right away." />
 
       <form
         className="composer"
@@ -48,7 +48,7 @@ export function Memory() {
           toast('Remembered');
         }}
       >
-        <input id="mem-new" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', padding: '8px 0' }} value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Tell Skys something to remember" aria-label="New memory" />
+        <input id="mem-new" style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', padding: '8px 0' }} value={adding} onChange={(e) => setAdding(e.target.value)} placeholder="Tell Sky something to remember" aria-label="New memory" />
         <select id="mem-cat" value={addCat} onChange={(e) => setAddCat(e.target.value as MemoryCategory)} aria-label="Kind" style={{ border: 'none', background: 'transparent', color: 'var(--text-2)', fontSize: 13 }}>
           {CATS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>

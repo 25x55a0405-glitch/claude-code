@@ -45,8 +45,8 @@ function SignIn({ onDone }: { onDone: () => void }) {
     <main className="signin">
       <form className="signin-card" onSubmit={(e) => { e.preventDefault(); submit(); }}>
         <Avatar size={96} track state={error ? 'waiting' : 'idle'} />
-        <h1>Sign in to Skys</h1>
-        <p className="t2">Enter the password set on your Skys server.</p>
+        <h1>Sign in to Sky</h1>
+        <p className="t2">Enter the password set on your Sky server.</p>
         <div className="composer signin-field">
           <input
             id="signin-password"

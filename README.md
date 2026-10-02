@@ -1,6 +1,6 @@
-# Skys
+# Sky
 
-Skys is a personal, always-on autonomous agent. Hand it something once and it
+Sky is a personal, always-on autonomous agent. Hand it something once and it
 keeps working in the background, checks with you before anything risky, and
 learns how you like things done.
 

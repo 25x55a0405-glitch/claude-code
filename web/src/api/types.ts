@@ -1,15 +1,15 @@
-// Data model shared between the Skys web UI and the back end.
+// Data model shared between the Sky web UI and the back end.
 // docs/API.md describes the HTTP endpoints that carry these shapes.
 // All timestamps are ISO 8601 strings in UTC. All ids are opaque strings.
 
 export type AgentState = 'idle' | 'working' | 'waiting' | 'paused' | 'offline';
 
-/** How much Skys may do without asking first. */
+/** How much Sky may do without asking first. */
 export type Autonomy = 'ask' | 'balanced' | 'autonomous';
 
 export interface AgentStatus {
   state: AgentState;
-  /** One line describing what Skys is doing right now, shown under the orb. */
+  /** One line describing what Sky is doing right now, shown under the orb. */
   activity: string | null;
   /** Task the current activity belongs to, if any. */
   taskId: string | null;
@@ -112,7 +112,7 @@ export interface Approval {
   action: string;
   /** Who or what the action touches, e.g. "maya@studio.co". */
   target: string;
-  /** Why Skys wants to do this. */
+  /** Why Sky wants to do this. */
   reason: string;
   /** Exact content that will be sent or changed. */
   preview: string;
@@ -127,7 +127,7 @@ export interface ApprovalDecision {
   decision: 'approve' | 'reject';
   /** Optional edited preview to use instead of the original (approve only). */
   editedPreview?: string;
-  /** Optional note for Skys, which it should remember. */
+  /** Optional note for Sky, which it should remember. */
   note?: string;
 }
 
@@ -151,7 +151,7 @@ export interface Message {
   content: string;
   createdAt: string;
   status: 'streaming' | 'done' | 'error';
-  /** True when Skys reached out on its own rather than replying. */
+  /** True when Sky reached out on its own rather than replying. */
   proactive?: boolean;
   /** Structured cards rendered under the message text. */
   cards?: MessageCard[];
@@ -168,7 +168,7 @@ export interface MemoryItem {
   id: string;
   category: MemoryCategory;
   content: string;
-  /** Where Skys learned it, e.g. "Chat on Sep 30" or "Gmail". */
+  /** Where Sky learned it, e.g. "Chat on Sep 30" or "Gmail". */
   source: string;
   createdAt: string;
   pinned: boolean;
@@ -245,7 +245,7 @@ export interface Settings {
 
 export type IdeaKind = 'suggestion' | 'tip' | 'plan_update';
 
-/** Something Skys thinks it could do for you, based on your goals and patterns. */
+/** Something Sky thinks it could do for you, based on your goals and patterns. */
 export interface Idea {
   id: string;
   kind: IdeaKind;

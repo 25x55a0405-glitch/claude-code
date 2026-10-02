@@ -1,8 +1,8 @@
-import type { SkysApi } from './client';
+import type { SkyApi } from './client';
 import { createHttpApi } from './http';
 import { createMockApi } from './mock';
 
-export type { Session, SkysApi } from './client';
+export type { Session, SkyApi } from './client';
 export { HttpError, UNAUTHORIZED_EVENT } from './http';
 export * from './types';
 
@@ -11,5 +11,5 @@ export * from './types';
  * or "" for same-origin. Leave it unset to run on the in-memory mock.
  */
 const url = import.meta.env.VITE_SKYS_API_URL as string | undefined;
-export const api: SkysApi = url === undefined ? createMockApi() : createHttpApi(url);
+export const api: SkyApi = url === undefined ? createMockApi() : createHttpApi(url);
 export const usingMock = url === undefined;

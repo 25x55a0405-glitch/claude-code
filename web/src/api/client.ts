@@ -31,7 +31,7 @@ export interface Session {
   authRequired: boolean;
 }
 
-export interface SkysApi {
+export interface SkyApi {
   getSession(): Promise<Session>;
   /** Rejects with the server's message when the password is wrong. */
   signIn(password: string): Promise<void>;

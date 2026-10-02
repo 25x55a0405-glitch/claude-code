@@ -19,13 +19,13 @@ export function Ideas() {
 
   return (
     <div className="page">
-      <PageHead title="Ideas" sub="Things Skys noticed it could do for you, from your goals, your inbox and your routine." />
+      <PageHead title="Ideas" sub="Things Sky noticed it could do for you, from your goals, your inbox and your routine." />
       {ideas.error ? (
         <ErrorNote error={ideas.error} retry={ideas.reload} />
       ) : !ideas.data ? (
         <Skeleton h={150} n={2} />
       ) : ideas.data.length === 0 ? (
-        <Empty title="No new ideas">Skys will add some as it learns how you work.</Empty>
+        <Empty title="No new ideas">Sky will add some as it learns how you work.</Empty>
       ) : (
         <div className="idea-grid">
           {ideas.data.map((i, n) => (

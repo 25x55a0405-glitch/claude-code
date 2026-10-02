@@ -96,7 +96,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     return out;
   }, [messages]);
 
-  const name = settings?.agentName ?? 'Skys';
+  const name = settings?.agentName ?? 'Sky';
 
   if (messages && messages.length === 0) {
     return (

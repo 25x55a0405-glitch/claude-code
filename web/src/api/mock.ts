@@ -1,4 +1,4 @@
-import type { SkysApi } from './client';
+import type { SkyApi } from './client';
 import type {
   ActivityEvent,
   AgentStatus,
@@ -17,7 +17,7 @@ const wait = (ms = 180) => new Promise((r) => setTimeout(r, ms + Math.random() *
 const clone = <T>(v: T): T => structuredClone(v);
 
 /** In-memory back end that behaves like the real one, including live events. */
-export function createMockApi(): SkysApi {
+export function createMockApi(): SkyApi {
   const db = {
     settings: clone(seed.seedSettings),
     tasks: clone(seed.seedTasks),
@@ -72,7 +72,7 @@ export function createMockApi(): SkysApi {
     return t;
   };
 
-  // Ambient "always-on" behaviour: Skys keeps working on its own.
+  // Ambient "always-on" behaviour: Sky keeps working on its own.
   const ambient = [
     { task: 't_flights', line: 'Comparing Lisbon fares on Kayak', step: 'Checked Kayak and Skyscanner: still $642 at best' },
     { task: 't_prs', line: 'Checking your pull requests', step: 'No new reviews; CI green on all 3 PRs' },

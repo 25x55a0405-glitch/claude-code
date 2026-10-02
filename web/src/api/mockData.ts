@@ -18,7 +18,7 @@ const ahead = (min: number) => new Date(now + min * 60_000).toISOString();
 
 export const seedSettings: Settings = {
   userName: 'd',
-  agentName: 'Skys',
+  agentName: 'Sky',
   avatar: { character: 'cloud', color: 'sky' },
   tone: 'warm',
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -35,9 +35,9 @@ export const seedConnections: Connection[] = [
   { id: 'github', provider: 'github', name: 'GitHub', description: 'Watch repos, issues and pull requests', status: 'connected', access: 'read', lastSyncAt: ago(12) },
   { id: 'web', provider: 'web', name: 'Web browser', description: 'Search and read the web in a sandboxed browser', status: 'connected', access: 'read', lastSyncAt: ago(1) },
   { id: 'notion', provider: 'notion', name: 'Notion', description: 'Read and update pages and databases', status: 'expired', access: 'read_write', lastSyncAt: ago(60 * 26) },
-  { id: 'slack', provider: 'slack', name: 'Slack', description: 'Talk to Skys and post to channels', status: 'disconnected', access: 'read' },
+  { id: 'slack', provider: 'slack', name: 'Slack', description: 'Talk to Sky and post to channels', status: 'disconnected', access: 'read' },
   { id: 'drive', provider: 'drive', name: 'Google Drive', description: 'Find and read documents', status: 'disconnected', access: 'read' },
-  { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Skys from your phone', status: 'disconnected', access: 'read_write' },
+  { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Sky from your phone', status: 'disconnected', access: 'read_write' },
 ];
 
 export const seedTasks: TaskDetail[] = [
@@ -189,7 +189,7 @@ export const seedMemory: MemoryItem[] = [
   { id: 'm1', category: 'preference', content: 'Prefers morning flights and aisle seats', source: 'Chat on Sep 28', createdAt: ago(60 * 24 * 4), pinned: true },
   { id: 'm2', category: 'style', content: 'Writes short emails, signs off with just “d”', source: 'Learned from Gmail', createdAt: ago(60 * 24 * 6), pinned: false },
   { id: 'm3', category: 'person', content: 'Maya is the design lead at Studio. Reviews are usually Fridays.', source: 'Learned from Gmail', createdAt: ago(60 * 24 * 5), pinned: false },
-  { id: 'm4', category: 'goal', content: 'Building Skys, a personal always-on agent', source: 'Chat on Oct 2', createdAt: ago(60), pinned: true },
+  { id: 'm4', category: 'goal', content: 'Building Sky, a personal always-on agent', source: 'Chat on Oct 2', createdAt: ago(60), pinned: true },
   { id: 'm5', category: 'fact', content: 'Dentist is Smile Studio on 5th Street', source: 'Booking on Sep 30', createdAt: ago(60 * 5), pinned: false },
   { id: 'm6', category: 'preference', content: 'No meetings before 10am', source: 'Chat on Sep 20', createdAt: ago(60 * 24 * 12), pinned: false },
   { id: 'm7', category: 'person', content: 'Sam is a close friend. Lunch most Thursdays.', source: 'Learned from Calendar', createdAt: ago(60 * 24 * 9), pinned: false },
@@ -209,7 +209,7 @@ export const seedActivity: ActivityEvent[] = [
   { id: 'e2', at: ago(2), kind: 'approval_requested', summary: 'Asked to send a reply to Maya', taskId: 't_inbox' },
   { id: 'e3', at: ago(6), kind: 'task_started', summary: 'Started hourly inbox pass', taskId: 't_inbox' },
   { id: 'e4', at: ago(15), kind: 'research', summary: 'Checked 3 GitHub pull requests', taskId: 't_prs' },
-  { id: 'e5', at: ago(60), kind: 'memory_learned', summary: 'Learned: you are building Skys' },
+  { id: 'e5', at: ago(60), kind: 'memory_learned', summary: 'Learned: you are building Sky' },
   { id: 'e6', at: ago(120), kind: 'task_completed', summary: 'Delivered your morning briefing', taskId: 't_brief' },
   { id: 'e7', at: ago(300), kind: 'task_completed', summary: 'Booked dentist for Tue Oct 7', taskId: 't_dentist' },
   { id: 'e8', at: ago(60 * 26), kind: 'task_failed', summary: 'Notion sync failed: access expired', taskId: 't_notion' },
@@ -223,7 +223,7 @@ export const seedIdeas: Idea[] = [
 ];
 
 export const seedConversations: Conversation[] = [
-  { id: 'c_main', main: true, title: 'Skys', updatedAt: ago(1), preview: 'One thing needs you: Maya wants to move Friday.' },
+  { id: 'c_main', main: true, title: 'Sky', updatedAt: ago(1), preview: 'One thing needs you: Maya wants to move Friday.' },
   { id: 'c_trip', main: false, title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.' },
   { id: 'c_gift', main: false, title: 'Gift for Sam', updatedAt: ago(60 * 24 * 3), preview: 'The pour-over kit arrives Thursday.' },
 ];

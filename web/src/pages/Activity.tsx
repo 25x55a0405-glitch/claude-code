@@ -22,7 +22,7 @@ export function Activity() {
 
   return (
     <div className="page">
-      <PageHead title="Activity" sub="Everything Skys has done, including the work it does while you’re away." />
+      <PageHead title="Activity" sub="Everything Sky has done, including the work it does while you’re away." />
       {feed.error ? <ErrorNote error={feed.error} retry={feed.reload} /> : !feed.data ? <Skeleton h={48} n={6} /> : groups.length === 0 ? <Empty title="Nothing yet" /> : groups.map(([label, items]) => (
         <section key={label}>
           <div className="section-title">{label}</div>

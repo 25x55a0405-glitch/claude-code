@@ -37,7 +37,7 @@ export function Permissions() {
 
   return (
     <div className="page">
-      <PageHead title="Permissions" sub="How far Skys can go on its own, which apps it can use, and the lines it never crosses." />
+      <PageHead title="Permissions" sub="How far Sky can go on its own, which apps it can use, and the lines it never crosses." />
 
       <section>
         <div className="section-title">Independence</div>
