@@ -27,6 +27,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const ideas = useResource(() => api.listIdeas(), []);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [thinking, setThinking] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const first = useRef(true);
 
@@ -61,9 +62,23 @@ export function Chat({ conversationId }: { conversationId?: string }) {
 
   const send = async (text: string) => {
     if (!activeId) return;
+    setSendError(null);
     setThinking(true);
-    const m = await api.sendMessage(activeId, text);
-    setMessages((ms) => [...(ms ?? []), m]);
+    const before = new Set((messages ?? []).map((x) => x.id));
+    try {
+      const m = await api.sendMessage(activeId, text);
+      // The reply can start streaming before this call returns, so put the
+      // user's message ahead of anything that arrived after it was sent.
+      setMessages((ms) => {
+        const list = (ms ?? []).filter((x) => x.id !== m.id);
+        const at = list.findIndex((x) => !before.has(x.id));
+        return at === -1 ? [...list, m] : [...list.slice(0, at), m, ...list.slice(at)];
+      });
+    } catch (e) {
+      setThinking(false);
+      setSendError(`Couldn’t send that. ${(e as Error).message}`);
+      throw e;
+    }
   };
 
   const groups = useMemo(() => {
@@ -90,6 +105,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
           <Me size={104} track />
           <h1>{conv && !conv.main ? 'What’s this side chat about?' : `What can I take off your plate${settings ? `, ${settings.userName}` : ''}?`}</h1>
           <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus />
+          {sendError && <p className="send-error" role="alert">{sendError}</p>}
           <div className="ideas-row">
             {ideas.data?.slice(0, 3).map((i) => (
               <button key={i.id} className="idea-pill" onClick={() => send(i.prompt)}>{i.title}</button>
@@ -150,6 +166,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
         </div>
       </div>
       <div className="dock">
+        {sendError && <p className="send-error" role="alert">{sendError}</p>}
         <Composer onSend={send} placeholder={conv && !conv.main ? `Message ${name} in “${conv.title}”` : `Message ${name}`} />
         <div className="hint">{name} keeps working after you close this tab, and asks before anything it can’t undo.</div>
       </div>

@@ -2,7 +2,8 @@ import type { SkysApi } from './client';
 import { createHttpApi } from './http';
 import { createMockApi } from './mock';
 
-export type { SkysApi } from './client';
+export type { Session, SkysApi } from './client';
+export { HttpError, UNAUTHORIZED_EVENT } from './http';
 export * from './types';
 
 /**

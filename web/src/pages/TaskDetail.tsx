@@ -27,8 +27,12 @@ export function TaskDetailPage({ id }: { id: string }) {
   });
 
   const command = async (c: TaskCommand) => {
-    await api.commandTask(id, c);
-    toast({ pause: 'Paused', resume: 'Resumed', run_now: 'Running now', cancel: 'Stopped' }[c]);
+    try {
+      await api.commandTask(id, c);
+      toast({ pause: 'Paused', resume: 'Resumed', run_now: 'Running now', cancel: 'Stopped' }[c]);
+    } catch (e) {
+      toast((e as Error).message);
+    }
     task.reload();
   };
 

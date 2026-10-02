@@ -23,6 +23,10 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
       const a = await api.decideApproval(approval.id, { decision, editedPreview: editing && draft !== approval.preview ? draft : undefined });
       toast(decision === 'approve' ? 'Approved' : 'Declined');
       onDecided?.(a);
+    } catch (e) {
+      // e.g. 409 when it was already answered on another device.
+      toast((e as Error).message);
+      onDecided?.(approval);
     } finally {
       setBusy(false);
     }
