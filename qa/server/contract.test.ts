@@ -46,7 +46,7 @@ test('tasks list newest updatedAt first and filter by several statuses', async (
   assert.deepEqual(new Set(some.map((t) => t.status)), new Set(['paused', 'scheduled']));
 });
 
-test('a task made while Skys is paused waits, then runs once Skys resumes', async () => {
+test('a task made while Sky is paused waits, then runs once Sky resumes', async () => {
   s = await startServer();
   await s.call('POST', '/status', { paused: true });
   const t = (await s.call<Task>('POST', '/tasks', { title: 'Find ramen', description: 'find ramen', kind: 'one_off' })).body;
@@ -81,8 +81,8 @@ test('unknown ids are 404s with the documented error shape', async () => {
 // ---- bugs ---------------------------------------------------------------------
 
 test('BUG 4: a reply cut off by a restart does not stay "streaming" forever', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'skys-qa-'));
-  const config = loadConfig({ SKYS_USER_NAME: 'd' }, { dbPath: join(dir, 'skys.db'), brain: 'scripted', tickMs: 60_000, webDist: '/nonexistent' });
+  const dir = mkdtempSync(join(tmpdir(), 'sky-qa-'));
+  const config = loadConfig({ SKY_USER_NAME: 'd' }, { dbPath: join(dir, 'sky.db'), brain: 'scripted', tickMs: 60_000, webDist: '/nonexistent' });
   const hangs = new ScriptedBrain();
   hangs.turn = () => new Promise(() => {});
   let app = createApp(config, hangs);
@@ -127,4 +127,73 @@ test('BUG 8: PATCH /settings rejects a body that isn’t an object', async () =>
     const r = await raw('PATCH', '/settings', body);
     assert.equal(r.status, 400, `PATCH /settings with ${body} returned ${r.status}`);
   }
+});
+
+// ---- Stars ----------------------------------------------------------------------
+
+const settle = async () => { for (let i = 0; i < 10; i++) { await s!.app.runtime.idle(); await new Promise((r) => setTimeout(r, 20)); } };
+
+test('Star names are unique ignoring case and spaces, including the main Star', async () => {
+  s = await startServer();
+  assert.equal((await s.call('POST', '/stars', { name: 'Scout', role: 'Research' })).status, 200);
+  for (const name of ['scout', ' Scout ', 'sky']) assert.equal((await s.call('POST', '/stars', { name, role: 'x' })).status, 409, name);
+  assert.equal((await s.call('PATCH', '/settings', { agentName: 'Scout' })).status, 409);
+  assert.equal((await s.call('GET', '/settings')).body.agentName, 'Sky');
+});
+
+test('renaming the main Star renames Sky in Settings and the main chat', async () => {
+  s = await startServer();
+  const [main] = (await s.call('GET', '/stars')).body;
+  assert.equal((await s.call('PATCH', `/stars/${main.id}`, { name: 'Nova' })).status, 200);
+  assert.equal((await s.call('GET', '/settings')).body.agentName, 'Nova');
+  assert.equal((await s.call('GET', '/conversations')).body.find((c: { main: boolean }) => c.main).title, 'Nova');
+  assert.equal((await s.call('DELETE', `/stars/${main.id}`)).status, 403);
+});
+
+test('an unknown starId is a 400 everywhere it is accepted', async () => {
+  s = await startServer();
+  assert.equal((await s.call('POST', '/tasks', { title: 'x', description: '', kind: 'one_off', starId: 'nope' })).status, 400);
+  for (const p of ['/tasks', '/approvals', '/conversations', '/memory', '/rules', '/constellation/messages']) {
+    assert.equal((await s.call('GET', `${p}?starId=nope`)).status, 400, p);
+  }
+});
+
+test('waking every Star leaves a Star you paused yourself paused', async () => {
+  s = await startServer();
+  const scout = (await s.call('POST', '/stars', { name: 'Scout', role: 'Research' })).body;
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: true });
+  await s.call('POST', '/status', { paused: true });
+  await s.call('POST', '/status', { paused: false });
+  const view = (await s.call('GET', `/stars/${scout.id}`)).body;
+  assert.equal(view.paused, true);
+  assert.equal(view.status.state, 'paused');
+});
+
+test('cancelling the work a Star asked for tells the asking task, which ends', async () => {
+  s = await startServer();
+  const scout = (await s.call('POST', '/stars', { name: 'Scout', role: 'Research' })).body;
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: true });
+  const t = (await s.call<Task>('POST', '/tasks', { title: 'Plan dinner', description: 'Ask Scout for the best ramen in Lisbon', kind: 'one_off' })).body;
+  await settle();
+  assert.equal((await s.call<Task>('GET', `/tasks/${t.id}`)).body.status, 'blocked');
+  const child = (await s.call<Task[]>('GET', '/tasks')).body.find((x) => x.requestedBy?.taskId === t.id)!;
+  await s.call('POST', `/tasks/${child.id}/cancel`);
+  await settle();
+  const asker = (await s.call<Task>('GET', `/tasks/${t.id}`)).body;
+  assert.equal(asker.status, 'done');
+  assert.match(asker.lastOutcome!, /Scout couldn’t do it/);
+});
+
+test('BUG 11: stopping a task also stops the work it asked another Star for', async () => {
+  s = await startServer();
+  const scout = (await s.call('POST', '/stars', { name: 'Scout', role: 'Research' })).body;
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: true });
+  const t = (await s.call<Task>('POST', '/tasks', { title: 'Plan dinner', description: 'Ask Scout for the best ramen in Lisbon', kind: 'one_off' })).body;
+  await settle();
+  const child = (await s.call<Task[]>('GET', '/tasks')).body.find((x) => x.requestedBy?.taskId === t.id)!;
+  await s.call('POST', `/tasks/${t.id}/cancel`);
+  await s.call('POST', `/stars/${scout.id}/pause`, { paused: false });
+  await settle();
+  const after = (await s.call<Task>('GET', `/tasks/${child.id}`)).body;
+  assert.notEqual(after.lastOutcome, 'Done: The best ramen in Lisbon', 'Scout still did the work for a task you stopped');
 });

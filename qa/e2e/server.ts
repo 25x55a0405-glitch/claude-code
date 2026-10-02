@@ -1,4 +1,4 @@
-// Starts the real Skys server for the browser tests: fresh in-memory database,
+// Starts the real Sky server for the browser tests: fresh in-memory database,
 // scripted brain, the built web app at /, and a fake Gmail so approvals can be
 // exercised end to end. Prints the URL on stdout once it is listening.
 import { resolve } from 'node:path';

@@ -1,77 +1,77 @@
-# Skys bugs found in testing
+# Sky bugs found in testing
 
-Found on 2026-10-02 by running the real web app against the real server (scripted
-brain, no API key) in Chromium, and by API checks against docs/API.md and
-docs/BACKEND.md. Each bug has a test that fails today and passes once it's fixed.
-The testing thread reports these; the UI and back-end threads own the fixes.
+Each bug has a test named "BUG n" that fails until it's fixed. The testing
+thread reports these, and the UI and back-end threads own the fixes.
 
-Baseline: the server's own 33 tests pass, `tsc` is clean in `server/`, and the web
-app builds. Chat, memory, goals, pause, approvals (approve and decline), settings,
-ideas and phone layout all work end to end.
+## Round 2 (2026-10-02): Stars
 
-## UI (web/)
+I tested the back-end branch (PR #1, `e577244`) merged with the UI branch
+(`9f14cc1`) in Chromium and through the API. The server's 43 tests pass, and the
+web app builds. All eight bugs from round 1 are fixed, and their tests now pass.
 
-### 1. The app opens too many event streams and freezes (high)
+These work end to end: making a Star (including the error for a name that's
+taken), chatting with a Star, handing work over from the main chat, one Star
+asking another and carrying on with the answer, pausing one Star while the others
+keep working, pausing and waking every Star, an approval landing in the chat of
+the Star that asked for it, and removing a Star.
 
-Every `useResource(..., reloadOn)` and `useLiveEvents` call opens its own
-`EventSource` (`web/src/api/http.ts` `subscribe`). The chat screen holds 5 at once.
-Browsers allow 6 connections per host over HTTP/1.1, and an open event stream
-holds one for good. So:
+### 9. Text typed while an empty chat loads is wiped (medium, UI)
 
-- Opening the profile sheet makes 6, and from then on every API call in the page
-  hangs (no messages, no approvals, nothing loads).
-- Opening Skys in a second tab does the same: the second tab never loads data.
+This explains the chat test timeouts the design thread couldn't reproduce.
 
-Fix idea: open one `EventSource` in `createHttpApi` and fan events out to
-subscribers. Tests: `qa/e2e/ui.test.mjs` "BUG 1" (three tests).
+While a chat's messages are loading, `Chat.tsx` shows the normal composer. If the
+chat turns out to be empty, the page switches to the welcome view, which has its
+own composer. That swap throws away anything typed in the first composer. Pressing
+Enter then sends nothing, because the new box is empty. A test, or a quick user on
+a fresh chat or a slow connection, types before the swap and loses the message.
 
-### 2. Server errors are swallowed (medium)
+The timeouts only show up when the main chat is empty, such as a fresh server
+with no briefing posted yet, and when typing beats the messages response. That's
+why the failures came and went. The test makes it repeatable: it slows the
+messages response in an empty Star chat and types during the delay.
 
-`Chat.send`, `TaskDetail.command` and `ApprovalCard.decide` have no `catch`. When
-the server says no (a 400, or a 409 like "This was already approved" from another
-device), the user sees nothing. In chat the typing indicator then stays on forever.
-docs/API.md says the UI shows `error.message`. Test: "BUG 2" sends a message over
-the 20,000 character limit.
+Fix idea: render the same `Composer` instance in both views, or lift its text
+into `Chat`. Test: `qa/e2e/ui.test.mjs` "BUG 9". The other chat tests now wait for
+the chat to load, so they test chat itself and not this race.
 
-### 3. No way to sign in (medium)
+### 10. A removed Star's chat link loads forever (low, UI)
 
-With `SKYS_PASSWORD` set, the app loads as an empty chat with a "?" avatar. Every
-call gets a 401 and nothing tells the user to sign in or links to `/login`.
-Fix idea: on a 401, go to `/login` (same origin) or show a sign-in prompt.
-Test: "BUG 3".
+Opening `#/chat/<id>` for a removed Star's chat leaves the page on loading
+placeholders. `Chat.tsx` calls `api.listMessages(activeId).then(setMessages)`
+with no `catch`, so the 404 is dropped. The Star editor already handles this case
+("That Star is gone"), and the chat could do the same. Test: "BUG 10".
 
-## Server (server/)
+### 11. Stopping a task doesn't stop the work it asked another Star for (low, server)
 
-### 4. A reply cut off by a restart stays "streaming" forever (medium)
+When a task is waiting on another Star (`ask_star`) and you stop it, the other
+Star's task carries on and does the work for nobody. The same happens when the
+asking Star is removed: the helper finishes and replies to a Star that no longer
+exists. The reverse case works: if you stop the helper's task, the asking task
+hears about it and ends. Fix idea: when a task ends, cancel the open `ask_star`
+tasks it started. Test: `qa/server/contract.test.ts` "BUG 11".
 
-`ChatAgent.replyNow` saves the reply as `streaming` before it starts. If the server
-stops mid-reply, it comes back as an empty `streaming` message that never finishes,
-and the user's message never gets an answer. Fix idea: on start, mark leftover
-`streaming` messages as `error` (or re-run the reply). Test: `qa/server/contract.test.ts` "BUG 4".
+Also seen, small enough to leave without tests:
+- Constellation notes that involve a removed Star disappear from the feed
+  (`StarNote` returns null when either Star is missing).
+- Rules typed while making a new Star are dropped silently if saving one fails
+  (`StarEditor.save` swallows the error).
 
-### 5. Run now brings back a task you stopped (low)
+## Round 1 (2026-10-02): all fixed
 
-`POST /tasks/:id/run_now` on a task stopped with `cancel` (status `done`) returns
-200 and sets it back to `active`, so it runs again. It should be a 409 like the
-other commands on finished tasks. The UI hides the button on finished tasks, so
-this is API-only today. Test: "BUG 5".
-
-### 6. A malformed URL is a 500 (low)
-
-`GET /api/v1/tasks/%E0%A4%A` throws `URIError` in `Router.match` and returns 500
-"Something went wrong". Should be a 400. Test: "BUG 6".
-
-### 7. A garbled activity cursor returns an empty page (low)
-
-`GET /activity?cursor=!!!` decodes to `0` and returns 200 with no items, instead
-of the 400 that `cursor=abc` gets. Test: "BUG 7".
-
-### 8. PATCH /settings accepts a body that isn't an object (low)
-
-`null`, `[]`, `"x"` or `5` return 200 and change nothing. Should be a 400. Test: "BUG 8".
+1. The app opened one event stream per hook, and 6 streams froze every request. Fixed.
+2. Server errors were swallowed in chat, task commands and approvals. Fixed.
+3. There was no way to sign in when a password was set. Fixed.
+4. A reply cut off by a restart stayed "streaming" forever. Fixed.
+5. Run now brought back a task you had stopped. Fixed.
+6. A malformed URL returned a 500. Fixed.
+7. A garbled activity cursor returned an empty page. Fixed.
+8. PATCH /settings accepted a body that wasn't an object. Fixed.
 
 ## Not tested
 
-- Real Claude: there's no `ANTHROPIC_API_KEY` here, so everything ran on the scripted brain.
-- Real OAuth apps: Gmail was faked in-process; no Google, GitHub, Notion or Slack calls.
-- Approval expiry after 24 hours and schedules across days (the server's own tests cover the schedule maths).
+- Real Claude. There's no API key here, so everything ran on the scripted brain.
+  In particular, how well a real model picks `ask_star`, `hand_off` and
+  `message_star` isn't tested.
+- Real OAuth apps. Gmail was faked in-process.
+- Approval expiry after 24 hours, and ask chains 3 deep through the UI. The
+  server's own tests cover the depth limit.

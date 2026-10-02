@@ -10,5 +10,5 @@ trap cleanup EXIT
 (cd server && exec node --disable-warning=ExperimentalWarning ../qa/e2e/server.ts >"$tmp/open" 2>"$tmp/open.err") &
 (cd server && QA_PASSWORD=qa-secret exec node --disable-warning=ExperimentalWarning ../qa/e2e/server.ts >"$tmp/locked" 2>"$tmp/locked.err") &
 for _ in $(seq 50); do [[ -s "$tmp/open" && -s "$tmp/locked" ]] && break; sleep 0.2; done
-SKYS_URL=$(head -1 "$tmp/open") SKYS_LOCKED_URL=$(head -1 "$tmp/locked") \
+SKY_URL=$(head -1 "$tmp/open") SKY_LOCKED_URL=$(head -1 "$tmp/locked") \
   node --test --test-concurrency=1 --test-reporter=spec qa/e2e/ui.test.mjs "$@"
