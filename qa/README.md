@@ -13,8 +13,15 @@ checkout that has both the UI branch and the back-end branch merged.
 
 - `server/contract.test.ts`: API behaviour against docs/API.md and docs/BACKEND.md,
   including Stars, using the server's own test helpers.
-- `e2e/server.ts`: the real server with an in-memory database, the scripted brain,
-  the built web app at `/`, and a fake Gmail so approvals can be tested end to end.
+- `server/round3.test.ts`: model providers and fallback, the Stars' real browser,
+  and wave 1 (lessons, secrets, push). Stand-in providers and pages run as local
+  HTTP servers, since outside sites are blocked.
+- `e2e/server.ts`: the real server with an in-memory database, the model router
+  (on the scripted brain until a test adds a provider), real Chromium for the
+  Stars' browser, the built web app at `/`, and a fake Gmail so approvals can be tested end to end.
 - `e2e/ui.test.mjs`: Playwright tests of the real UI against that server. Uses the
   globally installed `playwright`; set `PLAYWRIGHT_FROM` to another
   `node_modules` folder if yours is elsewhere.
+
+Browser parts use Chromium at `/opt/pw-browsers/chromium`; set `QA_CHROMIUM` to
+use another one.

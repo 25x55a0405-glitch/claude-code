@@ -400,3 +400,177 @@ test('BUG 10: a removed Star’s chat link says it is gone instead of loading fo
   assert.ok(skeletons === 0 && /not found|gone|removed|isn’t here|doesn’t exist/i.test(text), `old chat link shows ${skeletons} loading placeholders and no explanation`);
   await ctx.close();
 });
+
+// ---- Round 3: models, the live browser and wave 1 ----
+
+import { createServer } from 'node:http';
+
+/** A throwaway local HTTP server (stand-in model provider or web page). Closed after the run. */
+const locals = [];
+after(() => locals.forEach((x) => x.close()));
+async function local(handler) {
+  const srv = createServer(async (req, res) => { let raw = ''; for await (const c of req) raw += c; handler(req, res, raw ? JSON.parse(raw) : {}); });
+  locals.push(srv);
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  return `http://127.0.0.1:${srv.address().port}`;
+}
+const sseText = (res, text) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  res.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text } }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+};
+/** Answers both streamed chat turns and plain completions with the same text. */
+const answering = (text) => local((_req, res, body) => body.stream ? sseText(res, text)
+  : res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: text } }] })));
+/** Removes every provider a test added, so later tests are back on the scripted brain. */
+const dropProviders = async () => { for (const p of await api('GET', '/providers')) if (!p.builtIn) await api('DELETE', `/providers/${p.id}`); };
+const mainStar = async () => (await stars()).find((s) => s.main);
+
+test('models: add two providers on the Models screen, test one, and chat falls back past the broken one', async () => {
+  const broken = await local((_req, res) => res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"upstream exploded"}}'));
+  const backup = await answering('Hello from the backup model.');
+  const { ctx, page } = await open('/#/models');
+  try {
+    for (const [name, url] of [['Broken', broken], ['Backup', backup]]) {
+      await page.getByRole('button', { name: /Add a model/ }).first().click();
+      const form = page.getByRole('dialog', { name: 'Add a model' });
+      await form.locator('#pv-name').fill(name);
+      await form.locator('#pv-url').fill(url + '/v1');
+      await form.locator('#pv-model').fill('stand-in');
+      await form.getByRole('button', { name: 'Add', exact: true }).click();
+      await form.waitFor({ state: 'hidden', timeout: 4000 });
+    }
+    const order = page.getByRole('list', { name: 'Fallback order' });
+    await order.getByRole('heading', { name: 'Backup' }).waitFor();
+    const text = await order.innerText();
+    assert.ok(text.indexOf('Broken') < text.indexOf('Backup'), 'new providers go to the end of the order');
+    const row = order.locator('li', { has: page.getByRole('heading', { name: 'Backup' }) });
+    await row.getByRole('button', { name: 'Test' }).click();
+    await row.getByText(/Answered in .*Hello from the backup model/).waitFor({ timeout: 6000 });
+
+    const main = (await api('GET', '/conversations')).find((c) => c.main);
+    const chatLoaded = page.waitForResponse((r) => /\/conversations\/[^/]+\/messages$/.test(new URL(r.url()).pathname)).then(() => page.waitForTimeout(150)).catch(() => {});
+    await page.goto(BASE + `/#/chat/${main.id}`);
+    await chatLoaded;
+    await composer(page).fill('Say hello');
+    await composer(page).press('Enter');
+    await page.getByText('Hello from the backup model.').last().waitFor({ timeout: 8000 });
+    await page.goto(BASE + '/#/models');
+    await order.getByText(/upstream exploded/).waitFor({ timeout: 4000 });
+  } finally {
+    await dropProviders();
+    await ctx.close();
+  }
+});
+
+test('BUG 14: the Models screen shows a provider’s API key when the provider repeats it in an error', async () => {
+  const echo = await local((req, res) => res.writeHead(401, { 'Content-Type': 'application/json' })
+    .end(JSON.stringify({ error: { message: `Invalid API key: ${String(req.headers.authorization).replace('Bearer ', '')}` } })));
+  const KEY = 'sk-live-UIKEY-55555';
+  await api('POST', '/providers', { name: 'Echoes', kind: 'openai', baseUrl: echo + '/v1', model: 'x', apiKey: KEY });
+  const { ctx, page } = await open('/#/models');
+  try {
+    const order = page.getByRole('list', { name: 'Fallback order' });
+    const row = order.locator('li', { has: page.getByRole('heading', { name: 'Echoes' }) });
+    await row.getByRole('button', { name: 'Test' }).click();
+    await row.getByText(/Didn’t work/).waitFor({ timeout: 6000 });
+    assert.ok(!(await page.locator('body').innerText()).includes(KEY), 'the full API key is on screen');
+  } finally {
+    await dropProviders();
+    await ctx.close();
+  }
+});
+
+test('lessons: a chat correction shows a lesson card that can be undone', async () => {
+  const main = (await api('GET', '/conversations')).find((c) => c.main);
+  const { ctx, page, chatLoaded } = await open(`/#/chat/${main.id}`);
+  await chatLoaded;
+  await composer(page).fill('Actually, always reply in Portuguese');
+  await composer(page).press('Enter');
+  const card = page.locator('.lesson-card').filter({ hasText: /Portuguese/ }).last();
+  await card.waitFor({ timeout: 6000 });
+  const undo = card.getByRole('button', { name: 'Undo' });
+  await undo.waitFor({ timeout: 3000 }).catch(() => {});
+  assert.equal(await undo.count(), 1, 'the new lesson card has no Undo button until the page is reloaded');
+  await undo.click();
+  await card.getByText('Forgotten. It won’t use this.').waitFor({ timeout: 4000 });
+  const lesson = (await api('GET', '/lessons')).find((l) => /Portuguese/.test(l.lesson));
+  assert.equal(lesson?.undone, true, `lesson not marked undone: ${JSON.stringify(lesson)}`);
+  await ctx.close();
+});
+
+test('browser: the live view shows the Star browsing, and take over pauses it until you hand back', async () => {
+  const site = await local((_req, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<title>Ramen list</title><h1>Ramen near Alfama</h1>'));
+  const star = await mainStar();
+  const conv = (await api('GET', '/conversations')).find((c) => c.main);
+  await api('POST', `/browser/${star.id}/input`, { type: 'navigate', url: site + '/list' });
+  const { ctx, page } = await open(`/#/chat/${conv.id}`);
+  try {
+    const pip = page.getByRole('button', { name: new RegExp(`Watch ${star.name}’s browser`) }).first();
+    await pip.waitFor({ timeout: 6000 });
+    assert.match(await pip.innerText(), /is browsing[\s\S]*Ramen list/);
+    await pip.click();
+    const win = page.getByRole('dialog', { name: `${star.name}’s browser` });
+    await win.waitFor();
+    assert.equal(await win.getByLabel('Address').inputValue(), site + '/list');
+    await win.getByRole('button', { name: 'Take over' }).click();
+    await win.getByRole('button', { name: `Hand back to ${star.name}` }).waitFor();
+    assert.equal((await mainStar()).paused, true, 'taking over should pause the Star');
+    await win.getByRole('button', { name: `Hand back to ${star.name}` }).click();
+    await page.getByText(`${star.name} has the browser again`).waitFor({ timeout: 4000 });
+    assert.equal((await mainStar()).paused, false, 'handing back should wake the Star');
+  } finally {
+    if ((await mainStar()).paused) await api('POST', `/stars/${star.id}/pause`, { paused: false }).catch(() => {});
+    await ctx.close();
+  }
+});
+
+test('BUG 13: typing a bad address in the live view gives a clear message, not a server error', async () => {
+  const star = await mainStar();
+  const r = await fetch(`${API}/browser/${star.id}/input`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'navigate', url: 'http://127.0.0.1:1/' }) });
+  const body = await r.json();
+  assert.ok(r.status < 500, `bad address returned ${r.status} ${body?.error?.message}`);
+});
+
+test('secrets: storing a secret never shows its value again', async () => {
+  const VALUE = 'vault-ui-value-42424';
+  const { ctx, page } = await open('/#/permissions');
+  try {
+    await page.getByRole('button', { name: /Add a secret/ }).click();
+    const form = page.getByRole('dialog', { name: 'Add a secret' });
+    await form.locator('#sec-name').fill('QA SEAT CODE');
+    assert.equal(await form.locator('#sec-name').inputValue(), 'QA_SEAT_CODE', 'spaces become underscores');
+    await form.locator('#sec-value').fill(VALUE);
+    assert.equal(await form.locator('#sec-value').getAttribute('type'), 'password');
+    await form.locator('#sec-desc').fill('Seat code for QA');
+    await form.getByRole('button', { name: 'Store it' }).click();
+    await form.waitFor({ state: 'hidden', timeout: 4000 });
+    await page.getByRole('heading', { name: 'QA_SEAT_CODE' }).waitFor();
+    await page.getByRole('heading', { name: 'QA_SEAT_CODE' }).click();
+    const edit = page.getByRole('dialog', { name: 'QA_SEAT_CODE' });
+    await edit.waitFor();
+    assert.equal(await edit.locator('#sec-value').inputValue(), '', 'the edit form must not prefill the value');
+    assert.ok(!(await page.content()).includes(VALUE), 'the value is in the page');
+    assert.ok(!JSON.stringify(await api('GET', '/secrets')).includes(VALUE), 'the value came back from the API');
+  } finally {
+    await api('DELETE', '/secrets/QA_SEAT_CODE').catch(() => {});
+    await ctx.close();
+  }
+});
+
+test('push: an ntfy topic can be made and saved from Settings', async () => {
+  const { ctx, page } = await open('/#/settings');
+  try {
+    const topic = page.getByRole('textbox', { name: 'ntfy topic' });
+    await topic.waitFor();
+    await page.getByRole('button', { name: 'Make one' }).click();
+    const made = await topic.inputValue();
+    assert.match(made, /^[\w-]{12,}$/, `made topic looks odd: ${made}`);
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    await page.getByText('ntfy topic saved').waitFor({ timeout: 4000 });
+    assert.equal((await api('GET', '/settings')).ntfyTopic, made);
+  } finally {
+    await api('PATCH', '/settings', { ntfyTopic: null }).catch(() => {});
+    await ctx.close();
+  }
+});
+
