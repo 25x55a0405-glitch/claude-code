@@ -287,6 +287,13 @@ Free-tier notes:
     the 6-digit pairing code. Telegram also gets a `t.me` link with the
     code filled in. After that only that Telegram chat, or that Slack user,
     reaches the Stars; everyone else is ignored.
+    - The message must be exactly the code (or `pair <code>`, or the
+      link's `/start <code>`); a message holding a list of codes is a wrong
+      try.
+    - The code works for 10 minutes. Each chat or Slack user gets 3 wrong
+      tries, then it's ignored. After 20 wrong tries in all, pairing stops
+      (`pairLocked`) until the person makes a new code
+      (`POST /messaging/:app/code`).
   - **Talking to Stars.** "Scout: …" or "@Scout …" picks a Star; otherwise
     the last Star used there answers. `/stars` lists them.
   - **In the app.** Messages show in the Star's chat with `via: 'telegram'`
@@ -308,6 +315,14 @@ Free-tier notes:
   - **Who it's from matters.** From the person, it's their request. From
     anyone else, it's content: the Star summarises or drafts and asks
     before acting.
+    - "From the person" means the address inside the From line's `<…>` is
+      exactly theirs, and Gmail vouches for it: the mail is in their Sent
+      mail, or Gmail's `Authentication-Results` show DKIM passing for their
+      domain or SPF passing for their exact address. A display name or a
+      look-alike address never counts.
+    - The sender's From, Subject and preview go in the brief inside an
+      escaped `<email>…</email>` block, one line each, with Sky's own
+      guidance after it.
   - **The address stays.** The part after `+` is fixed when first given
     out, so renaming the Star keeps the address.
   - **A real `@yourdomain` address** would need a domain (about $10 a
@@ -319,12 +334,20 @@ Free-tier notes:
   - **Keeping keys safe.** Environment variables and headers stay on the
     server; the API shows only their names. Values can be
     `{{secret:NAME}}`, filled from the vault when connecting.
-  - **Effects.** Each tool gets an effect from the server's hints:
-    read-only is `read`, destructive is `delete`, and anything else is
-    `write`. The person can override it per tool (`toolEffects`), and the
-    policy decides approvals from it as for any tool. In chat, a Star only
-    gets an MCP tool whose effect is `read`.
-  - **Tool names.** Tools appear to Stars as `mcp_<server>_<tool>`.
+  - **Effects.** The person sets each tool's effect (`toolEffects`), and
+    the policy decides approvals from it as for any tool. In chat, a Star
+    only gets an MCP tool the person set to `read`.
+    - The server's own hints (read-only is `read`, destructive is `delete`,
+      anything else `write`) are only a suggestion, since a server can say
+      anything about itself. Until the person sets a tool's effect
+      (`confirmed: false`), every call asks first whatever the autonomy,
+      and a tool the server calls read-only counts as a write (so it isn't
+      offered in chat).
+  - **Tool names.** Tools appear to Stars as `mcp_<server>_<tool>`. If two
+    servers' names start the same (the first 20 characters), the one added
+    later gets a short tag from its id, like `mcp_company_notes_f_a1b2c_…`.
+  - **Errors.** A server's error message never carries its filled-in
+    header or env values or a vault secret (some servers repeat the key).
   - **Which Stars.** `Star.mcpServerIds` limits which servers a Star gets
     (null means all of them). Fewer tools help small free models.
 - **Group chats.** A conversation with `starIds` (two or more) is a group
@@ -344,6 +367,14 @@ Free-tier notes:
   memory, chats or secrets.
   - **Importing.** This makes a new Star, with a unique name. Apps that
     don't exist here are skipped and listed.
+  - **A template can't loosen approvals.** It comes from outside, so:
+    - its autonomy is used only when it's stricter than the person's own
+      (`ask`); otherwise the Star follows the person's setting;
+    - its rules are kept with `askOnly: true`: they can make the Star ask
+      or stop, never let it skip asking. Rewording a rule makes it the
+      person's own.
+    - `POST /templates/preview` shows what a template asks for and what
+      the Star would get, for a confirm screen before importing.
   - **Built in.** Three templates ship with Sky: Scout, Inbox and Builder.
   - **The gallery** is free: a public GitHub repo (`templateGallery:
     "owner/repo"`) with an `index.json` listing template files, read from
@@ -774,7 +805,33 @@ wrote it, and replies stream one after another as usual (`message.delta`,
 
 Events: `mcp.updated` (`McpServer`), `mcp.deleted` (`{ id }`),
 `messaging.updated` (`MessagingStatus`). Triggered runs show up through the
-usual `task.updated` and `task.step` ("Triggered: …").
+usual `task.updated` and `task.step` ("Triggered by webhook"; what the
+sender wrote, like a JSON title or an email subject, is the step's `detail`,
+so it stays out of the next run's brief).
+
+Round 4 fixes (testing thread, bugs 19 to 27), changes to the shapes above:
+
+```ts
+interface MessagingStatus { /* … */ pairExpiresAt: string | null; pairLocked: boolean }
+// pairCode is null once it expired or pairLocked; offer "Make a new code" (POST /messaging/:app/code).
+interface McpToolInfo { name; toolName; description; effect; hint: McpEffect; confirmed: boolean }
+// effect: the person's choice, or the server's hint while confirmed is false. Show unconfirmed tools as
+// "Asks every time until you choose", with the hint as the suggestion.
+// Rule gains askOnly?: boolean (came with a template: can only make a Star ask or stop).
+interface TemplatePreview {
+  template: StarTemplate;
+  wants: { autonomy: Autonomy | null; apps: string[] | null; rules: string[]; skills: string[] };
+  gets: { autonomy: Autonomy | null; connectionIds: string[] | null; rulesAskOnly: boolean };
+  skipped: string[];
+}
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/messaging/telegram/code`, `/messaging/slack/code` | A fresh pairing code → `MessagingStatus`. `400` when already paired |
+| POST | `/templates/preview` | Same body as import → `TemplatePreview`. Makes nothing |
+
+Changing `mailPollMinutes` now takes effect straight away.
 
 Round 3 fixes (testing thread): see Safety above for cross-site requests,
 key scrubbing, short secrets and timeouts. A provider is benched for 6 hours

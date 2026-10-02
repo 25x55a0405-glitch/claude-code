@@ -104,9 +104,8 @@ export class Templates {
     return JSON.parse(text);
   }
 
-  /** Makes a new Star from a template (given directly, by gallery id, or by https URL). */
-  async import(input: { template?: unknown; id?: string; url?: string }, create: (s: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds'>) => Star):
-    Promise<{ star: Star; skipped: string[] }> {
+  /** A template (given directly, by gallery id, or by https URL), checked. */
+  private async resolve(input: { template?: unknown; id?: string; url?: string }): Promise<StarTemplate> {
     let t: StarTemplate;
     if (input.template !== undefined) t = validate(input.template);
     else if (input.id) {
@@ -120,14 +119,44 @@ export class Templates {
         throw err instanceof ApiError ? err : badRequest(`Couldn’t read that template: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else throw badRequest('Send a template, a template id, or an https url');
+    return t;
+  }
 
+  /**
+   * What importing would do, for the confirm screen: what the template asks for, and what the new Star would get.
+   * A template comes from outside, so it never raises autonomy or loosens approvals:
+   *  - its autonomy is used only when it's stricter than the person's own (Always ask);
+   *  - its rules can make the Star ask or stop, never let it skip asking.
+   */
+  async preview(input: { template?: unknown; id?: string; url?: string }): Promise<TemplatePreview> {
+    const t = await this.resolve(input);
+    const builtIn = Boolean(input.id?.startsWith('builtin:')) && input.template === undefined && !input.url;
     const skipped: string[] = [];
     const known = this.store.listConnections().map((c) => c.id);
     const apps = t.apps === null ? null : t.apps.filter((a) => known.includes(a) || (skipped.push(`app ${a} (not available here)`), false));
+    const own = this.store.settings().autonomy;
+    return {
+      template: t,
+      wants: { autonomy: t.autonomy, apps: t.apps, rules: t.rules, skills: t.skills.map((k) => k.name) },
+      gets: {
+        autonomy: t.autonomy && STRICTNESS[t.autonomy] > STRICTNESS[own] ? t.autonomy : null,
+        connectionIds: apps,
+        rulesAskOnly: !builtIn,
+      },
+      skipped,
+    };
+  }
+
+  /** Makes a new Star from a template (given directly, by gallery id, or by https URL). See preview() for what it gets. */
+  async import(input: { template?: unknown; id?: string; url?: string }, create: (s: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds'>) => Star):
+    Promise<{ star: Star; skipped: string[] }> {
+    const p = await this.preview(input);
+    const t = p.template;
+    const skipped = p.skipped;
     let name = t.name;
     for (let n = 2; this.store.findStar(name); n++) name = `${t.name} ${n}`;
     const star = create({
-      name, role: t.role, instructions: t.instructions, avatar: t.avatar, autonomy: t.autonomy, connectionIds: apps, providerIds: null,
+      name, role: t.role, instructions: t.instructions, avatar: t.avatar, autonomy: p.gets.autonomy, connectionIds: p.gets.connectionIds, providerIds: null,
       personality: t.personality, replyStyle: t.replyStyle, notify: { whenDone: false, whenNeedsYou: true }, mcpServerIds: null,
     });
     for (const k of t.skills) {
@@ -139,10 +168,22 @@ export class Templates {
         skipped.push(`skill ${k.name} (name taken)`);
       }
     }
-    for (const r of t.rules) this.store.addRule(r, star.id);
+    for (const r of t.rules) this.store.addRule(r, star.id, p.gets.rulesAskOnly);
     this.store.log('message', `New Star from a template: ${star.name}`, undefined, star.id);
     return { star: this.store.getStar(star.id), skipped };
   }
+}
+
+/** Higher is stricter. */
+const STRICTNESS: Record<Autonomy, number> = { autonomous: 0, balanced: 1, ask: 2 };
+
+export interface TemplatePreview {
+  template: StarTemplate;
+  /** What the template asks for. */
+  wants: { autonomy: Autonomy | null; apps: string[] | null; rules: string[]; skills: string[] };
+  /** What the new Star gets. autonomy null means the person's own. */
+  gets: { autonomy: Autonomy | null; connectionIds: string[] | null; rulesAskOnly: boolean };
+  skipped: string[];
 }
 
 /** "owner/repo" means index.json at the top of that public GitHub repository. */

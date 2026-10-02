@@ -71,7 +71,8 @@ export class Policy {
     const ruling = custom.length ? await this.applyRules(custom, preview, why) : null;
     if (ruling?.verdict === 'forbid') return { kind: 'forbid', reason: `Your rule: “${ruling.rule}”` };
     if (ruling?.verdict === 'ask') return { kind: 'ask', reason: `${why} (your rule: “${ruling.rule}”)`, risk: preview.risk ?? RISK[effect] };
-    if (ruling?.verdict === 'allow' && effect !== 'delete') return { kind: 'allow' };
+    // A rule that came with a template can't let a Star skip asking.
+    if (ruling?.verdict === 'allow' && effect !== 'delete' && !ruling.askOnly) return { kind: 'allow' };
 
     const autonomy = star.autonomy ?? this.store.settings().autonomy;
     const needsOk = autonomy === 'ask' || (autonomy === 'balanced' && effect !== 'write') || (autonomy === 'autonomous' && effect === 'delete');
@@ -79,7 +80,7 @@ export class Policy {
   }
 
   /** Asks the model which of the person's rules, if any, governs this action. */
-  private async applyRules(rules: Rule[], p: ApprovalPreview, why: string): Promise<{ verdict: 'allow' | 'ask' | 'forbid'; rule: string } | null> {
+  private async applyRules(rules: Rule[], p: ApprovalPreview, why: string): Promise<{ verdict: 'allow' | 'ask' | 'forbid'; rule: string; askOnly?: boolean } | null> {
     const list = rules.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
     const prompt = `Rules the person set for their assistant:\n${list}\n\nThe assistant wants to: ${p.action}\nTarget: ${p.target}\nWhy: ${why}\nContent:\n${p.preview.slice(0, 2000)}\n\n`
       + 'Does any rule directly govern this exact action? Answer with one line: "<rule number> allow", "<rule number> ask", "<rule number> forbid", or "none". '
@@ -89,7 +90,7 @@ export class Policy {
       const m = /(\d+)\s+(allow|ask|forbid)/.exec(answer);
       if (!m) return null;
       const rule = rules[Number(m[1]) - 1];
-      return rule ? { verdict: m[2] as 'allow' | 'ask' | 'forbid', rule: rule.text } : null;
+      return rule ? { verdict: m[2] as 'allow' | 'ask' | 'forbid', rule: rule.text, askOnly: rule.askOnly } : null;
     } catch {
       // If the rule check can't run, fall back to asking.
       return { verdict: 'ask', rule: 'Couldn’t check your rules, so asking to be safe' };

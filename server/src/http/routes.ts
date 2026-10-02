@@ -351,6 +351,8 @@ export function registerRoutes(r: Router, services: Services) {
   r.get('/messaging', () => messaging.status());
   r.post('/messaging/telegram', async ({ body }) => messaging.telegram.connect(text(object(body).botToken, 'botToken', 200)));
   r.delete('/messaging/telegram', async () => messaging.telegram.disconnect());
+  r.post('/messaging/telegram/code', () => messaging.telegram.newCode());
+  r.post('/messaging/slack/code', () => messaging.slack.newCode());
   r.post('/messaging/slack', async ({ body }) => {
     const b = object(body);
     return messaging.slack.connect(text(b.botToken, 'botToken', 300), text(b.appToken, 'appToken', 300));
@@ -386,11 +388,17 @@ export function registerRoutes(r: Router, services: Services) {
   // ---- templates ----
   r.get('/templates', () => templates.list());
   r.get('/stars/:id/template', ({ params }) => templates.export(params.id));
+  const templateRef = (b: Record<string, any>) => ({
+    template: b.template, id: typeof b.id === 'string' ? b.id : undefined, url: typeof b.url === 'string' ? b.url : undefined,
+  });
+  // What importing would do, for the confirm screen. Nothing is made.
+  r.post('/templates/preview', async ({ body }) => {
+    const b = object(body);
+    return templates.preview(templateRef(b));
+  });
   r.post('/templates/import', async ({ body }) => {
     const b = object(body);
-    const out = await templates.import({
-      template: b.template, id: typeof b.id === 'string' ? b.id : undefined, url: typeof b.url === 'string' ? b.url : undefined,
-    }, (input) => runtime.createStar(input));
+    const out = await  templates.import(templateRef(b), (input) => runtime.createStar(input));
     return { star: store.starView(out.star), skipped: out.skipped };
   });
 
@@ -536,6 +544,7 @@ export function registerRoutes(r: Router, services: Services) {
     if (patch.smallProviderIds?.some((id) => !registry.find(id))) throw badRequest('smallProviderIds must be ids of your model providers');
     const before = store.settings();
     const next = store.updateSettings(patch);
+    if (patch.mailPollMinutes !== undefined && patch.mailPollMinutes !== before.mailPollMinutes) triggers.restartMail();
     if (patch.timezone && patch.timezone !== before.timezone) {
       // Wall-clock schedules move with the person's time zone.
       for (const t of store.listTasks(['scheduled'])) store.patchTask(t.id, { nextRunAt: runtime.nextRunAt({ ...t, lastRunAt: undefined }, new Date()) });

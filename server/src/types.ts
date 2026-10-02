@@ -46,6 +46,8 @@ declare module '../../web/src/api/types.ts' {
   interface Rule {
     /** Applies to one Star only; absent or null means every Star. */
     starId?: string | null;
+    /** Came with an imported template: it can make its Star ask or stop, never let it skip asking. Editing the text makes it the person's own. */
+    askOnly?: boolean;
   }
   interface Message {
     /** Set on the "Got it, I'll…" note a Star posts after learning from a correction. */
@@ -164,7 +166,12 @@ export interface McpToolInfo {
   /** The name the Stars see: mcp_<server>_<tool>. */
   toolName: string;
   description: string;
+  /** The person's choice (toolEffects), or until they choose, the server's hint. Unconfirmed tools always ask, and a "read" one counts as a write. */
   effect: McpEffect;
+  /** What the server itself says the tool does (its readOnlyHint and destructiveHint). Only a suggestion: servers can't be trusted on it. */
+  hint: McpEffect;
+  /** True once the person chose this tool's effect. Until then every call asks first, whatever the autonomy. */
+  confirmed: boolean;
 }
 
 /** A shareable Star: everything but its memory, chats and secrets. */
@@ -199,8 +206,12 @@ export interface MessagingStatus {
   app: 'telegram' | 'slack';
   /** off: not set up; pairing: waiting for the person's first message with the code; on: working. */
   state: 'off' | 'pairing' | 'on' | 'error';
-  /** pairing: send this to the bot. */
+  /** pairing: send this to the bot, exactly. Null once it expired or too many wrong codes came in (make a new one). */
   pairCode: string | null;
+  /** pairing: when the code stops working (10 minutes after it was made). */
+  pairExpiresAt: string | null;
+  /** pairing: too many wrong codes were sent to the bot, so pairing is stopped until the person makes a new code. */
+  pairLocked: boolean;
   /** telegram: a link that opens the bot with the code filled in. */
   pairLink: string | null;
   /** The bot's name in the app. */

@@ -388,15 +388,16 @@ export class Store {
     return r;
   }
 
-  addRule(text: string, starId: string | null = null): Rule {
+  addRule(text: string, starId: string | null = null, askOnly = false): Rule {
     if (starId) this.getStar(starId);
-    return this.db.put<Rule>('rule', { id: uid('r'), text, enabled: true, builtIn: false, createdAt: iso(), starId });
+    return this.db.put<Rule>('rule', { id: uid('r'), text, enabled: true, builtIn: false, createdAt: iso(), starId, ...(askOnly ? { askOnly } : {}) });
   }
 
   patchRule(id: string, patch: Partial<Pick<Rule, 'text' | 'enabled'>>): Rule {
     const r = this.getRule(id);
     if (r.builtIn) throw new ApiError(403, 'forbidden', 'Built-in safety rules can’t be changed');
-    return this.db.put('rule', { ...r, ...patch });
+    // Rewording a rule makes it the person's own.
+    return this.db.put('rule', { ...r, ...patch, ...(patch.text !== undefined && patch.text !== r.text ? { askOnly: false } : {}) });
   }
 
   deleteRule(id: string) {
