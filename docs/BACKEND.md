@@ -60,7 +60,7 @@ plus its own**. `remember` saves to shared memory unless the Star picks
 
 | Tool | Where | What happens |
 | --- | --- | --- |
-| `ask_star` | tasks | Creates a one-off task for the other Star, marked `requestedBy` the asker. The asking task goes to `blocked` ("Waiting on Scout") and leaves the queue. When the other Star finishes, its outcome becomes the result of the call and the asking task carries on. Chains go at most 3 deep; a Star can't ask itself |
+| `ask_star` | tasks | Creates a one-off task for the other Star, marked `requestedBy` the asker. The asking task goes to `blocked` ("Waiting on Scout") and leaves the queue. When the other Star finishes, its outcome becomes the result of the call and the asking task carries on. Chains go at most 3 deep; a Star can't ask itself. If the asking task ends first (stopped, failed, or its Star removed), the request is stopped too, along with anything it asked for in turn |
 | `hand_off` | chat and tasks | Gives work (one-off, recurring or watch) to the other Star as its own task. The giver doesn't wait. When a one-off hand-off ends, the giver gets a reply in its inbox |
 | `message_star` | chat and tasks | A heads-up, no reply |
 | `list_stars` | chat and tasks | The roster with roles and states |

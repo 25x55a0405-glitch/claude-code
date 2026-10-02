@@ -228,6 +228,7 @@ export class Runtime implements RuntimeHooks {
         for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === id)) this.store.setApprovalStatus(a.id, 'expired');
         this.store.patchTask(id, { status: 'done', lastOutcome: 'Stopped by you' });
         this.store.setActivity(null);
+        this.dropAsks(id, `No longer needed: you stopped “${firstLine(task.title, 60)}”`);
         if (task.kind === 'one_off' && task.requestedBy) this.starAnswered(task, 'The person stopped this before it finished.', true);
         break;
     }
@@ -285,6 +286,24 @@ export class Runtime implements RuntimeHooks {
     if (allIn && req.taskId) this.wake(req.taskId);
   }
 
+  /**
+   * Stops the work a task asked other Stars for (ask_star) once nobody is
+   * waiting on it, and whatever those tasks asked for in turn. Hand-offs are
+   * independent work and carry on.
+   */
+  dropAsks(taskId: string, reason: string) {
+    const open = this.store.listTasks(['active', 'scheduled', 'waiting_approval', 'blocked', 'paused'])
+      .filter((t) => t.requestedBy?.taskId === taskId && t.requestedBy.depth !== undefined);
+    for (const t of open) {
+      if (this.running === t.id) this.stopRequested.add(t.id);
+      this.runner.discard(t.id);
+      for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === t.id)) this.store.setApprovalStatus(a.id, 'expired');
+      this.store.patchTask(t.id, { status: 'done', lastOutcome: reason });
+      this.store.addStep(t.id, { kind: 'note', summary: firstLine(reason, 160) });
+      this.dropAsks(t.id, reason);
+    }
+  }
+
   createStar(input: Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>): Star {
     return this.store.createStar(input);
   }
@@ -313,6 +332,7 @@ export class Runtime implements RuntimeHooks {
       for (const a of this.store.listApprovals('pending').filter((x) => x.taskId === t.id)) this.store.setApprovalStatus(a.id, 'expired');
       this.store.patchTask(t.id, { status: 'done', lastOutcome: `Stopped: ${star.name} was removed` });
       this.store.addStep(t.id, { kind: 'note', summary: `Stopped because ${star.name} was removed` });
+      this.dropAsks(t.id, `No longer needed: ${star.name} was removed`);
       if (t.kind === 'one_off' && t.requestedBy) this.starAnswered(t, `${star.name} was removed before finishing this.`, true);
     }
     this.store.removeStar(id);

@@ -350,6 +350,7 @@ export class TaskRunner {
     }
     store.log(failed ? 'task_failed' : 'task_completed', `${failed ? 'Failed' : task.kind === 'one_off' ? 'Finished' : 'Ran'}: ${firstLine(task.title, 60)}. ${firstLine(outcome, 120)}`, task.id);
     store.setActivity(null);
+    this.deps.hooks.dropAsks(task.id, `No longer needed: “${firstLine(task.title, 60)}” ended`);
     if (task.kind === 'one_off' && task.requestedBy) this.deps.hooks.starAnswered(task, outcome, failed);
   }
 }

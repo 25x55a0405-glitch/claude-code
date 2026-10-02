@@ -74,7 +74,7 @@ The older `SKYS_*` names still work.
 ## Develop
 
 ```
-npm test           # 43 tests: API contract, agent behaviour, Stars, schedules, Claude request shape
+npm test           # 44 tests: API contract, agent behaviour, Stars, schedules, Claude request shape
 npm run typecheck
 npm run dev        # restarts on change
 ```

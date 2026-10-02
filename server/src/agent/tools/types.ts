@@ -24,6 +24,8 @@ export interface RuntimeHooks {
   notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string }): Promise<string>;
   /** A task another Star asked for has ended: answer the Star that asked, and wake its task if it was waiting. */
   starAnswered(task: Task, answer: string, failed: boolean): void;
+  /** A task has ended: stop the ask_star requests it still had open with other Stars. */
+  dropAsks(taskId: string, reason: string): void;
   /** When a recurring or watch task should next run. */
   nextRunAt(task: Task, after: Date): string | undefined;
 }
