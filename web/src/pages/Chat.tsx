@@ -64,9 +64,16 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     if (!activeId) return;
     setSendError(null);
     setThinking(true);
+    const before = new Set((messages ?? []).map((x) => x.id));
     try {
       const m = await api.sendMessage(activeId, text);
-      setMessages((ms) => [...(ms ?? []), m]);
+      // The reply can start streaming before this call returns, so put the
+      // user's message ahead of anything that arrived after it was sent.
+      setMessages((ms) => {
+        const list = (ms ?? []).filter((x) => x.id !== m.id);
+        const at = list.findIndex((x) => !before.has(x.id));
+        return at === -1 ? [...list, m] : [...list.slice(0, at), m, ...list.slice(at)];
+      });
     } catch (e) {
       setThinking(false);
       setSendError(`Couldn’t send that. ${(e as Error).message}`);
