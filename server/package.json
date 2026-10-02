@@ -1,0 +1,21 @@
+{
+  "name": "skys-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Skys back end: REST + live events API, agent runtime, scheduler and connections",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/main.ts",
+    "typecheck": "tsc -p .",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "typescript": "~5.9.0"
+  }
+}
