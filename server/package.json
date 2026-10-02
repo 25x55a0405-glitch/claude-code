@@ -1,0 +1,29 @@
+{
+  "name": "sky-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Sky back end: REST + live events API, agent runtime, scheduler and connections",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/main.ts",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/main.ts",
+    "typecheck": "tsc -p .",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "playwright-core": "^1.56.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.2",
+    "typescript": "~5.9.0"
+  }
+}
