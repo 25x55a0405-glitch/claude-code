@@ -7,9 +7,10 @@ import { skillTools } from './skills.ts';
 import { appTools } from './apps.ts';
 import { coreTools } from './core.ts';
 import { workspaceTools } from './workspace.ts';
+import { computerTools } from './computer.ts';
 import type { ToolDef } from './types.ts';
 
-export const allTools: ToolDef[] = [...coreTools, ...skillTools, ...constellationTools, ...workspaceTools, ...browserTools, ...appTools];
+export const allTools: ToolDef[] = [...coreTools, ...skillTools, ...constellationTools, ...workspaceTools, ...computerTools, ...browserTools, ...appTools];
 const byName = new Map(allTools.map((t) => [t.name, t]));
 
 export const findTool = (name: string) => byName.get(name);

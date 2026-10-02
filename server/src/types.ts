@@ -75,6 +75,8 @@ declare module '../../web/src/api/types.ts' {
     guard?: 'model' | 'rules' | 'off';
     /** Lets Stars sign in with saved logins (the password goes straight into the page, never to the model). Off by default. */
     passwordFill?: boolean;
+    /** Server-side speech (see VoiceSettings). Absent: the app uses the browser's own speech. */
+    voice?: VoiceSettings;
   }
   interface Task {
     /** Runs the task when something happens, as well as (or instead of) its schedule. */
@@ -86,7 +88,7 @@ declare module '../../web/src/api/types.ts' {
   }
   interface Message {
     /** Where the person wrote this, when it wasn't the app. */
-    via?: 'telegram' | 'slack';
+    via?: 'telegram' | 'slack' | 'voice';
   }
 }
 
@@ -249,6 +251,8 @@ export interface Star {
   notify: { whenDone: boolean; whenNeedsYou: boolean };
   /** MCP servers this Star may use; null means every enabled server. */
   mcpServerIds: string[] | null;
+  /** The voice it speaks with: a text-to-speech voice name (or a hint for the browser's voices). Absent or null: the default. */
+  voice?: string | null;
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -415,7 +419,83 @@ export interface BrowserSession {
   waitingTaskId: string | null;
   /** Set while the person is recording a task to teach. */
   recordingId: string | null;
+  /** Set when a Star has filled in a checkout and handed it over for the person to pay. */
+  checkout: CheckoutHandover | null;
 }
+
+/** A checkout a Star filled in up to payment. The person pays; Stars never enter card details. */
+export interface CheckoutHandover {
+  taskId: string;
+  /** As the page shows it, e.g. "€42.50". */
+  total: string;
+  merchant: string;
+  /** What's in the basket and where it ships, in a line or two. */
+  summary: string;
+  url: string;
+  /** waiting_ok: the approval is open; paying: the person has the browser. */
+  stage: 'waiting_ok' | 'paying';
+}
+
+// ---- Voice ------------------------------------------------------------------------
+
+export interface VoiceSettings {
+  /** Model providers (OpenAI-compatible) to send speech to, in order: their /audio/transcriptions. */
+  sttProviderIds: string[];
+  /** e.g. "whisper-large-v3-turbo" (Groq) or "whisper-1" (OpenAI). */
+  sttModel: string;
+  /** Model providers for their /audio/speech, in order. */
+  ttsProviderIds: string[];
+  ttsModel: string;
+  /** The default voice; a Star's own `voice` wins. */
+  ttsVoice: string;
+}
+
+export interface VoiceStatus {
+  speechToText: { id: string; name: string }[];
+  textToSpeech: { id: string; name: string }[];
+  /** false: use the browser's speech recognition. */
+  serverSpeechToText: boolean;
+  /** false: use the browser's speech synthesis. */
+  serverTextToSpeech: boolean;
+  settings: VoiceSettings;
+}
+
+// ---- The companion app (the person's own computer) -----------------------------------
+
+/** What the person allowed on that computer, as the companion reports it. */
+export interface CompanionAllow {
+  /** Folders Stars may list, read and write in. */
+  folders: string[];
+  /** Programs Stars may run (by name, run without a shell). */
+  commands: string[];
+  /** Whether Stars may open web pages in the default browser. */
+  openUrls: boolean;
+}
+
+export interface CompanionDevice {
+  id: string;
+  /** The computer's name, e.g. "d's MacBook". */
+  name: string;
+  platform: string;
+  /** The switch in the app. Off: Stars can't use this computer. */
+  enabled: boolean;
+  /** The switch in the companion itself (press o). Off: it refuses everything. */
+  localEnabled: boolean;
+  connected: boolean;
+  allow: CompanionAllow;
+  /** The companion asks on the computer too before each action. */
+  confirmLocally: boolean;
+  pairedAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface CompanionPairing {
+  /** Typed into the companion: node sky-companion.mjs pair <server> <code>. Valid for 10 minutes, once. */
+  code: string;
+  expiresAt: string;
+  command: string;
+}
+
 
 // ---- Teach a task (recordings) ----------------------------------------------------
 
@@ -505,6 +585,8 @@ export type ServerEvent =
   | { type: 'browser.control'; data: BrowserSession }
   | { type: 'recording.updated'; data: Recording }
   | { type: 'workspace.changed'; data: { starId: string; path: string } }
+  | { type: 'companion.updated'; data: CompanionDevice }
+  | { type: 'companion.deleted'; data: { id: string } }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
   | { type: 'constellation.message'; data: ConstellationMessage };

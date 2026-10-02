@@ -495,6 +495,90 @@ machine that can run Chromium and bubblewrap: the person's own computer, or
 a free cloud VM. `server/README.md` has the steps for Oracle Cloud Always
 Free, with its current limits.
 
+## Wave 4: voice, your computer, checkout
+
+- **Voice.** Talking to a Star live, with the Star's character as its face
+  (the UI animates the character while it listens and speaks).
+  - **Free by default.** With nothing set up, the app uses the browser's own
+    speech recognition and speech synthesis: free, no server involved. The
+    server's voice endpoints answer `503 voice_unavailable` so the app knows
+    to do that.
+  - **Better speech through the providers.** Speech to text goes to any
+    OpenAI-compatible `/audio/transcriptions` and text to speech to
+    `/audio/speech`, on the person's own model providers (same base URL and
+    key). Each direction has its own ordered list; a provider that fails is
+    skipped for 2 minutes and the next one is tried.
+    - **Free options.** Groq's free tier runs `whisper-large-v3-turbo`
+      (20 requests a minute, 2,000 a day, 7,200 audio seconds an hour,
+      28,800 a day, checked 2026-10-02). A self-hosted faster-whisper or
+      whisper.cpp server works too, and Kokoro or openedai-speech for speech
+      out.
+  - **A voice turn.** The app records, sends the audio to
+    `POST /conversations/:id/voice`, and gets back what was heard and the
+    Star's reply. The message is saved with `via: 'voice'`, and the Star is
+    told it's spoken, so it answers briefly and in plain sentences. The app
+    then plays the reply with `POST /voice/speak`.
+  - **Each Star's voice.** `Star.voice` is a voice name (like `nova`);
+    without one the default in the voice settings is used.
+- **Your computer (the Sky companion).** A small program,
+  `companion/sky-companion.mjs`, the person runs on their own computer.
+  Node 22, no packages.
+  - **How it connects.** It dials out to Sky over a WebSocket, so the
+    computer needs no open port. It pairs once with a one-time code (10
+    minutes, five wrong guesses use it up) and then keeps a token. A browser
+    page can't dial in: a request with an `Origin` header is refused.
+  - **What Stars can do there.** Open a web page, list a folder, read a text
+    file, write a text file, run a program. Tools are `computer_open`,
+    `computer_list_files`, `computer_read_file`, `computer_write_file` and
+    `computer_run`, on the `computer` connection ("Your computer").
+  - **Limited four ways.**
+    1. **An allowlist the person sets on the computer itself:** folders
+       (checked on the real path, after `..` and links are followed),
+       programs by name (run with no shell, so `;` and `$()` are only text),
+       and whether web pages may be opened. Nothing is allowed until it's
+       added. Sky can't change it.
+    2. **A switch in the app** (`enabled`) and **a switch in the companion**
+       (press `o`; the status line shows ON or OFF in colour). Off in either
+       place means nothing runs, and the tools aren't offered to Stars.
+    3. **An approval in Sky for every action,** whatever the Star's autonomy,
+       even for reading. The preview names the computer and shows what will
+       be done.
+    4. **A question on the computer too** (on unless turned off with
+       `confirm off`): "Scout wants to read the file … Allow? [y/N]". With no
+       keyboard the answer is no.
+  - **The guard** also looks at `computer_run`, and blocks things like
+    deleting everything.
+  - **Experimental.** Controlling the screen (clicks and typing in other
+    programs) isn't built; the browser tools remain the way Stars use sites.
+- **Checkout handover.** A Star can fill in a shop's checkout up to payment
+  (address, size, delivery) and then call `browser_checkout_handover` with
+  the total.
+  - **Never card details.** `browser_type` refuses payment fields (card
+    number, expiry, security code, cardholder) and any text that looks like a
+    card number, even in another field.
+  - **The approval.** "Pay €42.50 at Corner Shop", risk high, with what's
+    being bought and the page. It always asks, even for an autonomous Star.
+  - **Accepted.** The person gets the browser (as in take over), pays
+    themselves, and hands it back. The Star is told not to assume it was
+    paid and to check the page.
+  - **Declined.** The Star keeps the browser, and nothing is learned from
+    the decline.
+
+Free-tier notes for wave 4:
+
+- **Voice costs nothing** with the browser's own speech. Groq's free
+  Whisper has the limits above; with several providers in the list, the
+  next one takes over when one is rate limited.
+- **The companion needs no server.** It connects out. Through a Cloudflare
+  Tunnel (free) the WebSocket works like any other request.
+- **Not checked live.** Real providers weren't reachable here, so voice was
+  tested against a stand-in with the same endpoints. The companion was tested
+  as the real program against the real server, on Linux only: opening a page
+  (`xdg-open`, `open`, Windows' URL handler) and the Windows and macOS paths
+  weren't run. The keyboard switch (`o`) needs a terminal and was tested only
+  through the no-keyboard `on`/`off` lines. Checkout was tested on a local
+  shop page, not a real shop.
+
 ## Ideas
 
 Every few hours the runtime offers new ideas: starter ones that follow from
@@ -907,6 +991,82 @@ OK: …") and in the approval's `reason`.
 
 Events: `browser.control` (`BrowserSession`), `recording.updated`
 (`Recording`), `workspace.changed` (`{ starId, path }`).
+
+### Wave 4 (for the UI to build on)
+
+Types (in `server/src/types.ts`): `VoiceSettings`, `VoiceStatus`,
+`CheckoutHandover`, `CompanionAllow`, `CompanionDevice` and `CompanionPairing`
+are new. `Message.via` can be `'voice'`. `Star` gains `voice?: string | null`.
+`BrowserSession` gains `checkout: CheckoutHandover | null`. A new connection
+`computer` ("Your computer") appears in `GET /connections`.
+
+```ts
+interface VoiceSettings { sttProviderIds: string[]; sttModel: string; ttsProviderIds: string[]; ttsModel: string; ttsVoice: string }
+interface VoiceStatus {
+  speechToText: { id: string; name: string }[]; textToSpeech: { id: string; name: string }[];
+  serverSpeechToText: boolean; serverTextToSpeech: boolean;   // false: use the browser's own speech
+  settings: VoiceSettings;
+}
+interface CheckoutHandover { taskId: string; total: string; merchant: string; summary: string; url: string; stage: 'waiting_ok' | 'paying' }
+interface CompanionDevice {
+  id: string; name: string; platform: string;
+  enabled: boolean;        // the switch in the app
+  localEnabled: boolean;   // the switch in the companion (press o)
+  connected: boolean;
+  allow: { folders: string[]; commands: string[]; openUrls: boolean };   // set on the computer, shown read-only
+  confirmLocally: boolean; pairedAt: string; lastSeenAt: string | null;
+}
+interface CompanionPairing { code: string; expiresAt: string; command: string }
+```
+
+Voice:
+- `GET /voice` → `VoiceStatus`. If `serverSpeechToText` is false, record
+  with the browser's speech recognition and send text as usual; if
+  `serverTextToSpeech` is false, use `speechSynthesis`.
+- `PUT /voice` `{ sttProviderIds?, sttModel?, ttsProviderIds?, ttsModel?, ttsVoice? }`
+  → `VoiceStatus`. Providers must be OpenAI-compatible ones from `/providers`
+  (`400` otherwise). Suggest Groq (`https://api.groq.com/openai/v1`,
+  `whisper-large-v3-turbo`) for speech to text.
+- `POST /voice/transcribe` with the recording as the body (`Content-Type:
+  audio/webm`, `audio/wav`, `audio/mpeg`, `audio/mp4`, `audio/ogg`; up to
+  25 MB; `?language=en` optional) → `{ text, provider }`.
+- `POST /conversations/:id/voice`, same body → `{ heard, provider, message, reply }`.
+  `message` is the saved message (`via: 'voice'`), `reply` the Star's answer
+  (or `null` if it hasn't one yet). Streaming events arrive as usual.
+  `422 nothing_heard` for silence.
+- `POST /voice/speak` `{ text, starId? }` → `audio/mpeg` (the Star's `voice`
+  when set). Play it, and animate the Star's character while it plays.
+- `POST /conversations/:id/messages` also takes `via: 'voice'` (for text the
+  browser transcribed itself).
+- Errors: `415 audio_only`, `413` over 25 MB, `503 voice_unavailable` (use
+  the browser's speech), `502 voice_failed` (every provider failed; the
+  message says why, with no keys).
+- `PATCH /stars/:id` takes `voice` (a voice name, or `null` for the default).
+
+Checkout:
+- The live view shows `BrowserSession.checkout` while it's set: `waiting_ok`
+  is "waiting for you to OK the payment" and `paying` is "your turn: pay,
+  then hand back". The approval is a normal one: `action` is "Pay €42.50 at
+  Corner Shop", `risk: 'high'`, and `preview` has the summary, total and page.
+- Accepting an approval whose action starts with "Pay" gives the person the
+  browser (`control: 'person'`). The UI should say "Pay, then press Hand back".
+- `browser.control` events carry the session, so `checkout` updates live.
+
+Your computer:
+- `GET /companion` → `{ devices: CompanionDevice[], socketPath, download }`.
+  `download` is the path of the companion program in the repository.
+- `POST /companion/pair` → `CompanionPairing`. Show `command` for the person
+  to run on their computer. The device appears in `devices` once it's paired.
+- `PATCH /companion/devices/:id` `{ enabled?, name? }` → `CompanionDevice`.
+  `enabled: false` is the app's visible off switch.
+- `DELETE /companion/devices/:id` unpairs it (the companion forgets its token).
+- `POST /connections/computer/disconnect` switches every paired computer off in
+  Sky; `connect` switches them back on (or, with none paired, answers `400
+  use_companion`).
+- The allowlist is never changed from Sky. Show it read-only with "Change it
+  on the computer: `node sky-companion.mjs allow-folder <path>`".
+- Events: `companion.updated` (`CompanionDevice`), `companion.deleted` (`{ id }`).
+- Approvals for computer actions name the computer in `target`.
 
 ### Server-side additions
 

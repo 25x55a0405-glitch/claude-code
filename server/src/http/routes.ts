@@ -17,6 +17,8 @@ import type { McpManager, McpInput } from '../mcp.ts';
 import { slackManifest, type Messaging } from '../messaging.ts';
 import type { Templates } from '../templates.ts';
 import type { StarMail } from '../mail.ts';
+import type { Voice } from '../voice.ts';
+import { COMPANION_PATH, type Companion } from '../companion.ts';
 
 const TASK_STATUSES: TaskStatus[] = ['active', 'scheduled', 'waiting_approval', 'blocked', 'paused', 'done', 'failed'];
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 'style'];
@@ -71,6 +73,10 @@ export interface Services {
   mail: StarMail;
   workspaces: Workspaces;
   teach: Teach;
+  voice: Voice;
+  companion: Companion;
+  /** Set by registerRoutes: saves something the person said in a chat. */
+  say?: (conversationId: string, content: string, via?: 'voice') => Message;
 }
 
 /** A route's answer that isn't JSON: a file download. */
@@ -86,7 +92,7 @@ export class RawBody {
 }
 
 export function registerRoutes(r: Router, services: Services) {
-  const { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, workspaces, teach } = services;
+  const { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, workspaces, teach, voice, companion } = services;
   const registry = models.registry;
   /** An optional Star id from a query or body; an unknown one is a 400. */
   const starRef = (v: unknown, field = 'starId'): string | undefined => {
@@ -100,7 +106,7 @@ export function registerRoutes(r: Router, services: Services) {
     return { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
   };
   const starFields = (b: Record<string, unknown>) => {
-    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds'>> = {};
+    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds' | 'voice'>> = {};
     if (b.name !== undefined) p.name = text(b.name, 'name', 40);
     if (b.role !== undefined) p.role = text(b.role, 'role', 200);
     if (b.instructions !== undefined) {
@@ -115,6 +121,10 @@ export function registerRoutes(r: Router, services: Services) {
       p.mcpServerIds = b.mcpServerIds === null ? null : [...new Set(b.mcpServerIds as string[])];
     }
     if (b.personality !== undefined) p.personality = optionalText(b.personality, 'personality', 1000);
+    if (b.voice !== undefined) {
+      if (b.voice !== null && (typeof b.voice !== 'string' || !/^[\w .-]{1,60}$/.test(b.voice))) throw badRequest('voice must be null (the default) or a voice name like alloy');
+      p.voice = b.voice === null ? null : (b.voice as string).trim();
+    }
     if (b.replyStyle !== undefined) p.replyStyle = optionalText(b.replyStyle, 'replyStyle', 1000);
     if (b.notify !== undefined) {
       const n = b.notify as Record<string, unknown>;
@@ -486,18 +496,24 @@ export function registerRoutes(r: Router, services: Services) {
     return store.messages(params.id);
   });
   r.post('/conversations/:id/messages', ({ params, body }) => {
-    const conv = store.getConversation(params.id);
-    const content = text(body?.content, 'content', 20_000);
-    const m: Message = { id: uid('msg'), conversationId: conv.id, role: 'user', content, createdAt: iso(), status: 'done' };
+    if (body?.via !== undefined && body.via !== 'voice') throw badRequest('via must be voice when set');
+    const m = say(params.id, text(body?.content, 'content', 20_000), body?.via === 'voice' ? 'voice' : undefined);
+    void runtime.chat.reply(m.conversationId);
+    return m;
+  });
+  /** Saves something the person said in a chat (typed, or spoken and transcribed). */
+  const say = (conversationId: string, content: string, via?: 'voice'): Message => {
+    const conv = store.getConversation(conversationId);
+    const m: Message = { id: uid('msg'), conversationId: conv.id, role: 'user', content, createdAt: iso(), status: 'done', ...(via ? { via } : {}) };
     store.saveMessage(m);
     store.patchConversation(conv.id, {
       updatedAt: m.createdAt, preview: firstLine(content, 120),
       ...(!conv.main && (conv.title === 'New chat' || conv.title === 'New conversation') ? { title: firstLine(content, 40) } : {}),
     });
     store.log('message', `You said: ${firstLine(content, 100)}`);
-    void runtime.chat.reply(conv.id);
     return m;
-  });
+  };
+  services.say = say;
 
   // ---- memory ----
   r.get('/memory', ({ query }) => store.listMemory(starRef(query.get('starId'))));
@@ -517,8 +533,61 @@ export function registerRoutes(r: Router, services: Services) {
     const c = store.getConnection(params.id);
     return store.putConnection({ ...c, access: oneOf(body?.access, ACCESS, 'access') });
   });
-  r.post('/connections/:id/connect', ({ params }) => providers.connect(params.id));
-  r.post('/connections/:id/disconnect', ({ params }) => providers.disconnect(params.id));
+  r.post('/connections/:id/connect', ({ params }) => {
+    // Your computer connects from the companion; once paired, connecting here switches the paired computers back on.
+    if (params.id === 'computer' && companion.devices().length) {
+      for (const d of companion.devices()) if (!d.enabled) companion.patch(d.id, { enabled: true });
+      return { authorizeUrl: null, connection: store.getConnection('computer') };
+    }
+    return providers.connect(params.id);
+  });
+  r.post('/connections/:id/disconnect', ({ params }) => {
+    // Disconnecting your computer switches every paired computer off in Sky (the pairing stays).
+    if (params.id === 'computer') for (const d of companion.devices()) if (d.enabled) companion.patch(d.id, { enabled: false });
+    return providers.disconnect(params.id);
+  });
+
+  // ---- voice ----
+  r.get('/voice', () => voice.status());
+  r.put('/voice', ({ body }) => {
+    const b = object(body);
+    const current = voice.settings();
+    const ids = (v: unknown, field: string) => {
+      if (v === undefined) return undefined;
+      if (!Array.isArray(v) || v.some((id) => typeof id !== 'string' || registry.find(id)?.kind !== 'openai')) {
+        throw badRequest(`${field} must be a list of ids of your OpenAI-compatible model providers`);
+      }
+      return [...new Set(v as string[])];
+    };
+    const name = (v: unknown, field: string) => {
+      if (v === undefined) return undefined;
+      if (typeof v !== 'string' || !/^[\w.:/ -]{1,100}$/.test(v)) throw badRequest(`${field} must be a model or voice name`);
+      return v.trim();
+    };
+    const next = {
+      sttProviderIds: ids(b.sttProviderIds, 'sttProviderIds') ?? current.sttProviderIds,
+      sttModel: name(b.sttModel, 'sttModel') ?? current.sttModel,
+      ttsProviderIds: ids(b.ttsProviderIds, 'ttsProviderIds') ?? current.ttsProviderIds,
+      ttsModel: name(b.ttsModel, 'ttsModel') ?? current.ttsModel,
+      ttsVoice: name(b.ttsVoice, 'ttsVoice') ?? current.ttsVoice,
+    };
+    store.updateSettings({ voice: next });
+    return voice.status();
+  });
+  r.post('/voice/speak', async ({ body }) => {
+    const b = object(body);
+    const said = text(b.text, 'text', 4000);
+    const star = b.starId === undefined ? undefined : store.getStar(starRef(b.starId)!);
+    const out = await voice.speak(said, star?.voice);
+    return new RawBody(out.audio, out.type, out.type.includes('wav') ? 'speech.wav' : 'speech.mp3');
+  });
+
+  // ---- your computer (the Sky companion) ----
+  r.get('/companion', () => ({ devices: companion.devices(), socketPath: COMPANION_PATH, download: 'companion/sky-companion.mjs' }));
+  r.post('/companion/pair', () => companion.pair());
+  r.patch('/companion/devices/:id', ({ params, body }) => companion.patch(params.id, object(body)));
+  r.delete('/companion/devices/:id', ({ params }) => companion.remove(params.id));
+
 
   // ---- rules ----
   r.get('/rules', ({ query }) => store.listRules(starRef(query.get('starId'))));

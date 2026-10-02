@@ -7,6 +7,7 @@ import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
 import { RawBody, registerRoutes, type Services } from './routes.ts';
 import { MAX_FILE } from '../workspace.ts';
+import { MAX_AUDIO } from '../voice.ts';
 import { Router, type Req } from './router.ts';
 
 const API = '/api/v1';
@@ -228,6 +229,27 @@ export function createHttpServer(config: Config, services: Services): Server {
         return fail(res, 415, 'raw_only', 'Send the file as the body with Content-Type: application/octet-stream (or its own type)');
       }
       return send(res, 200, services.workspaces.write(star.id, target, await readRawBuffer(req, MAX_FILE)));
+    }
+
+    // Voice: the recording as the body (audio/webm, audio/wav, audio/mpeg…), not JSON.
+    const spoken = path === '/voice/transcribe' ? [] : /^\/conversations\/([^/]+)\/voice$/.exec(path);
+    if (spoken && req.method === 'POST') {
+      const type = (req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+      if (!/^(audio|video)\/[\w.+-]+$/.test(type) && type !== 'application/octet-stream') {
+        return fail(res, 415, 'audio_only', 'Send the recording as the body with its audio type, e.g. Content-Type: audio/webm');
+      }
+      const conversationId = spoken[1] ? decodeURIComponent(spoken[1]) : null;
+      if (conversationId) store.getConversation(conversationId);
+      const language = url.searchParams.get('language') ?? undefined;
+      if (language && !/^[a-z]{2,3}$/i.test(language)) return fail(res, 400, 'bad_request', 'language must be a code like en or es');
+      const heard = await services.voice.transcribe(await readRawBuffer(req, MAX_AUDIO), type, language);
+      if (!conversationId) return send(res, 200, heard);
+      if (!heard.text) return fail(res, 422, 'nothing_heard', 'Nothing was heard in that recording');
+      // Said out loud: post it as the person's message and wait for the Star's reply.
+      const said = services.say!(conversationId, heard.text.slice(0, 20_000), 'voice');
+      await runtime.chat.reply(conversationId);
+      const reply = store.messages(conversationId).find((m) => m.role !== 'user' && m.createdAt >= said.createdAt && m.id !== said.id) ?? null;
+      return send(res, 200, { heard: heard.text, provider: heard.provider, message: said, reply });
     }
 
     const match = router.match(req.method ?? 'GET', path);

@@ -4,6 +4,7 @@ import type { Brain } from './brain.ts';
 import type { BrowserManager } from '../browser/browser.ts';
 import type { Vault } from '../vault.ts';
 import type { Workspaces } from '../workspace.ts';
+import type { Companion } from '../companion.ts';
 import type { ApprovalPreview, Effect, ToolDef } from './tools/types.ts';
 
 export type Verdict =
@@ -29,6 +30,7 @@ export class Policy {
   browser?: BrowserManager;
   vault?: Vault;
   workspaces?: Workspaces;
+  companion?: Companion;
 
   constructor(store: Store, brain: Brain) {
     this.store = store;
@@ -37,14 +39,16 @@ export class Policy {
 
   /** Decides for one Star: its own autonomy (or the global one) and the global rules plus its own. */
   async check(tool: ToolDef, input: unknown, why: string, star: Star = this.store.mainStar()): Promise<Verdict> {
-    const env = { starId: star.id, browser: this.browser, workspaces: this.workspaces, vault: this.vault };
+    const env = { starId: star.id, browser: this.browser, workspaces: this.workspaces, vault: this.vault, companion: this.companion };
     const effect = tool.effectFor?.(input, env) ?? tool.effect;
     // A secret leaving through any tool needs the person's OK, whatever the autonomy.
     const secrets = this.vault?.refs(input) ?? [];
     if (secrets.length && effect !== 'internal') {
       return { kind: 'ask', reason: `${why} (uses your secret ${secrets.join(', ')})`, risk: 'high' };
     }
-    if (effect === 'internal' || effect === 'read') return { kind: 'allow' };
+    if (effect === 'internal') return { kind: 'allow' };
+    // Some reads still always ask (anything on the person's own computer).
+    if (effect === 'read' && !tool.mustAsk?.(input, env)) return { kind: 'allow' };
     const preview: ApprovalPreview = tool.approval?.(input, env) ?? { action: tool.label(input), target: tool.connection ?? star.name, preview: JSON.stringify(input, null, 2) };
     const text = `${preview.action} ${preview.target} ${preview.preview}`;
 

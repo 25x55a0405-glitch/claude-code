@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { BrowserContext, Page } from 'playwright-core';
 import type { Config } from '../config.ts';
 import type { Store } from '../store.ts';
-import type { BrowserSession, RecordedStep } from '../types.ts';
+import type { BrowserSession, CheckoutHandover, RecordedStep } from '../types.ts';
 import { ApiError, badRequest, firstLine as oneLine, iso, uid } from '../util.ts';
 
 /** One interactive element from the last snapshot of a Star's tab. */
@@ -18,6 +18,8 @@ export interface ElementInfo {
   /** Clicking it submits a form. */
   submit: boolean;
   password: boolean;
+  /** A card number, expiry, security code or cardholder field: only the person fills these in. */
+  payment: boolean;
 }
 
 export interface Snapshot {
@@ -43,6 +45,7 @@ interface Tab {
   /** Tasks waiting for the person to hand the tab back. */
   waiting: string[];
   recordingId: string | null;
+  checkout: CheckoutHandover | null;
 }
 
 /** Thrown when a Star tries to use its tab while the person has control. */
@@ -181,7 +184,7 @@ export class BrowserManager {
     const page = blank ?? await ctx.newPage();
     const tab: Tab = {
       page, elements: new Map(), frame: null, frameId: null, url: page.url(), title: '', updatedAt: iso(),
-      control: 'star', controlNote: null, implicit: false, lastPersonAt: 0, waiting: [], recordingId: null,
+      control: 'star', controlNote: null, implicit: false, lastPersonAt: 0, waiting: [], recordingId: null, checkout: null,
     };
     // While recording, pages the person ends up on (by a link, a form or a redirect) are steps too.
     page.on('framenavigated', (f) => {
@@ -223,6 +226,7 @@ export class BrowserManager {
     return {
       starId, url: this.redact(tab.url), title: this.redact(tab.title), frameId: tab.frameId, updatedAt: tab.updatedAt,
       control: tab.control, controlNote: tab.controlNote, waitingTaskId: tab.waiting[0] ?? null, recordingId: tab.recordingId,
+      checkout: tab.checkout ? { ...tab.checkout, url: this.redact(tab.checkout.url) } : null,
     };
   }
 
@@ -283,6 +287,7 @@ export class BrowserManager {
       const el = this.element(starId, input.ref);
       if (!el) throw new Error(`No field ${input.ref} on the page. Take a fresh snapshot.`);
       if (el.password) throw new Error('Stars don’t type passwords. Ask the person to sign in through the browser view; the sign-in will stick.');
+      if (el.payment || looksLikeCard(input.text)) throw new Error('Stars never enter card details. Fill in everything else, then call browser_checkout_handover so the person pays themselves.');
       const field = t.page.locator(`[data-sky-ref="${el.ref}"]`).first();
       await field.fill(input.text, { timeout: 10_000 });
       if (input.submit) await field.press('Enter');
@@ -345,6 +350,7 @@ export class BrowserManager {
     tab.implicit = false;
     tab.waiting = [];
     tab.recordingId = null;
+    tab.checkout = null;
     const clean = note?.trim() ? oneLine(note, 300) : null;
     if (!implicit || waiting.length) this.store.log('browser', `${this.starName(starId)} has the browser back${clean ? `: ${clean}` : ''}`, waiting[0], starId);
     this.emitControl(starId, tab);
@@ -384,6 +390,14 @@ export class BrowserManager {
       tab.waiting.push(taskId);
       this.emitControl(starId, tab);
     }
+  }
+
+  /** A Star filled in a checkout: shown on the live view and the approval until it's paid or dropped. */
+  setCheckout(starId: string, checkout: CheckoutHandover | null) {
+    const tab = this.tabs.get(starId);
+    if (!tab) return;
+    tab.checkout = checkout;
+    this.emitControl(starId, tab);
   }
 
   // ---- recording (teach a task) ------------------------------------------
@@ -558,7 +572,7 @@ export class BrowserManager {
 /** Formats a snapshot for the model: the page, its text, and numbered elements. */
 export function describeSnapshot(s: Snapshot): string {
   const lines = s.elements.map((e) => {
-    const kind = e.tag === 'a' ? 'link' : e.tag === 'input' || e.tag === 'textarea' ? (e.password ? 'password field' : `${e.type || 'text'} field`)
+    const kind = e.tag === 'a' ? 'link' : e.payment ? 'card field (the person fills this in)' : e.tag === 'input' || e.tag === 'textarea' ? (e.password ? 'password field' : `${e.type || 'text'} field`)
       : e.tag === 'select' ? 'dropdown' : e.role || e.tag;
     return `[${e.ref}] ${kind} “${e.label}”${e.href ? ` → ${e.href}` : ''}${e.submit ? ' (submits a form)' : ''}`;
   });
@@ -584,11 +598,13 @@ const SNAPSHOT_SCRIPT = `(() => {
     const tag = el.tagName.toLowerCase();
     const type = (el.getAttribute('type') || '').toLowerCase();
     const password = type === 'password';
+    const hints = [el.getAttribute('autocomplete'), el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.labels && el.labels[0] && el.labels[0].innerText].join(' ');
+    const payment = (tag === 'input' || tag === 'select') && (/\\bcc-|card.?(number|num|no\\b)|cardnumber|\\bcvc|\\bcvv|\\bcsc\\b|security code|expir|exp.?(date|month|year)|cardholder|name on card/i.test(hints));
     const value = !password && (tag === 'button' || type === 'submit' || type === 'button') ? el.value : '';
     const label = (el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.innerText || value
       || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
     const submit = (tag === 'button' && (type === '' || type === 'submit') && !!el.form) || (tag === 'input' && (type === 'submit' || type === 'image'));
-    out.push({ ref, tag, type, role: el.getAttribute('role') || '', label, href: tag === 'a' ? el.href : undefined, submit, password });
+    out.push({ ref, tag, type, role: el.getAttribute('role') || '', label, href: tag === 'a' ? el.href : undefined, submit, password, payment });
   }
   const text = document.body ? document.body.innerText.replace(/\\n{3,}/g, '\\n\\n').trim() : '';
   return { elements: out, text };
@@ -643,4 +659,20 @@ export function pageUrl(raw: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** A 13 to 19 digit number that passes the Luhn check, with or without spaces and dashes: a card number. */
+export function looksLikeCard(text: string): boolean {
+  for (const m of text.matchAll(/(?:\d[ -]?){13,19}/g)) {
+    const digits = m[0].replace(/\D/g, '');
+    if (digits.length < 13 || digits.length > 19) continue;
+    let sum = 0;
+    for (let i = 0; i < digits.length; i++) {
+      let d = Number(digits[digits.length - 1 - i]);
+      if (i % 2 === 1) d = d * 2 > 9 ? d * 2 - 9 : d * 2;
+      sum += d;
+    }
+    if (sum % 10 === 0) return true;
+  }
+  return false;
 }

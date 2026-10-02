@@ -6,6 +6,7 @@ import type { CreateTaskInput, MessageCard, Risk, Star, Task, TaskCommand } from
 import type { BrowserManager } from '../../browser/browser.ts';
 import type { Workspaces } from '../../workspace.ts';
 import type { Vault } from '../../vault.ts';
+import type { Companion } from '../../companion.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
@@ -49,6 +50,8 @@ export interface ToolContext {
   workspaces?: Workspaces;
   /** For saved logins (password fill). */
   vault?: Vault;
+  /** The person's own computer, through the Sky companion. */
+  companion?: Companion;
   /** Set when running inside a task. */
   task?: Task;
   /** Set when replying in a chat. */
@@ -80,6 +83,7 @@ export interface ToolEnv {
   browser?: BrowserManager;
   workspaces?: Workspaces;
   vault?: Vault;
+  companion?: Companion;
 }
 
 export interface ToolDef<I = any> extends ClientToolSpec {

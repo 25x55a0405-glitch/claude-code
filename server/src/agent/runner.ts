@@ -23,6 +23,8 @@ interface PendingCall {
   input: unknown;
   /** Waiting for the person to hand the browser back (they took over, or the Star asked them to). */
   handover?: boolean;
+  /** A checkout handed over: the approval first, then the person pays in the browser. */
+  checkout?: boolean;
   decision?:
     | { outcome: 'approved' | 'rejected' | 'expired'; editedPreview?: string; note?: string }
     | { outcome: 'answered'; answer: string; failed: boolean }
@@ -93,10 +95,10 @@ export class TaskRunner {
     store.setActivity(`Working on ${firstLine(task.title, 60)}`, task.id);
 
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault,
+      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault, companion: this.deps.companion,
       task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
     };
-    const env = { starId: star.id, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault };
+    const env = { starId: star.id, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault, companion: this.deps.companion };
 
     // Carry out whatever the person decided, or read the other Star's answer, while the task was waiting.
     if (state.pending.length) {
@@ -196,7 +198,11 @@ export class TaskRunner {
         }
         // The person has the browser: browser calls wait for the hand-back. The Star can also ask for it.
         const browser = this.deps.browser;
-        if (browser && (tool.name === 'browser_ask_person' || (tool.connection === 'browser' && browser.controller(star.id) === 'person'))) {
+        if (browser && tool.name === 'browser_checkout_handover' && browser.controller(star.id) === 'star') {
+          state.pending.push(await this.checkout(task, star, use.id, use.input as { total: string; merchant?: string; summary: string }));
+          continue;
+        }
+        if (browser && (tool.name === 'browser_ask_person' || tool.name === 'browser_checkout_handover' || (tool.connection === 'browser' && browser.controller(star.id) === 'person'))) {
           state.pending.push(await this.handover(task, star, tool.name, use.id, use.input as { reason?: string }));
           continue;
         }
@@ -311,6 +317,35 @@ export class TaskRunner {
     return { toolUseId, handover: true, name, input };
   }
 
+  /**
+   * A checkout is ready to pay: an approval with the total. Accepting it
+   * gives the person the browser to pay (see recordDecision); Stars never
+   * enter card details or press the final pay button.
+   */
+  private async checkout(task: Task, star: Star, toolUseId: string, input: { total: string; merchant?: string; summary: string }): Promise<PendingCall> {
+    const { store, hooks } = this.deps;
+    const browser = this.deps.browser!;
+    const page = browser.currentPage(star.id);
+    let host = 'the shop';
+    try {
+      if (page?.url) host = new URL(page.url).host;
+    } catch { /* keep the default */ }
+    const merchant = firstLine(input.merchant?.trim() || host, 60);
+    const total = firstLine(input.total.trim(), 40);
+    const approval = store.createApproval({
+      taskId: task.id, starId: star.id, action: `Pay ${total} at ${merchant}`, target: host, connectionId: 'browser', risk: 'high',
+      reason: `${star.name} filled in the checkout up to payment. If you accept, you take over the browser and pay yourself; Stars never enter card details.`,
+      preview: `${truncate(input.summary, 1200)}\n\nTotal: ${total}${page ? `\nOn “${page.title || page.url}” (${page.url})` : ''}`,
+      expiresAt: iso(Date.now() + 24 * 3_600_000),
+    });
+    browser.setCheckout(star.id, { taskId: task.id, total, merchant, summary: firstLine(input.summary, 300), url: page?.url ?? '', stage: 'waiting_ok' });
+    store.addStep(task.id, { kind: 'approval', summary: firstLine(`Checkout ready: ${total} at ${merchant}. Asked you to pay`, 160), connectionId: 'browser' });
+    await hooks.notify(`Ready to pay ${total} at ${merchant}. Accept to take over my browser and pay yourself, or decline to drop it.`, {
+      taskId: task.id, starId: star.id, kind: 'needs_you', urgent: true, cards: [{ kind: 'approval', approvalId: approval.id }],
+    });
+    return { toolUseId, approvalId: approval.id, checkout: true, name: 'browser_checkout_handover', input };
+  }
+
   /** The person handed the browser back. Returns true once every pending call in the run is answered. */
   recordHandBack(taskId: string, note: string | null): boolean {
     const state = this.load(taskId);
@@ -354,12 +389,33 @@ export class TaskRunner {
     }
   }
 
+  /** Whether an approval is a checkout handed over to pay (declining one isn't a correction to learn from). */
+  isCheckout(approval: Approval): boolean {
+    return Boolean(approval.taskId && this.load(approval.taskId)?.pending.some((p) => p.approvalId === approval.id && p.checkout));
+  }
+
   /** Records the person's decision. Returns true once every pending call in the run is decided. */
   recordDecision(approval: Approval, decision: ApprovalDecision | 'expired'): boolean {
     if (!approval.taskId) return false;
     const state = this.load(approval.taskId);
     const p = state?.pending.find((x) => x.approvalId === approval.id);
     if (!state || !p) return false;
+    if (p.checkout) {
+      const browser = this.deps.browser;
+      const starId = approval.starId ?? this.deps.store.mainStar().id;
+      if (decision !== 'expired' && decision.decision === 'approve' && browser) {
+        // Accepted: the person takes the browser to pay, and the task waits for the hand-back.
+        const c = p.input as { total: string; merchant?: string };
+        p.handover = true;
+        this.save(state);
+        if (approval.taskId) this.deps.store.patchTask(approval.taskId, { status: 'blocked', lastOutcome: 'Waiting for you to pay, then hand the browser back' });
+        const now = browser.sessions().find((x) => x.starId === starId)?.checkout;
+        if (now) browser.setCheckout(starId, { ...now, stage: 'paying' });
+        void browser.takeOver(starId, { note: `Pay ${firstLine(c.total, 40)} yourself, then hand back`, waitingTaskId: approval.taskId }).catch(() => {});
+        return false;
+      }
+      browser?.setCheckout(starId, null);
+    }
     p.decision = decision === 'expired'
       ? { outcome: 'expired' }
       : { outcome: decision.decision === 'approve' ? 'approved' : 'rejected', editedPreview: decision.editedPreview, note: decision.note };
@@ -373,7 +429,9 @@ export class TaskRunner {
     const d = p.decision!;
     if (d.outcome === 'handed_back') {
       if (ctx.task) store.addStep(ctx.task.id, { kind: 'result', summary: firstLine(`You handed the browser back${d.note ? `: ${d.note}` : ''}`, 160), connectionId: 'browser' });
-      const asked = p.name === 'browser_ask_person' ? 'The person did what you asked and handed the browser back.' : `The person had taken over the browser, so ${p.name} wasn’t run. They’ve handed it back.`;
+      const asked = p.checkout ? 'The person took over the checkout to pay and has handed the browser back. Don’t assume it was paid: check the page.'
+        : p.name === 'browser_ask_person' ? 'The person did what you asked and handed the browser back.'
+          : `The person had taken over the browser, so ${p.name} wasn’t run. They’ve handed it back.`;
       return { type: 'tool_result', tool_use_id: p.toolUseId, content: `${asked}${d.note ? ` Their note: “${d.note}”` : ''} Take a fresh snapshot before carrying on.` };
     }
     if (d.outcome === 'answered') {
@@ -394,7 +452,9 @@ export class TaskRunner {
       const edited = d.editedPreview ? ' The person edited it before approving; this is what was used.' : '';
       return { ...result, content: `${result.content}${edited}${note}` };
     }
-    const why = d.outcome === 'expired' ? 'The approval expired without an answer, so it was skipped.' : 'The person declined this action, so it was not done.';
+    const why = p.checkout
+      ? (d.outcome === 'expired' ? 'Nobody took the checkout within a day, so nothing was paid.' : 'The person declined to pay, so nothing was bought. Leave the checkout as it is.')
+      : d.outcome === 'expired' ? 'The approval expired without an answer, so it was skipped.' : 'The person declined this action, so it was not done.';
     if (ctx.task) store.addStep(ctx.task.id, { kind: 'note', summary: firstLine(`${tool.label(p.input)}: ${d.outcome === 'expired' ? 'skipped, approval expired' : 'skipped as you asked'}`, 160) });
     return { type: 'tool_result', tool_use_id: p.toolUseId, content: `${why}${note}` };
   }

@@ -153,10 +153,32 @@ bubblewrap needs. If it says `none`, the
 `/etc/sysctl.d/` to keep it). On older Debian, the switch is
 `kernel.unprivileged_userns_clone=1`. Until then every command asks you first.
 
+## Voice and your computer (wave 4)
+
+**Voice.** With nothing set up, the app talks through the browser's own
+speech recognition and synthesis (free). For better speech, add a provider
+that has OpenAI-style audio endpoints and pick it in the voice settings.
+Groq's free tier runs Whisper (`whisper-large-v3-turbo`) at 20 requests a
+minute and 2,000 a day; add it with base URL `https://api.groq.com/openai/v1`.
+A self-hosted faster-whisper or whisper.cpp server and Kokoro work too.
+
+**Your computer.** Copy `companion/sky-companion.mjs` to the computer you want
+Stars to use (it needs Node 22 and nothing else). In Sky, make a pairing code,
+then:
+
+```
+node sky-companion.mjs pair https://your-sky-address CODE
+node sky-companion.mjs allow-folder ~/Documents/Sky
+node sky-companion.mjs allow-command git
+node sky-companion.mjs            # run it: press o to switch on or off, q to quit
+```
+
+See `companion/README.md` for what Stars can and can't do there.
+
 ## Develop
 
 ```
-npm test           # API contract, agent behaviour, Stars, model fallback, real browser, schedules, waves 1 to 3
+npm test           # API contract, agent behaviour, Stars, model fallback, real browser, schedules, waves 1 to 4
 npm run typecheck
 npm run dev        # restarts on change
 ```

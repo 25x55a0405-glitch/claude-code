@@ -56,8 +56,9 @@ export class Guard {
   }
 
   private quick(tool: ToolDef, input: unknown, effect: Effect, p: ApprovalPreview): GuardDecision | null {
-    if (tool.name === 'run_command') {
-      const cmd = String((input as { command?: string }).command ?? '');
+    if (tool.name === 'run_command' || tool.name === 'computer_run') {
+      const i = input as { command?: string; program?: string; args?: unknown };
+      const cmd = tool.name === 'run_command' ? String(i.command ?? '') : [i.program, ...(Array.isArray(i.args) ? i.args : [])].map(String).join(' ');
       for (const [re, what] of SHELL_BLOCK) if (re.test(cmd)) return { verdict: 'block', reason: `The command looks like ${what}.`, by: 'quick' };
       for (const [re, what] of SHELL_ASK) if (re.test(cmd)) return { verdict: 'ask', reason: `The command is ${what}.`, by: 'quick' };
     }
@@ -73,7 +74,7 @@ export class Guard {
 
   /** Model review is for actions that reach other people or can't be undone; writes inside Sky or the workspace skip it. */
   private worthReview(tool: ToolDef, input: unknown, effect: Effect): boolean {
-    if (tool.name.startsWith('mcp_')) return true;
+    if (tool.name.startsWith('mcp_') || tool.name.startsWith('computer_')) return true;
     if (tool.name === 'run_command') return Boolean((input as { network?: boolean }).network);
     return effect === 'send' || effect === 'delete' || effect === 'spend';
   }

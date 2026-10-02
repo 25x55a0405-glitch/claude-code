@@ -101,7 +101,8 @@ export const browserClick: ToolDef<{ ref?: string; text?: string }> = {
 export const browserType: ToolDef<{ ref: string; text: string; submit?: boolean }> = {
   name: 'browser_type',
   description: 'Type into a field in your browser tab (replacing what is there), by its ref. Set submit to press Enter afterwards, '
-    + 'which usually submits the form. Never type passwords: ask the person to sign in through the browser view instead.',
+    + 'which usually submits the form. Never type passwords (ask the person to sign in through the browser view instead) '
+    + 'or card details (hand the checkout over with browser_checkout_handover).',
   input_schema: schema({ ref: str('Field ref, like e7'), text: str('What to type'), submit: bool('Press Enter afterwards') }, ['ref', 'text']),
   effect: 'write',
   connection: 'browser',
@@ -215,4 +216,24 @@ export const browserFillLogin: ToolDef<{ login?: string; submit?: boolean }> = {
   },
 };
 
-export const browserTools: ToolDef[] = [browserOpen, browserSearch, browserSnapshot, browserClick, browserType, browserPress, browserScroll, browserBack, browserAskPerson, browserFillLogin];
+export const browserCheckoutHandover: ToolDef<{ total: string; merchant?: string; summary: string }> = {
+  name: 'browser_checkout_handover',
+  description: 'When a checkout is filled in up to payment, hand it to the person to pay. Never type card numbers, expiry dates or '
+    + 'security codes, and never click the final pay button yourself. The person gets an approval with the total; if they accept, they '
+    + 'take over the browser, pay, and hand it back. Then take a fresh snapshot to see whether the order went through.',
+  input_schema: schema({
+    total: str('The total to pay, exactly as the page shows it, with the currency, e.g. "€42.50"'),
+    merchant: str('The shop'),
+    summary: str('What is being bought and where it ships, in a line or two'),
+  }, ['total', 'summary']),
+  // The runner handles it: an approval with the total, then a hand-over.
+  effect: 'internal',
+  connection: 'browser',
+  scope: 'task',
+  label: (i) => `Handed you the checkout: ${firstLine(i.total, 30)}`,
+  async run() {
+    throw new Error('browser_checkout_handover only works inside a task.');
+  },
+};
+
+export const browserTools: ToolDef[] = [browserCheckoutHandover, browserOpen, browserSearch, browserSnapshot, browserClick, browserType, browserPress, browserScroll, browserBack, browserAskPerson, browserFillLogin];
