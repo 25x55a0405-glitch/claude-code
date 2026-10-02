@@ -1,0 +1,26 @@
+// Starts the real Sky server for the browser tests: fresh in-memory database,
+// the model router (which uses the scripted brain until a test adds a provider),
+// real Chromium for the Stars' browser, the built web app at /, a fake Gmail so approvals can be
+// exercised end to end, and a fake Telegram for pairing. Prints the URL on stdout once it is listening.
+import { resolve } from 'node:path';
+import { fakeConnection, startServer } from '../../server/test/helpers.ts';
+
+const s = await startServer({ brain: 'models', browserPath: process.env.QA_CHROMIUM ?? '/opt/pw-browsers/chromium', webDist: resolve(import.meta.dirname, '../../web/dist'), tickMs: 1000, ...(process.env.QA_PASSWORD ? { password: process.env.QA_PASSWORD } : {}) });
+const sent = fakeConnection(s, 'gmail', (url) => ({ body: url.endsWith('/profile') ? { emailAddress: 'd@example.com' } : { id: 'sent_1' } }));
+// Lets the tests see what would have gone out, without a real mailbox.
+s.app.server.prependListener('request', (req, res) => {
+  if (req.url === '/__qa/gmail-sends') {
+    res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify(sent.filter((c) => c.url.endsWith('/send'))));
+  }
+});
+// A Telegram stand-in: any well-formed bot token is accepted, and no messages arrive.
+const viaTelegram = s.app.providers.fetch;
+s.app.providers.fetch = async (input, init = {}) => {
+  const m = /api\.telegram\.org\/bot[^/]+\/(\w+)$/.exec(String(input));
+  if (!m) return viaTelegram(input, init);
+  if (m[1] === 'getMe') return Response.json({ ok: true, result: { username: 'sky_qa_bot' } });
+  if (m[1] === 'getUpdates') { await new Promise((r) => setTimeout(r, 500)); return Response.json({ ok: true, result: [] }); }
+  return Response.json({ ok: true, result: { message_id: 1 } });
+};
+s.app.runtime.start();
+console.log(s.base.replace(/\/api\/v1$/, ''));
