@@ -4,6 +4,7 @@ import type {
   Briefing,
   Connection,
   Conversation,
+  Idea,
   MemoryItem,
   Message,
   Rule,
@@ -18,6 +19,7 @@ const ahead = (min: number) => new Date(now + min * 60_000).toISOString();
 export const seedSettings: Settings = {
   userName: 'd',
   agentName: 'Skys',
+  avatar: { character: 'cloud', color: 'sky' },
   tone: 'warm',
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   autonomy: 'balanced',
@@ -213,15 +215,27 @@ export const seedActivity: ActivityEvent[] = [
   { id: 'e8', at: ago(60 * 26), kind: 'task_failed', summary: 'Notion sync failed: access expired', taskId: 't_notion' },
 ];
 
+export const seedIdeas: Idea[] = [
+  { id: 'i1', kind: 'suggestion', title: 'Plan your Lisbon week', detail: 'You have flights in view. I can draft a day-by-day plan around Alfama and Príncipe Real.', prompt: 'Plan my week in Lisbon, Oct 18 to 25. Keep mornings slow.', createdAt: ago(40) },
+  { id: 'i2', kind: 'tip', title: 'Unsubscribe from 9 newsletters', detail: 'You archive them every time without opening. I can unsubscribe for you.', prompt: 'Unsubscribe me from the newsletters I always archive.', createdAt: ago(60 * 3) },
+  { id: 'i3', kind: 'plan_update', title: 'Move Friday reviews to Thursdays', detail: 'Maya has asked to move three of the last four. A standing Thursday slot might stick.', prompt: 'Propose a standing Thursday 3pm design review with Maya.', createdAt: ago(60 * 5) },
+  { id: 'i4', kind: 'suggestion', title: 'Weekly “what I shipped” note', detail: 'Every Friday I could summarise your merged PRs and finished tasks.', prompt: 'Every Friday at 5pm, summarise what I shipped this week.', createdAt: ago(60 * 20) },
+];
+
 export const seedConversations: Conversation[] = [
-  { id: 'c_main', title: 'Today', updatedAt: ago(30), preview: 'Booked. Tuesday at 4:30 is on your calendar.' },
-  { id: 'c_trip', title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.' },
+  { id: 'c_main', main: true, title: 'Skys', updatedAt: ago(1), preview: 'One thing needs you: Maya wants to move Friday.' },
+  { id: 'c_trip', main: false, title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.' },
+  { id: 'c_gift', main: false, title: 'Gift for Sam', updatedAt: ago(60 * 24 * 3), preview: 'The pour-over kit arrives Thursday.' },
 ];
 
 export const seedMessages: Message[] = [
   { id: 'msg1', conversationId: 'c_main', role: 'user', content: 'Can you book me a dentist cleaning at Smile Studio? After 4pm, next two weeks.', createdAt: ago(60 * 6), status: 'done' },
-  { id: 'msg2', conversationId: 'c_main', role: 'agent', content: 'On it. I’ll check their booking page and your calendar, then grab the first slot that fits.', createdAt: ago(60 * 6 - 1), status: 'done', taskIds: ['t_dentist'] },
-  { id: 'msg3', conversationId: 'c_main', role: 'agent', content: 'Booked. **Tuesday Oct 7 at 4:30pm** is on your calendar, and I set a reminder the day before.', createdAt: ago(30), status: 'done', taskIds: ['t_dentist'] },
-  { id: 'msg4', conversationId: 'c_trip', role: 'user', content: 'Find me flights to Lisbon, Oct 18 to 25, under $600. Mornings, one stop max.', createdAt: ago(60 * 31), status: 'done' },
-  { id: 'msg5', conversationId: 'c_trip', role: 'agent', content: 'Nothing under $600 yet. The best is $642 on TAP. I’ll watch fares and ping you under $600.', createdAt: ago(60 * 30), status: 'done', taskIds: ['t_flights'] },
+  { id: 'msg2', conversationId: 'c_main', role: 'agent', content: 'On it. I’ll check their booking page against your calendar and take the first slot that fits.', createdAt: ago(60 * 6 - 1), status: 'done' },
+  { id: 'msg3', conversationId: 'c_main', role: 'agent', content: 'Booked. **Tuesday Oct 7 at 4:30pm** is on your calendar, with a reminder the day before.', createdAt: ago(60 * 5), status: 'done', cards: [{ kind: 'task', taskId: 't_dentist' }] },
+  { id: 'msg4', conversationId: 'c_main', role: 'agent', proactive: true, content: 'Good morning, d. Quiet night: I cleared 31 emails and Lisbon fares dropped 4%. You have three meetings, the first at 10:30.', createdAt: ago(60 * 2), status: 'done' },
+  { id: 'msg5', conversationId: 'c_main', role: 'agent', proactive: true, content: 'One thing needs you. Maya wants to move Friday’s review, and you’re free Thursday at 3. I drafted a reply:', createdAt: ago(2), status: 'done', cards: [{ kind: 'approval', approvalId: 'a_maya' }] },
+  { id: 'msg6', conversationId: 'c_trip', role: 'user', content: 'Find me flights to Lisbon, Oct 18 to 25, under $600. Mornings, one stop max.', createdAt: ago(60 * 31), status: 'done' },
+  { id: 'msg7', conversationId: 'c_trip', role: 'agent', content: 'Nothing under $600 yet. The best is $642 on TAP with one stop in Newark. I’ll keep watching and ping you the moment it dips.', createdAt: ago(60 * 30), status: 'done', cards: [{ kind: 'task', taskId: 't_flights' }] },
+  { id: 'msg8', conversationId: 'c_gift', role: 'user', content: 'Sam’s birthday is next week. Something coffee related, around $80?', createdAt: ago(60 * 24 * 3 + 5), status: 'done' },
+  { id: 'msg9', conversationId: 'c_gift', role: 'agent', content: 'Ordered the Fellow pour-over kit for $76. It arrives Thursday, gift wrapped.', createdAt: ago(60 * 24 * 3), status: 'done' },
 ];

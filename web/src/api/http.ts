@@ -11,6 +11,8 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'message.done',
   'activity',
   'memory.learned',
+  'idea.created',
+  'settings.updated',
 ];
 
 export class HttpError extends Error {
@@ -81,6 +83,9 @@ export function createHttpApi(baseUrl: string): SkysApi {
     addRule: (text) => call('POST', '/rules', { text }),
     updateRule: (id, patch) => call('PATCH', `/rules/${id}`, patch),
     deleteRule: (id) => call('DELETE', `/rules/${id}`),
+
+    listIdeas: () => call('GET', '/ideas'),
+    dismissIdea: (id) => call('POST', `/ideas/${id}/dismiss`),
 
     listActivity: (cursor) => call('GET', '/activity' + qs({ cursor })),
 

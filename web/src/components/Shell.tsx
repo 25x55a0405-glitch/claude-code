@@ -1,68 +1,89 @@
-import type { ReactNode } from 'react';
-import { usingMock } from '../api';
-import { href } from '../lib/router';
-import { useStatus } from '../lib/status';
+import { useEffect, useState, type ReactNode } from 'react';
+import { api } from '../api';
+import { doingLine, useAgent } from '../lib/agent';
+import { useResource } from '../lib/hooks';
+import { href, navigate } from '../lib/router';
 import { Icon, type IconName } from './Icon';
-import { Orb, stateLabel } from './ui';
+import { Me } from './ui';
+import { ProfileSheet } from './ProfileSheet';
 
-const NAV: { id: string; label: string; icon: IconName; mobile?: boolean }[] = [
-  { id: 'home', label: 'Home', icon: 'home', mobile: true },
-  { id: 'chat', label: 'Chat', icon: 'chat', mobile: true },
-  { id: 'tasks', label: 'Tasks', icon: 'tasks', mobile: true },
-  { id: 'approvals', label: 'Approvals', icon: 'approve', mobile: true },
+const NAV: { id: string; label: string; icon: IconName }[] = [
+  { id: 'chat', label: 'Chat', icon: 'chat' },
+  { id: 'goals', label: 'Goals', icon: 'target' },
+  { id: 'ideas', label: 'Ideas', icon: 'bulb' },
+  { id: 'approvals', label: 'Approvals', icon: 'approve' },
   { id: 'memory', label: 'Memory', icon: 'brain' },
-  { id: 'connections', label: 'Connections', icon: 'plug' },
-  { id: 'rules', label: 'Rules', icon: 'rules' },
+  { id: 'permissions', label: 'Permissions', icon: 'lock' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
-  { id: 'settings', label: 'Settings', icon: 'settings', mobile: true },
 ];
 
-export function Shell({ section, children }: { section: string; children: ReactNode }) {
-  const status = useStatus();
+export function Shell({ section, chatId, children }: { section: string; chatId?: string; children: ReactNode }) {
+  const { status, settings } = useAgent();
+  const [drawer, setDrawer] = useState(false);
+  const [sheet, setSheet] = useState(false);
+  const convs = useResource(() => api.listConversations(), [], ['message.done']);
   const pending = status?.counts.pendingApprovals ?? 0;
-  const badge = (id: string) => (id === 'approvals' && pending > 0 ? <span className="badge">{pending}</span> : null);
+  const side = convs.data?.filter((c) => !c.main) ?? [];
+  const working = status?.state === 'working';
+
+  useEffect(() => setDrawer(false), [section, chatId]);
+
+  const newChat = async () => {
+    const c = await api.createConversation();
+    convs.reload();
+    navigate('chat', c.id);
+  };
 
   return (
-    <>
-      {usingMock && <div className="mock-banner">Demo mode: running on sample data. Set VITE_SKYS_API_URL to connect the back end.</div>}
-      <div className="shell">
-        <aside className="sidebar">
-          <a className="brand" href={href('home')}>
-            <Orb state={status?.state ?? 'idle'} size="sm" />
-            Skys
-          </a>
-          <nav className="nav" aria-label="Main">
-            {NAV.map((n) => (
-              <a key={n.id} href={href(n.id)} className={`navlink ${section === n.id ? 'active' : ''}`} aria-current={section === n.id ? 'page' : undefined}>
-                <Icon name={n.icon} />
-                {n.label}
-                {badge(n.id)}
-              </a>
-            ))}
-          </nav>
-          <div className="sidebar-foot">
-            {status && (
-              <a className="status-chip" href={status.taskId ? href('tasks', status.taskId) : href('activity')}>
-                <Orb state={status.state} size="xs" />
-                <div style={{ minWidth: 0 }}>
-                  <div className="label">{stateLabel[status.state]}</div>
-                  <div className="line">{status.activity ?? (status.state === 'paused' ? 'Not taking any actions' : 'Watching for changes')}</div>
-                </div>
-              </a>
-            )}
-          </div>
-        </aside>
-        <main className="main">{children}</main>
-      </div>
-      <nav className="tabbar" aria-label="Main">
-        {NAV.filter((n) => n.mobile).map((n) => (
-          <a key={n.id} href={href(n.id)} className={section === n.id ? 'active' : ''} aria-current={section === n.id ? 'page' : undefined}>
-            <Icon name={n.icon} size={20} />
+    <div className="app">
+      {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
+      <aside className={`sidebar ${drawer ? 'open' : ''}`} aria-label="Navigation">
+        <div className="sb-top">
+          <a className="wordmark" href={href('chat')}>{settings?.agentName ?? 'Skys'}</a>
+          <button className="icon-btn" onClick={newChat} aria-label="New side chat" title="New side chat"><Icon name="compose" /></button>
+        </div>
+        {NAV.map((n) => (
+          <a key={n.id} href={href(n.id)} className={`sb-item ${section === n.id && !(n.id === 'chat' && chatId) ? 'on' : ''}`}>
+            <Icon name={n.icon} size={18} />
             {n.label}
-            {badge(n.id)}
+            {n.id === 'approvals' && pending > 0 && <span className="count">{pending}</span>}
           </a>
         ))}
-      </nav>
-    </>
+        {side.length > 0 && <div className="sb-label">Side chats</div>}
+        {side.map((c) => (
+          <a key={c.id} href={href('chat', c.id)} className={`sb-item sb-chat ${chatId === c.id ? 'on' : ''}`}>
+            <span className="t">{c.title}</span>
+          </a>
+        ))}
+        <div className="sb-foot">
+          <a href={href('settings')} className={`sb-item ${section === 'settings' ? 'on' : ''}`}>
+            <span className="me">{(settings?.userName ?? '?')[0].toUpperCase()}</span>
+            <span className="grow">{settings?.userName ?? ''}</span>
+            <Icon name="settings" size={17} />
+          </a>
+        </div>
+      </aside>
+
+      <div className="main">
+        <header className="topbar">
+          <button className="icon-btn only-mobile" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
+          <button className="who" onClick={() => setSheet(true)} aria-label={`Open ${settings?.agentName ?? 'Skys'}’s profile`}>
+            <Me size={34} />
+            <span className="txt">
+              <span className="name">{settings?.agentName ?? 'Skys'}</span>
+              <span className={`doing ${working ? 'shimmer' : ''}`}>{doingLine(status)}</span>
+            </span>
+          </button>
+          <span className="grow" />
+          <a className="icon-btn" href={href('approvals')} aria-label={`Approvals${pending ? `, ${pending} waiting` : ''}`}>
+            <Icon name="approve" />
+            {pending > 0 && <span className="count">{pending}</span>}
+          </a>
+        </header>
+        {children}
+      </div>
+
+      {sheet && <ProfileSheet onClose={() => setSheet(false)} />}
+    </div>
   );
 }

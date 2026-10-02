@@ -4,6 +4,7 @@ import type {
   Approval,
   ApprovalDecision,
   ApprovalStatus,
+  Idea,
   Briefing,
   Connection,
   Conversation,
@@ -59,6 +60,9 @@ export interface SkysApi {
   addRule(text: string): Promise<Rule>;
   updateRule(id: string, patch: Partial<Pick<Rule, 'text' | 'enabled'>>): Promise<Rule>;
   deleteRule(id: string): Promise<void>;
+
+  listIdeas(): Promise<Idea[]>;
+  dismissIdea(id: string): Promise<void>;
 
   listActivity(cursor?: string | null): Promise<Page<ActivityEvent>>;
 

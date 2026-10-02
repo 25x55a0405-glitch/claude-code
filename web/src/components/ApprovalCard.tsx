@@ -3,76 +3,59 @@ import { api, type Approval } from '../api';
 import { relTime } from '../lib/format';
 import { href } from '../lib/router';
 import { Icon } from './Icon';
-import { ApprovalStatusPill, RiskPill, useToast } from './ui';
+import { ApprovalChip, useToast } from './ui';
 
-export function ApprovalCard({ approval, onDecided }: { approval: Approval; onDecided?: () => void }) {
+/**
+ * A structured yes/no for anything Skys can't undo. Shows exactly what will
+ * happen and lets you edit it first.
+ */
+export function ApprovalCard({ approval, onDecided, compact = false }: { approval: Approval; onDecided?: (a: Approval) => void; compact?: boolean }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(approval.preview);
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState<'approve' | 'reject' | null>(null);
+  const [expanded, setExpanded] = useState(!compact);
+  const [busy, setBusy] = useState(false);
   const pending = approval.status === 'pending';
 
   const decide = async (decision: 'approve' | 'reject') => {
-    setBusy(decision);
+    setBusy(true);
     try {
-      await api.decideApproval(approval.id, {
-        decision,
-        editedPreview: editing && draft !== approval.preview ? draft : undefined,
-        note: note.trim() || undefined,
-      });
-      toast(decision === 'approve' ? 'Approved. Skys is on it.' : 'Declined. Skys won’t do this.');
-      onDecided?.();
+      const a = await api.decideApproval(approval.id, { decision, editedPreview: editing && draft !== approval.preview ? draft : undefined });
+      toast(decision === 'approve' ? 'Approved' : 'Declined');
+      onDecided?.(a);
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   return (
-    <article className="card approval" data-risk={approval.risk}>
-      <div className="row-between">
-        <div className="row">
-          <div className="icon-tile" style={{ color: 'var(--dawn)' }}><Icon name="bolt" size={16} /></div>
-          <div>
-            <h3>{approval.action} · <span className="muted">{approval.target}</span></h3>
-            <p className="faint">
-              Asked {relTime(approval.createdAt)}
-              {approval.taskId && <> · <a href={href('tasks', approval.taskId)} style={{ color: 'var(--sky)' }}>View task</a></>}
-            </p>
-          </div>
-        </div>
-        <div className="row">
-          <RiskPill risk={approval.risk} />
-          {!pending && <ApprovalStatusPill status={approval.status} />}
-        </div>
+    <article className={`card-inline ${pending ? 'attn' : 'settled'}`} style={compact ? undefined : { width: '100%' }}>
+      <div className="ci-head">
+        {pending ? <><Icon name="bolt" size={13} /> Needs your OK</> : <ApprovalChip status={approval.status} />}
+        <span className="grow" />
+        <span className="t3 xs" style={{ fontWeight: 400 }}>{relTime(approval.createdAt)}</span>
       </div>
-
-      <p>{approval.reason}</p>
-
-      {editing ? (
-        <textarea className="field" rows={6} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Edit before approving" />
-      ) : (
-        <pre className="preview">{approval.preview}</pre>
-      )}
-
-      {pending && (
-        <>
-          <input className="field" placeholder="Optional note for Skys (it will remember this)" value={note} onChange={(e) => setNote(e.target.value)} />
-          <div className="row">
-            <button className="btn btn-primary" onClick={() => decide('approve')} disabled={!!busy}>
-              <Icon name="check" size={16} /> {busy === 'approve' ? 'Approving…' : editing ? 'Approve edited' : 'Approve'}
+      <div className="ci-body">
+        <div>
+          <h3>{approval.action} <span className="t2" style={{ fontWeight: 400 }}>to {approval.target}</span></h3>
+          {!compact && <p className="t2" style={{ fontSize: 14, marginTop: 2 }}>{approval.reason}</p>}
+        </div>
+        {editing ? (
+          <textarea className="field" rows={6} value={draft} onChange={(e) => setDraft(e.target.value)} aria-label="Edit before approving" autoFocus />
+        ) : (
+          <pre className={`quote ${expanded ? '' : 'clamp'}`} onClick={() => setExpanded(true)}>{approval.preview}</pre>
+        )}
+        {pending ? (
+          <div className="row wrap">
+            <button className="btn ink sm" onClick={() => decide('approve')} disabled={busy}>
+              {editing ? 'Send edited' : 'Approve'}
             </button>
-            <button className="btn" onClick={() => setEditing((v) => !v)} disabled={!!busy}>
-              <Icon name="edit" size={16} /> {editing ? 'Cancel edit' : 'Edit'}
-            </button>
-            <span className="spacer" />
-            <button className="btn btn-ghost btn-danger" onClick={() => decide('reject')} disabled={!!busy}>
-              <Icon name="x" size={16} /> Decline
-            </button>
+            <button className="btn sm" onClick={() => setEditing((v) => !v)} disabled={busy}>{editing ? 'Cancel' : 'Edit'}</button>
+            <button className="btn quiet sm" onClick={() => decide('reject')} disabled={busy}>Not now</button>
+            {!compact && approval.taskId && <><span className="grow" /><a className="t3 xs" href={href('goals', approval.taskId)}>From a goal</a></>}
           </div>
-          {approval.expiresAt && <p className="faint">If you don’t answer, Skys will skip this {relTime(approval.expiresAt)}.</p>}
-        </>
-      )}
+        ) : null}
+      </div>
     </article>
   );
 }

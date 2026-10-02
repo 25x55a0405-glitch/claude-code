@@ -28,6 +28,7 @@ export function createMockApi(): SkysApi {
     rules: clone(seed.seedRules),
     activity: clone(seed.seedActivity),
     conversations: clone(seed.seedConversations),
+    ideas: clone(seed.seedIdeas),
     messages: clone(seed.seedMessages),
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
@@ -102,7 +103,7 @@ export function createMockApi(): SkysApi {
   const replyTo = (conversationId: string, text: string) => {
     const lower = text.toLowerCase();
     let reply = 'Got it. I’ll take care of that and let you know when it’s done.';
-    let taskIds: string[] | undefined;
+    let cards: Message['cards'];
     if (/remind|every|each|daily|weekly/.test(lower)) {
       const t: TaskDetail = {
         id: uid('t'), title: text.length > 60 ? text.slice(0, 57) + '…' : text, description: text,
@@ -111,8 +112,8 @@ export function createMockApi(): SkysApi {
       };
       db.tasks.unshift(t);
       emit({ type: 'task.updated', data: summary(t) });
-      taskIds = [t.id];
-      reply = 'Done. I set that up as a recurring task. You can change the schedule any time from **Tasks**.';
+      cards = [{ kind: 'task', taskId: t.id }];
+      reply = 'Done. I set that up to run on its own. You can change the schedule any time from **Goals**.';
     } else if (/find|book|research|look|watch|search|track/.test(lower)) {
       const t: TaskDetail = {
         id: uid('t'), title: text.length > 60 ? text.slice(0, 57) + '…' : text, description: text,
@@ -122,7 +123,7 @@ export function createMockApi(): SkysApi {
       db.tasks.unshift(t);
       emit({ type: 'task.updated', data: summary(t) });
       logActivity('task_started', `Started: ${t.title}`, t.id);
-      taskIds = [t.id];
+      cards = [{ kind: 'task', taskId: t.id }];
       reply = 'On it. I started a task for this and I’ll keep working while you do other things. I’ll come back with what I find.';
     } else if (/hi|hello|hey/.test(lower)) {
       reply = `Hey ${db.settings.userName}. Everything’s running smoothly. One email is waiting for your OK, and Lisbon fares are trending down.`;
@@ -130,7 +131,7 @@ export function createMockApi(): SkysApi {
       reply = db.activity_line ? `Right now I’m ${db.activity_line.toLowerCase()}. ${status().counts.activeTasks} tasks are active.` : 'Nothing urgent at the moment. I’m idle and watching for changes.';
     }
 
-    const msg: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', taskIds };
+    const msg: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', cards };
     db.messages.push(msg);
     const words = reply.split(/(\s+)/);
     let i = 0;
@@ -209,13 +210,21 @@ export function createMockApi(): SkysApi {
         emit({ type: 'task.step', data: { taskId: t.id, step } });
       }
       emit({ type: 'status', data: status() });
+      setTimeout(() => {
+        const text = a.status === 'approved'
+          ? `Done. ${a.action === 'Send email' ? 'Sent to ' + a.target + '.' : a.action + ' is done.'} I’ll let you know when there’s a reply.`
+          : 'Okay, I won’t. Tell me if you want me to try something else.';
+        const m: Message = { id: uid('msg'), conversationId: 'c_main', role: 'agent', content: text, createdAt: iso(), status: 'done' };
+        db.messages.push(m);
+        emit({ type: 'message.done', data: clone(m) });
+      }, 900);
       return clone(a);
     },
 
     async listConversations() { await wait(); return clone([...db.conversations].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))); },
     async createConversation() {
       await wait();
-      const c = { id: uid('c'), title: 'New conversation', updatedAt: iso(), preview: '' };
+      const c = { id: uid('c'), main: false, title: 'New chat', updatedAt: iso(), preview: '' };
       db.conversations.unshift(c);
       return clone(c);
     },
@@ -225,7 +234,7 @@ export function createMockApi(): SkysApi {
       const m: Message = { id: uid('msg'), conversationId: cid, role: 'user', content, createdAt: iso(), status: 'done' };
       db.messages.push(m);
       const conv = db.conversations.find((c) => c.id === cid);
-      if (conv && conv.title === 'New conversation') conv.title = content.slice(0, 40);
+      if (conv && conv.title === 'New chat') conv.title = content.slice(0, 40);
       setTimeout(() => replyTo(cid, content), 600);
       return clone(m);
     },
@@ -281,12 +290,16 @@ export function createMockApi(): SkysApi {
     },
     async deleteRule(id) { await wait(); db.rules = db.rules.filter((r) => r.id !== id || r.builtIn); },
 
+    async listIdeas() { await wait(); return clone(db.ideas); },
+    async dismissIdea(id) { await wait(); db.ideas = db.ideas.filter((i) => i.id !== id); },
+
     async listActivity() { await wait(); return { items: clone(db.activity), nextCursor: null }; },
 
     async getSettings() { await wait(); return clone(db.settings); },
     async updateSettings(patch) {
       await wait();
       Object.assign(db.settings, patch);
+      emit({ type: 'settings.updated', data: clone(db.settings) });
       emit({ type: 'status', data: status() });
       return clone(db.settings);
     },

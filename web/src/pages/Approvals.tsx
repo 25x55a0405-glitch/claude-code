@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { api, type ApprovalStatus } from '../api';
+import { api } from '../api';
 import { ApprovalCard } from '../components/ApprovalCard';
-import { Empty, ErrorNote, Segmented, Skeleton } from '../components/ui';
+import { Empty, ErrorNote, PageHead, Segmented, Skeleton } from '../components/ui';
 import { useResource } from '../lib/hooks';
 
 export function Approvals() {
@@ -9,7 +9,7 @@ export function Approvals() {
   const list = useResource(
     async () => {
       const all = await api.listApprovals(tab === 'pending' ? 'pending' : undefined);
-      return tab === 'pending' ? all : all.filter((a) => a.status !== ('pending' as ApprovalStatus));
+      return tab === 'pending' ? all : all.filter((a) => a.status !== 'pending');
     },
     [tab],
     ['approval.created', 'approval.updated'],
@@ -17,23 +17,19 @@ export function Approvals() {
 
   return (
     <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>Approvals</h1>
-          <p className="sub">Skys checks with you before anything that sends, spends, or can’t be undone.</p>
-        </div>
+      <PageHead title="Approvals" sub="Skys stops and asks before anything that sends, spends, or can’t be undone.">
         <Segmented label="Show" value={tab} onChange={setTab} options={[{ value: 'pending', label: 'Waiting' }, { value: 'history', label: 'History' }]} />
-      </div>
+      </PageHead>
       {list.error ? (
         <ErrorNote error={list.error} retry={list.reload} />
       ) : !list.data ? (
-        <Skeleton h={220} n={2} />
+        <Skeleton h={200} n={2} />
       ) : list.data.length === 0 ? (
-        <Empty icon="approve" title={tab === 'pending' ? 'You’re all caught up' : 'No decisions yet'}>
-          {tab === 'pending' ? 'When Skys needs your OK, it will show up here and on your phone.' : 'Approved and declined actions appear here.'}
+        <Empty title={tab === 'pending' ? 'You’re all caught up' : 'No decisions yet'}>
+          {tab === 'pending' ? 'When Skys needs a yes from you, it shows up here and in chat.' : 'Things you approve or decline are kept here.'}
         </Empty>
       ) : (
-        <div className="stack-lg">{list.data.map((a) => <ApprovalCard key={a.id + a.status} approval={a} onDecided={list.reload} />)}</div>
+        <div className="col">{list.data.map((a) => <ApprovalCard key={a.id + a.status} approval={a} onDecided={() => list.reload()} />)}</div>
       )}
     </div>
   );
