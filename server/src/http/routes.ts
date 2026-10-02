@@ -10,6 +10,11 @@ import { PRESETS, type ProviderInput } from '../models/registry.ts';
 import type { BrowserManager, ViewInput } from '../browser/browser.ts';
 import type { Vault } from '../vault.ts';
 import type { Push } from '../push.ts';
+import type { Triggers } from '../triggers.ts';
+import type { McpManager, McpInput } from '../mcp.ts';
+import { slackManifest, type Messaging } from '../messaging.ts';
+import type { Templates } from '../templates.ts';
+import type { StarMail } from '../mail.ts';
 
 const TASK_STATUSES: TaskStatus[] = ['active', 'scheduled', 'waiting_approval', 'blocked', 'paused', 'done', 'failed'];
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'person', 'goal', 'style'];
@@ -48,7 +53,24 @@ const hhmm = (v: unknown, field: string): string => {
 };
 
 /** Every endpoint in docs/API.md, plus the Star endpoints in docs/BACKEND.md, under /api/v1. */
-export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push) {
+/** Everything the routes call into. */
+export interface Services {
+  store: Store;
+  runtime: Runtime;
+  providers: Providers;
+  models: ModelRouter;
+  browser: BrowserManager;
+  vault: Vault;
+  push: Push;
+  triggers: Triggers;
+  mcp: McpManager;
+  messaging: Messaging;
+  templates: Templates;
+  mail: StarMail;
+}
+
+export function registerRoutes(r: Router, services: Services) {
+  const { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates } = services;
   const registry = models.registry;
   /** An optional Star id from a query or body; an unknown one is a 400. */
   const starRef = (v: unknown, field = 'starId'): string | undefined => {
@@ -62,12 +84,19 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     return { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
   };
   const starFields = (b: Record<string, unknown>) => {
-    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify'>> = {};
+    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'notify' | 'mcpServerIds'>> = {};
     if (b.name !== undefined) p.name = text(b.name, 'name', 40);
     if (b.role !== undefined) p.role = text(b.role, 'role', 200);
     if (b.instructions !== undefined) {
       if (typeof b.instructions !== 'string' || b.instructions.length > 4000) throw badRequest('instructions must be text up to 4000 characters');
       p.instructions = b.instructions.trim();
+    }
+    if (b.mcpServerIds !== undefined) {
+      const known = mcp.list().map((x) => x.id);
+      if (b.mcpServerIds !== null && (!Array.isArray(b.mcpServerIds) || b.mcpServerIds.some((id) => !known.includes(id)))) {
+        throw badRequest('mcpServerIds must be null (every enabled server) or a list of MCP server ids');
+      }
+      p.mcpServerIds = b.mcpServerIds === null ? null : [...new Set(b.mcpServerIds as string[])];
     }
     if (b.personality !== undefined) p.personality = optionalText(b.personality, 'personality', 1000);
     if (b.replyStyle !== undefined) p.replyStyle = optionalText(b.replyStyle, 'replyStyle', 1000);
@@ -171,6 +200,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
       avatar: f.avatar ?? { character: 'dot', color: colors[store.listStars().length % colors.length] },
       autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null, providerIds: f.providerIds ?? null,
       personality: f.personality ?? '', replyStyle: f.replyStyle ?? '', notify: f.notify ?? { whenDone: false, whenNeedsYou: true },
+      mcpServerIds: f.mcpServerIds ?? null,
     });
     return store.starView(star);
   });
@@ -244,6 +274,53 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     return push.send({ title: s.agentName, body: 'Notifications from Sky are working.', url: '#/' });
   });
 
+  // ---- messaging apps (two-way Telegram and Slack) ----
+  r.get('/messaging', () => messaging.status());
+  r.post('/messaging/telegram', async ({ body }) => messaging.telegram.connect(text(object(body).botToken, 'botToken', 200)));
+  r.delete('/messaging/telegram', async () => messaging.telegram.disconnect());
+  r.post('/messaging/slack', async ({ body }) => {
+    const b = object(body);
+    return messaging.slack.connect(text(b.botToken, 'botToken', 300), text(b.appToken, 'appToken', 300));
+  });
+  r.delete('/messaging/slack', async () => messaging.slack.disconnect());
+  r.get('/messaging/slack/manifest', () => slackManifest(store.settings().agentName));
+
+  // ---- MCP servers ----
+  const mcpFields = (b: Record<string, unknown>): Partial<McpInput> => {
+    const p: Partial<McpInput> = {};
+    if (b.name !== undefined) p.name = text(b.name, 'name', 40);
+    if (b.transport !== undefined) p.transport = oneOf(b.transport, ['stdio', 'http'] as ('stdio' | 'http')[], 'transport');
+    for (const k of ['command', 'url'] as const) if (b[k] !== undefined) p[k] = b[k] === null ? null : text(b[k], k, 2000);
+    for (const k of ['args', 'env', 'headers', 'toolEffects'] as const) if (b[k] !== undefined) (p as Record<string, unknown>)[k] = b[k];
+    if (b.enabled !== undefined) p.enabled = boolean(b.enabled, 'enabled');
+    return p;
+  };
+  r.get('/mcp', () => mcp.list());
+  r.post('/mcp', ({ body }) => {
+    const f = mcpFields(object(body));
+    if (!f.name) throw badRequest('name is required');
+    if (!f.transport) throw badRequest('transport is required: stdio or http');
+    return mcp.create(f as McpInput);
+  });
+  r.get('/mcp/:id', ({ params }) => mcp.get(params.id));
+  r.patch('/mcp/:id', ({ params, body }) => mcp.patch(params.id, mcpFields(object(body))));
+  r.delete('/mcp/:id', ({ params }) => mcp.delete(params.id));
+  r.post('/mcp/:id/reconnect', async ({ params }) => {
+    await mcp.connect(params.id);
+    return mcp.get(params.id);
+  });
+
+  // ---- templates ----
+  r.get('/templates', () => templates.list());
+  r.get('/stars/:id/template', ({ params }) => templates.export(params.id));
+  r.post('/templates/import', async ({ body }) => {
+    const b = object(body);
+    const out = await templates.import({
+      template: b.template, id: typeof b.id === 'string' ? b.id : undefined, url: typeof b.url === 'string' ? b.url : undefined,
+    }, (input) => runtime.createStar(input));
+    return { star: store.starView(out.star), skipped: out.skipped };
+  });
+
   // ---- status and briefing ----
   r.get('/status', () => store.status());
   r.post('/status', ({ body }) => runtime.setPaused(boolean(body?.paused, 'paused')));
@@ -262,7 +339,27 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     kind: oneOf(body?.kind, ['one_off', 'recurring', 'watch'], 'kind'),
     schedule: typeof body?.schedule === 'string' ? body.schedule : undefined,
     starId: starRef(body?.starId),
+    trigger: body?.trigger ?? undefined,
   }));
+  r.get('/tasks/:id/trigger', ({ params }) => triggers.setup(params.id));
+  r.put('/tasks/:id/trigger', ({ params, body }) => {
+    const b = object(body);
+    if (b.trigger === null) {
+      triggers.set(params.id, null);
+      return null;
+    }
+    triggers.set(params.id, triggers.validate(b.trigger));
+    return triggers.setup(params.id);
+  });
+  r.post('/tasks/:id/trigger/rotate', ({ params }) => triggers.rotate(params.id));
+  r.get('/tasks/:id/events', ({ params }) => {
+    store.getTask(params.id);
+    return triggers.pending(params.id);
+  });
+  r.post('/triggers/check-mail', async () => {
+    if (!providers.isUsable('gmail')) throw badRequest('Connect Gmail first');
+    await triggers.pollMail();
+  });
   for (const command of ['pause', 'resume', 'run_now', 'cancel'] as const) {
     r.post(`/tasks/:id/${command}`, ({ params }) => runtime.commandTask(params.id, command));
   }
@@ -280,7 +377,29 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
 
   // ---- conversations ----
   r.get('/conversations', ({ query }) => store.listConversations(starRef(query.get('starId'))));
-  r.post('/conversations', ({ body }) => store.createConversation('New chat', starRef(body?.starId)));
+  r.post('/conversations', ({ body }) => {
+    if (body?.starIds !== undefined) {
+      if (!Array.isArray(body.starIds) || body.starIds.some((id: unknown) => typeof id !== 'string' || store.findStar(id)?.id !== id)) {
+        throw badRequest('starIds must be a list of your Stars’ ids');
+      }
+      return store.createGroup(body.starIds, typeof body.title === 'string' ? body.title.slice(0, 80) : undefined);
+    }
+    return store.createConversation('New chat', starRef(body?.starId));
+  });
+  r.patch('/conversations/:id', ({ params, body }) => {
+    const conv = store.getConversation(params.id);
+    const b = object(body);
+    const patch: { title?: string; starIds?: string[] } = {};
+    if (b.title !== undefined) patch.title = text(b.title, 'title', 80);
+    if (b.starIds !== undefined) {
+      if (!conv.starIds) throw badRequest('Only a group chat’s Stars can change');
+      if (!Array.isArray(b.starIds) || b.starIds.length < 2 || b.starIds.some((id) => typeof id !== 'string' || store.findStar(id)?.id !== id)) {
+        throw badRequest('starIds must list at least two of your Stars');
+      }
+      patch.starIds = [...new Set(b.starIds as string[])];
+    }
+    return store.patchConversation(conv.id, patch);
+  });
   r.get('/conversations/:id/messages', ({ params }) => {
     store.getConversation(params.id);
     return store.messages(params.id);
@@ -394,6 +513,18 @@ function validateSettings(b: Record<string, unknown>): Partial<Settings> {
       throw badRequest('ntfyTopic must be null or a topic name of letters, digits, - and _ (hard to guess: anyone who knows it can read it)');
     }
     p.ntfyTopic = b.ntfyTopic as string | null;
+  }
+  if (b.mailPollMinutes !== undefined) {
+    if (typeof b.mailPollMinutes !== 'number' || !Number.isInteger(b.mailPollMinutes) || b.mailPollMinutes < 2 || b.mailPollMinutes > 60) {
+      throw badRequest('mailPollMinutes must be a whole number from 2 to 60');
+    }
+    p.mailPollMinutes = b.mailPollMinutes;
+  }
+  if (b.templateGallery !== undefined) {
+    if (typeof b.templateGallery !== 'string' || (b.templateGallery && !/^([\w.-]+\/[\w.-]+|https:\/\/\S+)$/.test(b.templateGallery.trim()))) {
+      throw badRequest('templateGallery must be a GitHub "owner/repo", an https URL to an index.json, or empty');
+    }
+    p.templateGallery = b.templateGallery.trim();
   }
   if (b.ntfyServer !== undefined) {
     if (typeof b.ntfyServer !== 'string' || (b.ntfyServer && !/^https?:\/\/[^\s]+$/.test(b.ntfyServer))) throw badRequest('ntfyServer must be an http(s) address, or empty for ntfy.sh');

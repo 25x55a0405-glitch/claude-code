@@ -262,6 +262,108 @@ Free-tier notes:
   be checked. The tests check the encrypted, VAPID-signed request web-push
   builds for a real device key, and the ntfy request.
 
+## Wave 2: events, messaging apps, Star email, MCP, group chats, templates
+
+- **Event triggers.** A recurring task can have a `trigger` instead of (or as
+  well as) a schedule. It can be a webhook, a GitHub webhook, a Slack or
+  Telegram message, or an email.
+  - **How it runs.** Each event is queued for the task (at most 20 waiting,
+    30 an hour) and handed to the Star at the start of a run inside
+    `<event>…</event>`, marked as content to work with, not instructions.
+    Events that arrive mid-run get their own run afterwards.
+  - **Webhooks** arrive at `POST /api/v1/hooks/<token>`, which needs no
+    sign-in: the token is the secret. Rotating it retires the old URL.
+  - **GitHub** deliveries must carry a valid `X-Hub-Signature-256` for the
+    task's secret. They can be limited to some events, and `ping` is
+    answered.
+  - **Email** triggers are a Gmail search, polled every `mailPollMinutes`
+    (default 3). Gmail's instant push needs Google Pub/Sub, which isn't
+    free. Mail already there when the trigger is made doesn't count.
+  - **Stars can set triggers too.** `create_task` takes a `trigger`, so a
+    Star can set up "when an email from my bank arrives…" from chat.
+- **Two-way Telegram and Slack.** Neither needs a public URL: Telegram uses
+  long polling and Slack uses Socket Mode.
+  - **Pairing.** The person connects a bot in the app, then sends the bot
+    the 6-digit pairing code. Telegram also gets a `t.me` link with the
+    code filled in. After that only that Telegram chat, or that Slack user,
+    reaches the Stars; everyone else is ignored.
+  - **Talking to Stars.** "Scout: …" or "@Scout …" picks a Star; otherwise
+    the last Star used there answers. `/stars` lists them.
+  - **In the app.** Messages show in the Star's chat with `via: 'telegram'`
+    or `'slack'`.
+  - **Approvals** sent there have Approve and Decline buttons, which only
+    the paired person can use.
+  - **Other chats.** Messages in other Slack channels or Telegram groups the
+    bot is in fire message triggers. They are never chat.
+  - **Setup.** Telegram needs a bot from @BotFather. Slack needs an app made
+    from `GET /messaging/slack/manifest`, with Socket Mode on: its bot token
+    (xoxb-) and an app-level token (xapp-, connections:write).
+  - **Old setup still works.** The existing `SKY_TELEGRAM_BOT_TOKEN` and
+    `SKY_TELEGRAM_CHAT_ID` setup is two-way too, with no pairing.
+- **A Star's own email address.** This uses plus-addressing on the person's
+  Gmail, like `d+scout@gmail.com` (`StarView.email`, once Gmail is
+  connected).
+  - **Incoming mail.** Mail sent, forwarded or CC'd there becomes a one-off
+    task for that Star, at most 10 an hour.
+  - **Who it's from matters.** From the person, it's their request. From
+    anyone else, it's content: the Star summarises or drafts and asks
+    before acting.
+  - **The address stays.** The part after `+` is fixed when first given
+    out, so renaming the Star keeps the address.
+  - **A real `@yourdomain` address** would need a domain (about $10 a
+    year) plus Cloudflare Email Routing. It isn't built.
+- **MCP tools.** These are Model Context Protocol servers, through the
+  official SDK.
+  - **Local or remote.** A local server is a command run on the Sky server
+    (stdio). A remote one is reached by URL (Streamable HTTP).
+  - **Keeping keys safe.** Environment variables and headers stay on the
+    server; the API shows only their names. Values can be
+    `{{secret:NAME}}`, filled from the vault when connecting.
+  - **Effects.** Each tool gets an effect from the server's hints:
+    read-only is `read`, destructive is `delete`, and anything else is
+    `write`. The person can override it per tool (`toolEffects`), and the
+    policy decides approvals from it as for any tool. In chat, a Star only
+    gets an MCP tool whose effect is `read`.
+  - **Tool names.** Tools appear to Stars as `mcp_<server>_<tool>`.
+  - **Which Stars.** `Star.mcpServerIds` limits which servers a Star gets
+    (null means all of them). Fewer tools help small free models.
+- **Group chats.** A conversation with `starIds` (two or more) is a group
+  chat.
+  - **Who answers.** Stars the person names (@Scout, or "Scout," at the
+    start) answer in order. Otherwise one small-model call (on
+    `smallProviderIds`) picks one Star.
+  - **Bringing others in.** A Star that writes @Name brings that Star in.
+    At most two replies per message, to keep model calls down on free
+    tiers.
+  - **What each Star sees.** The others' messages arrive labelled
+    "[Name said]" and are treated as a colleague's words, not
+    instructions.
+  - **Removing a Star.** The group carries on without it.
+- **Templates.** A template is a Star's role, instructions, style, avatar,
+  autonomy, apps, its own skills and its own rules. It never includes
+  memory, chats or secrets.
+  - **Importing.** This makes a new Star, with a unique name. Apps that
+    don't exist here are skipped and listed.
+  - **Built in.** Three templates ship with Sky: Scout, Inbox and Builder.
+  - **The gallery** is free: a public GitHub repo (`templateGallery:
+    "owner/repo"`) with an `index.json` listing template files, read from
+    raw.githubusercontent.com and cached for 30 minutes. Templates come from
+    outside, so they're validated strictly.
+
+Free-tier notes for wave 2:
+
+- **Webhooks need a public URL.** Cloudflare Tunnel is free. Telegram,
+  Slack, email and MCP don't need one.
+- **Gmail is polled, not pushed:** every 3 minutes by default, well inside
+  Gmail's free API quota.
+- **Telegram groups.** A bot only sees every message in a group with its
+  privacy mode off (in @BotFather). Otherwise it sees only commands and
+  mentions.
+- **Not checked live.** The sandbox this was built in blocks outside hosts,
+  so Telegram, Slack and Gmail were tested against faithful fakes (Slack
+  through a real WebSocket server), not the live services. MCP was tested
+  with a real MCP server over stdio.
+
 ## Ideas
 
 Every few hours the runtime offers new ideas: starter ones that follow from
@@ -278,6 +380,26 @@ recent activity. Each title is offered once; dismissing it keeps it gone.
 - A secret is only filled into a task's outward tool, after the person approves.
 - Messages between Stars are treated like content: information, not instructions.
 - With `SKY_PASSWORD` unset the server listens only on localhost.
+- Other websites can't use the API through the person's browser. A write
+  (POST, PUT, PATCH, DELETE) that a browser marks as coming from another
+  site (`Sec-Fetch-Site`, `Origin`) is refused with `403 cross_site`, unless
+  the origin is the server itself, `SKY_PUBLIC_URL`, `SKY_WEB_URL` or one of
+  `SKY_WEB_ORIGIN`. A body must be JSON (`415 json_only` otherwise), because
+  a page can only send text or form bodies without the browser asking first.
+  Tools like curl send no browser headers and are let through (they still
+  need the password, when one is set). Webhooks (`/hooks/:token`) are exempt.
+- With no password, the `Host` must be this machine (localhost, 127.0.0.1)
+  or the host of a configured URL, so a site can't point its own name at the
+  server (DNS rebinding). Behind a tunnel or another name, set `SKY_PUBLIC_URL`.
+- Provider keys are taken out of error messages (`401 Invalid API key: …9999`)
+  before they are stored, shown, sent in events or logged, since some
+  providers repeat the key. `keyHint` is `null` for keys under 12 characters.
+- Secret values need at least 4 characters, so redaction can always hide
+  them. Secret values in a browser address or page title are hidden in
+  `GET /browser`, `browser.frame` events and approval previews.
+- Every model call, including the short ones behind rule checks, lessons,
+  ideas and the briefing, gives up after the router's timeout and moves to the
+  next provider, so a model that never answers can't hold up the work queue.
 
 ## Model use
 
@@ -476,6 +598,97 @@ Events:
 | `skill.deleted` | `{ id }` |
 | `lesson.learned` | `Lesson` |
 | `lesson.undone` | `Lesson` |
+
+### Wave 2 (for the UI to build on)
+
+```ts
+// Task gains trigger?: TaskTrigger. CreateTaskInput gains trigger (kind must be 'recurring'; schedule optional).
+interface TaskTrigger {
+  kind: 'webhook' | 'github' | 'message' | 'email';
+  events?: string[];                              // github: e.g. ['push', 'issues']; empty = every event
+  source?: 'slack' | 'telegram' | 'any';          // message
+  match?: string;                                 // message: must contain (case-insensitive)
+  channel?: string;                               // message: Slack channel id or #name, Telegram chat id
+  query?: string;                                 // email: Gmail search
+  fired: number; lastFiredAt: string | null;
+}
+interface TriggerSetup extends TaskTrigger { url: string | null; secret: string | null }   // url for webhook/github; secret for github
+interface TriggerEvent { id: string; taskId: string; source: string; summary: string; content: string; at: string }
+// Conversation gains starIds?: string[] (a group chat). Message gains via?: 'telegram' | 'slack'.
+// Star gains mcpServerIds: string[] | null. StarView gains email: string | null.
+interface MessagingStatus {
+  app: 'telegram' | 'slack';
+  state: 'off' | 'pairing' | 'on' | 'error';
+  pairCode: string | null;                        // show while pairing: "Send 482913 to your bot"
+  pairLink: string | null;                        // telegram: https://t.me/<bot>?start=<code>
+  botName: string | null;                         // telegram bot username, or the Slack workspace
+  error: string | null;
+}
+interface McpServer {
+  id: string; name: string; transport: 'stdio' | 'http';
+  command: string | null; args: string[]; url: string | null;
+  envKeys: string[]; headerKeys: string[];        // names only; values stay on the server
+  enabled: boolean; toolEffects: Record<string, 'read' | 'write' | 'send' | 'delete' | 'spend'>;
+  status: 'off' | 'connecting' | 'ready' | 'error'; error: string | null;
+  tools: { name: string; toolName: string; description: string; effect: string }[];
+  createdAt: string; updatedAt: string;
+}
+interface StarTemplate {
+  format: 'sky.star'; version: 1; name: string; role: string; description?: string;
+  instructions: string; personality: string; replyStyle: string;
+  avatar: { character; color }; autonomy: Autonomy | null; apps: string[] | null;
+  skills: { name: string; whenToUse: string; steps: string }[]; rules: string[];
+}
+interface TemplateEntry { id: string; source: 'builtIn' | 'gallery'; template: StarTemplate; url?: string }
+// Settings gains mailPollMinutes (2–60, default 3) and templateGallery ('' | 'owner/repo' | https URL to index.json).
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/tasks` | Also takes `trigger` (see above) |
+| GET | `/tasks/:id/trigger` | `TriggerSetup`; `404` without a trigger |
+| PUT | `/tasks/:id/trigger` | `{ trigger }` → `TriggerSetup`, or `{ trigger: null }` to remove it. One-off tasks: `400` |
+| POST | `/tasks/:id/trigger/rotate` | New URL and secret → `TriggerSetup` |
+| GET | `/tasks/:id/events` | `TriggerEvent[]` still waiting for a run |
+| POST | `/triggers/check-mail` | Checks Gmail now instead of waiting for the next poll |
+| POST | `/hooks/:token` | **No sign-in.** The webhook URL. `202` accepted, `404` unknown or paused, `401` bad GitHub signature, `429` over 30 an hour |
+| GET | `/messaging` | `MessagingStatus[]` (telegram, slack) |
+| POST | `/messaging/telegram` | `{ botToken }` → `MessagingStatus` (pairing). `400` if Telegram rejects the token |
+| POST | `/messaging/slack` | `{ botToken, appToken }` → `MessagingStatus` (pairing) |
+| DELETE | `/messaging/telegram`, `/messaging/slack` | → `MessagingStatus` (off) |
+| GET | `/messaging/slack/manifest` | A Slack app manifest to paste into "Create an app → From a manifest" |
+| GET / POST | `/mcp` | `McpServer[]`; POST `{ name, transport, command?, args?, url?, env?, headers?, enabled?, toolEffects? }` → `McpServer` (connects in the background) |
+| GET / PATCH / DELETE | `/mcp/:id` | PATCH any field; changing how it's reached reconnects. DELETE also removes it from every Star |
+| POST | `/mcp/:id/reconnect` | → `McpServer` |
+| POST / PATCH | `/stars`, `/stars/:id` | Also take `mcpServerIds` |
+| POST | `/conversations` | `{ starIds: [...], title? }` makes a group chat (two or more Stars) |
+| PATCH | `/conversations/:id` | `{ title?, starIds? }` (starIds for group chats only) |
+| GET | `/conversations?starId=` | Now also lists the group chats that Star is in |
+| GET | `/templates` | `{ templates: TemplateEntry[], galleryError: string \| null }` |
+| GET | `/stars/:id/template` | `StarTemplate` (offer it as a `.sky-star.json` download) |
+| POST | `/templates/import` | `{ template }`, `{ id }` (from `/templates`) or `{ url }` (https) → `{ star: StarView, skipped: string[] }` |
+
+In a group chat each agent message carries the `starId` of the Star that
+wrote it, and replies stream one after another as usual (`message.delta`,
+`message.done`).
+
+Events: `mcp.updated` (`McpServer`), `mcp.deleted` (`{ id }`),
+`messaging.updated` (`MessagingStatus`). Triggered runs show up through the
+usual `task.updated` and `task.step` ("Triggered: …").
+
+Round 3 fixes (testing thread): see Safety above for cross-site requests,
+key scrubbing, short secrets and timeouts. A provider is benched for 6 hours
+only for an unknown or retired model name; "not supported with this model"
+and similar move on to the next provider without benching it. Push
+subscriptions must point at a public https push service.
+
+Fixes from the UI's reports: a live-browser `navigate` to something that
+isn't an http(s) address (like `data:` or `javascript:`) is a `400` with a
+message, and a page that won't load is a `400` (`page_failed`) with the reason. If the
+browser can't start, `GET /browser` says why (`ok: false` and a `reason`),
+and the input endpoints return `503` with the same message. A correction as
+the very first chat message ("Actually, always reply in English") now
+becomes a lesson too.
 
 ### Server-side additions
 

@@ -7,6 +7,7 @@ import type { Secret } from './types.ts';
 import { ApiError, badRequest, iso, notFound, uid } from './util.ts';
 
 const REF = /\{\{\s*secret:([A-Za-z0-9_]+)\s*\}\}/g;
+const MIN_VALUE = 4;
 export const SECRET_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 
 interface Sealed {
@@ -72,6 +73,7 @@ export class Vault {
     if (!SECRET_NAME.test(input.name)) throw badRequest('A secret’s name uses letters, digits and underscores, like GITHUB_TOKEN');
     if (this.find(input.name)) throw new ApiError(409, 'conflict', `There’s already a secret called ${input.name}`);
     if (!input.value) throw badRequest('value is required');
+    if (input.value.length < MIN_VALUE) throw badRequest(`A secret needs at least ${MIN_VALUE} characters, so Sky can reliably hide it wherever it shows up`);
     const now = iso();
     const s = this.store.db.put<Secret>('secret', {
       id: uid('sec'), name: input.name, description: input.description ?? '', starIds: input.starIds ?? null, lastUsedAt: null, createdAt: now, updatedAt: now,
@@ -84,6 +86,7 @@ export class Vault {
     const s = this.get(ref);
     if (input.value !== undefined) {
       if (!input.value) throw badRequest('value can’t be empty');
+      if (input.value.length < MIN_VALUE) throw badRequest(`A secret needs at least ${MIN_VALUE} characters, so Sky can reliably hide it wherever it shows up`);
       this.store.db.setPrivate('secret', s.id, this.seal(input.value));
     }
     return this.store.db.put<Secret>('secret', {
@@ -123,12 +126,21 @@ export class Vault {
     return walk(input, (str) => str.replace(REF, (_m, name: string) => values.get(name) ?? '')) as T;
   }
 
+  /** Fills secrets into settings the person wrote themselves (an MCP server's environment), with no Star limit. */
+  fillAny<T>(input: T): T {
+    return walk(input, (str) => str.replace(REF, (_m, name: string) => {
+      const s = this.find(name);
+      if (!s) throw new Error(`There’s no secret called ${name}`);
+      return this.open(s.id);
+    })) as T;
+  }
+
   /** Replaces any secret value in text with [secret:NAME]. */
   redact(text: string): string {
     let out = text;
     for (const s of this.store.db.all<Secret>('secret')) {
       const value = this.open(s.id);
-      if (value.length >= 4 && out.includes(value)) out = out.split(value).join(`[secret:${s.name}]`);
+      if (value.length >= MIN_VALUE && out.includes(value)) out = out.split(value).join(`[secret:${s.name}]`);
     }
     return out;
   }

@@ -1,18 +1,11 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
-import type { Runtime } from '../agent/runtime.ts';
 import type { Config } from '../config.ts';
-import type { Providers } from '../connections/providers.ts';
-import type { Store } from '../store.ts';
 import { ApiError } from '../util.ts';
 import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
-import { registerRoutes } from './routes.ts';
-import type { Vault } from '../vault.ts';
-import type { Push } from '../push.ts';
-import type { ModelRouter } from '../models/router.ts';
-import type { BrowserManager } from '../browser/browser.ts';
+import { registerRoutes, type Services } from './routes.ts';
 import { Router, type Req } from './router.ts';
 
 const API = '/api/v1';
@@ -23,10 +16,11 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
 };
 
-export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push): Server {
+export function createHttpServer(config: Config, services: Services): Server {
+  const { store, runtime, models, browser, triggers, providers } = services;
   const auth = new Auth(config, store.db);
   const router = new Router();
-  registerRoutes(router, store, runtime, providers, models, browser, vault, push);
+  registerRoutes(router, services);
   const origins = new Set((config.webOrigin ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 
   const send = (res: ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}) => {
@@ -38,8 +32,7 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
   };
   const fail = (res: ServerResponse, status: number, code: string, message: string) => send(res, status, { error: { code, message } });
 
-  async function readBody(req: IncomingMessage): Promise<unknown> {
-    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') return undefined;
+  async function readRaw(req: IncomingMessage): Promise<string> {
     const chunks: Buffer[] = [];
     let size = 0;
     for await (const chunk of req) {
@@ -47,8 +40,17 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
       if (size > MAX_BODY) throw new ApiError(413, 'too_large', 'That request is too large');
       chunks.push(chunk as Buffer);
     }
-    const raw = Buffer.concat(chunks).toString('utf8').trim();
+    return Buffer.concat(chunks).toString('utf8');
+  }
+
+  async function readBody(req: IncomingMessage): Promise<unknown> {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') return undefined;
+    const raw = (await readRaw(req)).trim();
     if (!raw) return undefined;
+    // A page on another site can only send text/plain or form bodies without the browser asking first.
+    if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) {
+      throw new ApiError(415, 'json_only', 'Send the body as JSON, with Content-Type: application/json');
+    }
     try {
       return JSON.parse(raw);
     } catch {
@@ -86,6 +88,34 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
     return true;
   }
 
+  // Where the web app may call from, besides this server itself.
+  const trusted = new Set([...origins, originOf(config.publicUrl), originOf(config.webUrl)].filter(Boolean) as string[]);
+  const localNames = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+  const knownHosts = new Set([...trusted].map((o) => new URL(o).host));
+
+  /**
+   * Stops other websites from using the API through the person's browser.
+   *  - Writes from a browser must come from this server's own pages or a
+   *    configured web app (SKY_WEB_ORIGIN). Browsers mark every request with
+   *    Sec-Fetch-Site and Origin, which pages can't fake; tools like curl send
+   *    neither and are let through (they still need the password, if set).
+   *  - With no password, the Host must be this machine or a configured
+   *    address, so a site can't point its own name at 127.0.0.1 (DNS rebinding).
+   */
+  function crossSite(req: IncomingMessage): string | null {
+    const host = req.headers.host ?? '';
+    if (!auth.enabled && host && !localNames.has(host.replace(/:\d+$/, '')) && !knownHosts.has(host)) {
+      return `Requests for ${host} aren’t accepted. Set SKY_PUBLIC_URL to the address you use for Sky.`;
+    }
+    if (!WRITES.has(req.method ?? '')) return null;
+    const site = req.headers['sec-fetch-site'];
+    if (site === 'same-origin' || site === 'none') return null;
+    const origin = req.headers.origin;
+    if (!origin && !site) return null;
+    if (origin && origin !== 'null' && (trusted.has(origin) || origin === `http://${host}` || origin === `https://${host}`)) return null;
+    return `Requests from ${origin && origin !== 'null' ? origin : 'another site'} aren’t allowed. If that’s your Sky web app, add it to SKY_WEB_ORIGIN.`;
+  }
+
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://local');
     const origin = req.headers.origin;
@@ -121,6 +151,10 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
       send(res, 200, { ok: true, brain: runtime.brain.name, model: first?.model ?? null, browser: browser.available() });
       return;
     }
+    if (!/^\/hooks\//.test(path)) {
+      const refused = crossSite(req);
+      if (refused) return fail(res, 403, 'cross_site', refused);
+    }
     if (path === '/session') {
       if (req.method === 'GET') return send(res, 200, { signedIn: auth.isSignedIn(req), authRequired: auth.enabled });
       if (req.method === 'POST') {
@@ -130,6 +164,12 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
         return send(res, 200, { signedIn: true }, { 'Set-Cookie': auth.sessionCookie(secure) });
       }
       if (req.method === 'DELETE') return send(res, 204, undefined, { 'Set-Cookie': auth.clearCookie() });
+    }
+    // Webhook triggers: the secret token in the URL is the sign-in.
+    const hook = /^\/hooks\/([\w-]{16,64})$/.exec(path);
+    if (hook && req.method === 'POST') {
+      const out = triggers.webhook(hook[1], req.headers, await readRaw(req));
+      return send(res, out.status, out.body);
     }
     if (!auth.isSignedIn(req)) return fail(res, 401, 'unauthorized', 'Please sign in to Sky first');
 
@@ -182,4 +222,14 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
       fail(res, 500, 'internal', 'Something went wrong on the server');
     });
   });
+}
+
+const WRITES = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+function originOf(url: string | null | undefined): string | null {
+  try {
+    return url ? new URL(url).origin : null;
+  } catch {
+    return null;
+  }
 }

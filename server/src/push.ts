@@ -53,8 +53,13 @@ export class Push {
 
   subscribe(sub: unknown, label: string): PushSubscriptionInfo {
     const s = sub as PushSubscription;
-    if (!s || typeof s.endpoint !== 'string' || !/^https?:\/\//.test(s.endpoint) || typeof s.keys?.p256dh !== 'string' || typeof s.keys?.auth !== 'string') {
+    if (!s || typeof s.endpoint !== 'string' || !pushEndpoint(s.endpoint) || typeof s.keys?.p256dh !== 'string' || typeof s.keys?.auth !== 'string') {
       throw badRequest('subscription must be the object from pushManager.subscribe(), with endpoint and keys');
+    }
+    // A browser's keys: an uncompressed P-256 public key (65 bytes) and a 16-byte secret.
+    const p256dh = Buffer.from(s.keys.p256dh, 'base64url');
+    if (p256dh.length !== 65 || p256dh[0] !== 4 || Buffer.from(s.keys.auth, 'base64url').length !== 16) {
+      throw badRequest('subscription.keys don’t look like a browser’s push keys (p256dh and auth from pushManager.subscribe())');
     }
     // The same device subscribing again replaces its old entry.
     for (const existing of this.list()) {
@@ -118,3 +123,13 @@ export class Push {
 
 /** HTTP headers must be plain ASCII; ntfy shows the title as given. */
 const asciiHeader = (s: string) => s.replace(/[’‘]/g, '\'').replace(/[“”]/g, '"').replace(/[^\x20-\x7E]/g, '').slice(0, 200);
+
+/** Browsers' push services are public https addresses; anything else (like Sky's own API) isn't a push service. */
+function pushEndpoint(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && !/^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|\[|172\.(1[6-9]|2\d|3[01])\.)/.test(u.hostname) && u.hostname.includes('.');
+  } catch {
+    return false;
+  }
+}

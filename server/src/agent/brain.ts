@@ -42,8 +42,8 @@ export interface Brain {
   readonly name: string;
   turn(req: TurnRequest): Promise<TurnResult>;
   /** One short, tool-free completion (briefing copy, rule checks). */
-  /** `chain` picks the providers to use, like TurnRequest.chain. */
-  complete(system: string, prompt: string, maxTokens?: number, chain?: string[] | null): Promise<string>;
+  /** `chain` picks the providers to use, like TurnRequest.chain; `signal` stops a call that takes too long. */
+  complete(system: string, prompt: string, maxTokens?: number, chain?: string[] | null, signal?: AbortSignal): Promise<string>;
 }
 
 /** Thrown when the model can't be reached at all, so the runtime can show "offline" and retry later. */
@@ -133,7 +133,7 @@ export class ClaudeBrain implements Brain {
     }
   }
 
-  async complete(system: string, prompt: string, maxTokens = 2_000): Promise<string> {
+  async complete(system: string, prompt: string, maxTokens = 2_000, _chain?: string[] | null, signal?: AbortSignal): Promise<string> {
     try {
       const message = await this.client.messages.create({
         model: this.config.model,
@@ -141,7 +141,7 @@ export class ClaudeBrain implements Brain {
         system,
         messages: [{ role: 'user', content: prompt }],
         ...(this.config.official ? { output_config: { effort: 'low' as const } } : {}),
-      });
+      }, signal ? { signal } : undefined);
       return message.content.map((b) => (b.type === 'text' ? b.text : '')).join('').trim();
     } catch (err) {
       throw this.wrap(err);

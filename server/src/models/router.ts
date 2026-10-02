@@ -90,7 +90,7 @@ export class ModelRouter implements Brain {
 
   async complete(system: string, prompt: string, maxTokens?: number, chain?: string[] | null): Promise<string> {
     if (this.name === 'scripted') return this.scripted.complete(system, prompt);
-    return this.walk(chain, (brain) => brain.complete(system, prompt, maxTokens));
+    return this.walk(chain, (brain, _p, signal) => brain.complete(system, prompt, maxTokens, null, signal));
   }
 
   /** Tries one provider directly, for the "Test" button. Records the outcome like any call. */
@@ -105,7 +105,7 @@ export class ModelRouter implements Brain {
       this.registry.recordOk(id, latencyMs);
       return { ok: true, latencyMs, reply: reply.content.filter((b) => b.type === 'text').map((b) => (b as { text: string }).text).join('').trim() };
     } catch (err) {
-      const f = classify(err, p.health.failures);
+      const f = this.failure(err, p);
       this.registry.recordFailure(id, f);
       return { ok: false, latencyMs: Date.now() - started, error: f.message };
     }
@@ -124,7 +124,7 @@ export class ModelRouter implements Brain {
         this.registry.recordOk(p.id, Date.now() - started);
         return out;
       } catch (err) {
-        const f = classify(err, p.health.failures);
+        const f = this.failure(err, p);
         this.registry.recordFailure(p.id, f);
         errors.push(`${p.name}: ${f.message}`);
       }
@@ -132,11 +132,33 @@ export class ModelRouter implements Brain {
     throw new BrainUnavailable(`No model could answer. ${errors.join(' | ')}`);
   }
 
+  /**
+   * What went wrong, with the provider's key taken out: some providers repeat
+   * the key in their errors ("Invalid API key: sk-..."), and the message is
+   * stored, shown on the Models screen, sent in events and logged.
+   */
+  private failure(err: unknown, p: ModelProvider) {
+    const f = classify(err, p.health.failures);
+    return { ...f, message: scrubKey(f.message, p.id === ENV_PROVIDER ? process.env.ANTHROPIC_API_KEY : this.registry.apiKey(p.id)) };
+  }
+
+  /**
+   * Gives one provider timeoutMs. The signal stops the request, and the race
+   * makes sure a call that ignores it still can't hold up the work queue.
+   */
   private async withTimeout<T>(p: ModelProvider, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(new Error(`${p.name} timed out`)), this.timeoutMs);
+    let timer: NodeJS.Timeout | undefined;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        ctrl.abort(new Error(`${p.name} timed out`));
+        reject(new Error('timeout'));
+      }, this.timeoutMs);
+    });
     try {
-      return await run(ctrl.signal);
+      const call = run(ctrl.signal);
+      call.catch(() => {}); // a late failure after the timeout has nowhere to go
+      return await Promise.race([call, expired]);
     } catch (err) {
       if (ctrl.signal.aborted) {
         const e = new Error(`${p.name} timed out after ${Math.round(this.timeoutMs / 1000)}s`);
@@ -148,4 +170,21 @@ export class ModelRouter implements Brain {
       clearTimeout(timer);
     }
   }
+}
+
+/** Replaces an API key (and any long piece of it) in text with "…" and its last 4 characters. */
+export function scrubKey(text: string, key: string | undefined | null): string {
+  if (!key || key.length < 4) return text;
+  const tail = key.length >= 12 ? `…${key.slice(-4)}` : '…';
+  let out = text.split(key).join(tail);
+  // Providers sometimes echo a shortened key ("sk-live-SUPE...9999"); hide any 8+ character run of it too.
+  if (key.length >= 16) {
+    for (let len = Math.min(key.length - 1, 40); len >= 8; len--) {
+      for (let i = 0; i + len <= key.length; i++) {
+        const piece = key.slice(i, i + len);
+        if (out.includes(piece)) out = out.split(piece).join(tail);
+      }
+    }
+  }
+  return out;
 }

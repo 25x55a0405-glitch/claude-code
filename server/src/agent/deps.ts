@@ -6,6 +6,8 @@ import type { Policy } from './policy.ts';
 import type { RuntimeHooks } from './tools/types.ts';
 import type { BrowserManager } from '../browser/browser.ts';
 import type { Vault } from '../vault.ts';
+import type { Triggers } from '../triggers.ts';
+import type { McpManager } from '../mcp.ts';
 
 /** Everything the agent pieces share. */
 export interface AgentDeps {
@@ -17,4 +19,6 @@ export interface AgentDeps {
   hooks: RuntimeHooks;
   browser?: BrowserManager;
   vault?: Vault;
+  triggers?: Triggers;
+  mcp?: McpManager;
 }

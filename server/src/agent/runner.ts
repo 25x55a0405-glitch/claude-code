@@ -70,7 +70,8 @@ export class TaskRunner {
     const recent = task.kind === 'one_off' ? [] : store.steps(task.id, 12).map((s) => `${s.at} ${s.kind}: ${s.summary}`);
     const memory = contextMemory(store.listMemory(star.id), `${task.title} ${task.description}`);
     const asker = task.requestedBy ? store.findStar(task.requestedBy.starId)?.name : undefined;
-    const text = `${contextNote(store.settings(), memory, takeInbox(store, star.id))}\n\n${taskBrief(task, recent, asker)}`;
+    const event = this.deps.triggers?.take(task.id);
+    const text = `${contextNote(store.settings(), memory, takeInbox(store, star.id))}\n\n${taskBrief(task, recent, asker, event)}`;
     return { id: task.id, messages: [{ role: 'user', content: text }], results: [], pending: [], turns: 0, startedAt: iso() };
   }
 
@@ -117,7 +118,7 @@ export class TaskRunner {
       }
       state.turns++;
 
-      const tools = availableTools('task', providers, star);
+      const tools = [...availableTools('task', providers, star), ...(this.deps.mcp?.toolsFor(star) ?? [])];
       let turn;
       try {
         turn = await brain.turn({
@@ -166,7 +167,7 @@ export class TaskRunner {
       const why = lastText(turn.content) || task.title;
       let finishing: { outcome: string; failed?: boolean } | null = null;
       for (const use of uses) {
-        const tool = findTool(use.name);
+        const tool = findTool(use.name) ?? this.deps.mcp?.find(use.name);
         if (!tool || !tools.includes(tool)) {
           state.results.push(errorResult(use.id, `Tool ${use.name} is not available right now.`));
           continue;
@@ -309,7 +310,7 @@ export class TaskRunner {
 
   private async applyDecision(p: PendingCall, ctx: ToolContext): Promise<BetaToolResultBlockParam> {
     const { store } = this.deps;
-    const tool = findTool(p.name)!;
+    const found = findTool(p.name) ?? this.deps.mcp?.find(p.name);
     const d = p.decision!;
     if (d.outcome === 'answered') {
       const child = store.findTask(p.childTaskId!);
@@ -317,6 +318,8 @@ export class TaskRunner {
       if (ctx.task) store.addStep(ctx.task.id, { kind: 'result', summary: firstLine(`${who} ${d.failed ? 'couldn’t do it' : 'answered'}: ${d.answer}`, 160), ...(d.answer.length > 140 ? { detail: d.answer } : {}) });
       return { type: 'tool_result', tool_use_id: p.toolUseId, content: `${who} ${d.failed ? 'couldn’t do it' : 'replied'}: ${d.answer}`, ...(d.failed ? { is_error: true } : {}) };
     }
+    if (!found) return errorResult(p.toolUseId, `${p.name} isn’t available any more (its MCP server may have disconnected), so it wasn’t run.`);
+    const tool = found;
     const note = d.note ? ` Their note: “${d.note}”` : '';
     if (d.outcome === 'approved') {
       const input = d.editedPreview && tool.applyEdit ? tool.applyEdit(p.input, d.editedPreview) : p.input;

@@ -196,6 +196,8 @@ export interface Failure {
  * the provider down (longer each time); a used-up quota for an hour; a bad
  * key or unknown model for six hours, since those need the person.
  */
+const UNKNOWN_MODEL = /\b(unknown|invalid|unsupported) model\b|\bmodel_not_found\b|no such model|model\b[^.]{0,60}\b(not found|does ?n[o’']t exist|is not available|isn[’']t available|decommissioned|deprecated|retired|no longer (available|supported)|unknown)/i;
+
 export function classify(err: unknown, failuresBefore: number): Failure {
   const status = (err as { status?: number | null }).status ?? null;
   const retryAfter = (err as { retryAfter?: number }).retryAfter;
@@ -205,7 +207,9 @@ export function classify(err: unknown, failuresBefore: number): Failure {
   if (status === 402 || /quota|credit|insufficient|billing|exceeded your/i.test(message)) return { message, cooldownMs: 3_600_000, permanent: false };
   if (status === 429) return { message, cooldownMs: retryAfter ? retryAfter * 1000 : backoff(60_000, 900_000), permanent: false };
   if (status === 401 || status === 403) return { message, cooldownMs: 6 * 3_600_000, permanent: true };
-  if ((status === 404 || status === 400) && /model/i.test(message) && /not.*(found|exist|available|supported)|invalid|unknown|decommission/i.test(message)) {
+  // Only a model name the provider doesn't know benches it; "not supported with this model" or "too large for this model"
+  // is a request that model can't do, which moves on below without benching.
+  if ((status === 404 || status === 400) && UNKNOWN_MODEL.test(message)) {
     return { message, cooldownMs: 6 * 3_600_000, permanent: true };
   }
   if (status === null || status >= 500 || status === 408 || status === 409) return { message, cooldownMs: backoff(30_000, 600_000), permanent: false };
@@ -217,6 +221,7 @@ function cleanUrl(url: string): string {
   return url.trim().replace(/\/+$/, '');
 }
 
+/** The last 4 characters, only for a key long enough that they don't give it away. */
 function hint(key: string | undefined): string | null {
-  return key ? key.slice(-4) : null;
+  return key && key.length >= 12 ? key.slice(-4) : null;
 }
