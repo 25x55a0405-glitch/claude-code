@@ -13,6 +13,9 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'memory.learned',
   'idea.created',
   'settings.updated',
+  'star.updated',
+  'star.deleted',
+  'constellation.message',
 ];
 
 export class HttpError extends Error {
@@ -89,7 +92,14 @@ export function createHttpApi(baseUrl: string): SkyApi {
     setPaused: (paused) => call('POST', '/status', { paused }),
     getBriefing: () => call('GET', '/briefing'),
 
-    listTasks: (filter) => call('GET', '/tasks' + qs({ status: filter?.status?.join(',') })),
+    listStars: () => call('GET', '/stars'),
+    createStar: (input) => call('POST', '/stars', input),
+    updateStar: (id, patch) => call('PATCH', `/stars/${id}`, patch),
+    deleteStar: (id) => call('DELETE', `/stars/${id}`),
+    pauseStar: (id, paused) => call('POST', `/stars/${id}/pause`, { paused }),
+    listConstellationMessages: (starId) => call('GET', '/constellation/messages' + qs({ starId })),
+
+    listTasks: (filter) => call('GET', '/tasks' + qs({ status: filter?.status?.join(','), starId: filter?.starId })),
     getTask: (id) => call('GET', `/tasks/${id}`),
     createTask: (input) => call('POST', '/tasks', input),
     commandTask: (id, command) => call('POST', `/tasks/${id}/${command}`),
@@ -98,7 +108,7 @@ export function createHttpApi(baseUrl: string): SkyApi {
     decideApproval: (id, decision) => call('POST', `/approvals/${id}/decision`, decision),
 
     listConversations: () => call('GET', '/conversations'),
-    createConversation: () => call('POST', '/conversations', {}),
+    createConversation: (starId) => call('POST', '/conversations', starId ? { starId } : {}),
     listMessages: (id) => call('GET', `/conversations/${id}/messages`),
     sendMessage: (id, content) => call('POST', `/conversations/${id}/messages`, { content }),
 
@@ -112,8 +122,8 @@ export function createHttpApi(baseUrl: string): SkyApi {
     connect: (id) => call('POST', `/connections/${id}/connect`),
     disconnect: (id) => call('POST', `/connections/${id}/disconnect`),
 
-    listRules: () => call('GET', '/rules'),
-    addRule: (text) => call('POST', '/rules', { text }),
+    listRules: (starId) => call('GET', '/rules' + qs({ starId })),
+    addRule: (text, starId) => call('POST', '/rules', starId ? { text, starId } : { text }),
     updateRule: (id, patch) => call('PATCH', `/rules/${id}`, patch),
     deleteRule: (id) => call('DELETE', `/rules/${id}`),
 

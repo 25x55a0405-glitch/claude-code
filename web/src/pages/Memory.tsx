@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { api, type MemoryCategory, type MemoryItem } from '../api';
 import { Icon } from '../components/Icon';
 import { Empty, ErrorNote, PageHead, Segmented, Skeleton, useToast } from '../components/ui';
+import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
 
@@ -16,6 +17,7 @@ const CATS: { value: MemoryCategory; label: string }[] = [
 export function Memory() {
   const toast = useToast();
   const mem = useResource(() => api.listMemory(), [], ['memory.learned']);
+  const { stars } = useAgent();
   const [cat, setCat] = useState<MemoryCategory | 'all'>('all');
   const [adding, setAdding] = useState('');
   const [addCat, setAddCat] = useState<MemoryCategory>('preference');
@@ -34,7 +36,7 @@ export function Memory() {
 
   return (
     <div className="page">
-      <PageHead title="Memory" sub="What Sky knows about you. Change or delete anything and it takes effect right away." />
+      <PageHead title="Memory" sub="What your Stars know about you. Most of it is shared by every Star. Change or delete anything and it takes effect right away." />
 
       <form
         className="composer"
@@ -77,7 +79,7 @@ export function Memory() {
                   ) : (
                     <p>{m.pinned && <Icon name="pin" size={13} className="pin" />} {m.content}</p>
                   )}
-                  <p className="t3 xs" style={{ marginTop: 3 }}>{CATS.find((c) => c.value === m.category)?.label} · {m.source} · {relTime(m.createdAt)}</p>
+                  <p className="t3 xs" style={{ marginTop: 3 }}>{CATS.find((c) => c.value === m.category)?.label} · {m.source} · {relTime(m.createdAt)}{m.starId ? ` · Only ${stars?.find((x) => x.id === m.starId)?.name ?? 'one Star'} uses this` : ''}</p>
                 </div>
                 <div className="row" style={{ gap: 0 }}>
                   <button className="icon-btn" onClick={() => patch(m, { pinned: !m.pinned })} aria-pressed={m.pinned} aria-label={m.pinned ? 'Unpin' : 'Pin'} style={m.pinned ? { color: 'var(--text)' } : undefined}><Icon name="pin" size={16} /></button>

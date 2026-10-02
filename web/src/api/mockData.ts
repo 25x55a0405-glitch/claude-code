@@ -9,6 +9,8 @@ import type {
   Message,
   Rule,
   Settings,
+  Star,
+  ConstellationMessage,
   TaskDetail,
 } from './types';
 
@@ -43,6 +45,7 @@ export const seedConnections: Connection[] = [
 export const seedTasks: TaskDetail[] = [
   {
     id: 't_inbox',
+    starId: 'star_post',
     title: 'Keep my inbox at zero',
     description: 'Triage new email every hour. Archive noise, draft replies for anything that needs me, and flag what is urgent.',
     status: 'active',
@@ -66,6 +69,8 @@ export const seedTasks: TaskDetail[] = [
   },
   {
     id: 't_flights',
+    starId: 'star_scout',
+    requestedBy: { starId: 'star_sky' },
     title: 'Find flights to Lisbon under $600',
     description: 'Round trip, Oct 18 to Oct 25, morning departures, at most one stop. Tell me when something good shows up.',
     status: 'active',
@@ -144,6 +149,7 @@ export const seedTasks: TaskDetail[] = [
 export const seedApprovals: Approval[] = [
   {
     id: 'a_maya',
+    starId: 'star_post',
     taskId: 't_inbox',
     action: 'Send email',
     target: 'maya@studio.co',
@@ -158,6 +164,7 @@ export const seedApprovals: Approval[] = [
   },
   {
     id: 'a_cal',
+    starId: 'star_post',
     taskId: 't_inbox',
     action: 'Create calendar event',
     target: 'Design review · Thu 3:00 to 3:45pm',
@@ -202,6 +209,7 @@ export const seedRules: Rule[] = [
   { id: 'r_quiet', text: 'Don’t notify me during quiet hours unless it is urgent', enabled: true, builtIn: false, createdAt: ago(60 * 24 * 10) },
   { id: 'r_news', text: 'Archive newsletters without asking', enabled: true, builtIn: false, createdAt: ago(60 * 24 * 6) },
   { id: 'r_cal', text: 'Decline meeting invites before 10am politely', enabled: false, builtIn: false, createdAt: ago(60 * 24 * 3) },
+  { id: 'r_scout', text: 'Only look at refundable fares', enabled: true, builtIn: false, createdAt: ago(60 * 24 * 2), starId: 'star_scout' },
 ];
 
 export const seedActivity: ActivityEvent[] = [
@@ -223,9 +231,11 @@ export const seedIdeas: Idea[] = [
 ];
 
 export const seedConversations: Conversation[] = [
-  { id: 'c_main', main: true, title: 'Sky', updatedAt: ago(1), preview: 'One thing needs you: Maya wants to move Friday.' },
-  { id: 'c_trip', main: false, title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.' },
-  { id: 'c_gift', main: false, title: 'Gift for Sam', updatedAt: ago(60 * 24 * 3), preview: 'The pour-over kit arrives Thursday.' },
+  { id: 'c_main', main: true, title: 'Sky', updatedAt: ago(2), preview: 'One thing needs you: Maya wants to move Friday.', starId: 'star_sky' },
+  { id: 'c_scout', main: false, title: 'Scout', updatedAt: ago(60 * 2), preview: 'Lisbon fares dropped 4%.', starId: 'star_scout' },
+  { id: 'c_post', main: false, title: 'Post', updatedAt: ago(2), preview: 'I drafted a reply to Maya.', starId: 'star_post' },
+  { id: 'c_trip', main: false, title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.', starId: 'star_sky' },
+  { id: 'c_gift', main: false, title: 'Gift for Sam', updatedAt: ago(60 * 24 * 3), preview: 'The pour-over kit arrives Thursday.', starId: 'star_sky' },
 ];
 
 export const seedMessages: Message[] = [
@@ -233,9 +243,41 @@ export const seedMessages: Message[] = [
   { id: 'msg2', conversationId: 'c_main', role: 'agent', content: 'On it. I’ll check their booking page against your calendar and take the first slot that fits.', createdAt: ago(60 * 6 - 1), status: 'done' },
   { id: 'msg3', conversationId: 'c_main', role: 'agent', content: 'Booked. **Tuesday Oct 7 at 4:30pm** is on your calendar, with a reminder the day before.', createdAt: ago(60 * 5), status: 'done', cards: [{ kind: 'task', taskId: 't_dentist' }] },
   { id: 'msg4', conversationId: 'c_main', role: 'agent', proactive: true, content: 'Good morning, d. Quiet night: I cleared 31 emails and Lisbon fares dropped 4%. You have three meetings, the first at 10:30.', createdAt: ago(60 * 2), status: 'done' },
-  { id: 'msg5', conversationId: 'c_main', role: 'agent', proactive: true, content: 'One thing needs you. Maya wants to move Friday’s review, and you’re free Thursday at 3. I drafted a reply:', createdAt: ago(2), status: 'done', cards: [{ kind: 'approval', approvalId: 'a_maya' }] },
+  { id: 'msg5', conversationId: 'c_main', role: 'agent', proactive: true, content: 'One thing needs you. Maya wants to move Friday’s review. Post drafted a reply and it’s waiting for your OK in **Post’s chat**.', createdAt: ago(2), status: 'done' },
   { id: 'msg6', conversationId: 'c_trip', role: 'user', content: 'Find me flights to Lisbon, Oct 18 to 25, under $600. Mornings, one stop max.', createdAt: ago(60 * 31), status: 'done' },
   { id: 'msg7', conversationId: 'c_trip', role: 'agent', content: 'Nothing under $600 yet. The best is $642 on TAP with one stop in Newark. I’ll keep watching and ping you the moment it dips.', createdAt: ago(60 * 30), status: 'done', cards: [{ kind: 'task', taskId: 't_flights' }] },
   { id: 'msg8', conversationId: 'c_gift', role: 'user', content: 'Sam’s birthday is next week. Something coffee related, around $80?', createdAt: ago(60 * 24 * 3 + 5), status: 'done' },
   { id: 'msg9', conversationId: 'c_gift', role: 'agent', content: 'Ordered the Fellow pour-over kit for $76. It arrives Thursday, gift wrapped.', createdAt: ago(60 * 24 * 3), status: 'done' },
+  { id: 'msg10', conversationId: 'c_scout', role: 'agent', starId: 'star_scout', content: 'Hi, I’m Scout. Sky passed me your Lisbon trip, so I’m watching fares and reading up on neighbourhoods.', createdAt: ago(60 * 30), status: 'done', cards: [{ kind: 'task', taskId: 't_flights' }] },
+  { id: 'msg11', conversationId: 'c_scout', role: 'agent', starId: 'star_scout', proactive: true, content: 'Fares dropped 4%. The best is **$642 on TAP**, still above your $600 limit. I told Sky and I’ll keep watching.', createdAt: ago(60 * 2), status: 'done' },
+  { id: 'msg12', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Inbox is at zero again. I archived 14, drafted 2 replies, and asked Sky about Maya’s request to move Friday.', createdAt: ago(9), status: 'done', cards: [{ kind: 'task', taskId: 't_inbox' }] },
+  { id: 'msg13', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Maya wants to move Friday’s review. Sky checked and you’re free Thursday at 3, so I drafted a reply:', createdAt: ago(2), status: 'done', cards: [{ kind: 'approval', approvalId: 'a_maya' }, { kind: 'approval', approvalId: 'a_cal' }] },
+];
+
+export const seedStars: Star[] = [
+  {
+    id: 'star_sky', name: 'Sky', role: 'Your main Star. Talks with you and keeps everything moving',
+    instructions: 'Be my first point of contact. Pass work to the Star best suited for it and keep me posted.',
+    avatar: { character: 'cloud', color: 'sky' }, main: true, autonomy: null, connectionIds: null, paused: false,
+    conversationId: 'c_main', createdAt: ago(60 * 24 * 7), updatedAt: ago(60 * 24 * 7),
+  },
+  {
+    id: 'star_scout', name: 'Scout', role: 'Researches trips, prices and places',
+    instructions: 'Compare at least three sources. Never book or pay; bring me the options.',
+    avatar: { character: 'dot', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'calendar'], paused: false,
+    conversationId: 'c_scout', createdAt: ago(60 * 24 * 2), updatedAt: ago(60 * 24 * 2),
+  },
+  {
+    id: 'star_post', name: 'Post', role: 'Looks after your inbox and replies',
+    instructions: 'Keep my inbox at zero. Draft replies in my voice and ask before sending anything.',
+    avatar: { character: 'drop', color: 'peach' }, main: false, autonomy: null, connectionIds: ['gmail'], paused: false,
+    conversationId: 'c_post', createdAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 6),
+  },
+];
+
+export const seedConstellation: ConstellationMessage[] = [
+  { id: 'cm1', fromStarId: 'star_sky', toStarId: 'star_scout', kind: 'handoff', content: 'Find flights to Lisbon, Oct 18 to 25, under $600. Mornings, one stop max.', taskId: 't_flights', createdAt: ago(60 * 31 - 1), read: true },
+  { id: 'cm2', fromStarId: 'star_scout', toStarId: 'star_sky', kind: 'message', content: 'Fares dropped 4%. Best is $642 on TAP. Still watching for under $600.', taskId: 't_flights', createdAt: ago(60 * 2 + 1), read: true },
+  { id: 'cm3', fromStarId: 'star_post', toStarId: 'star_sky', kind: 'request', content: 'Maya wants to move Friday’s review. Is d free Thursday at 3?', createdAt: ago(10), read: true },
+  { id: 'cm4', fromStarId: 'star_sky', toStarId: 'star_post', kind: 'reply', content: 'Yes, Thursday 3pm is free. I’ll ask d before anything goes out.', createdAt: ago(3), read: true },
 ];

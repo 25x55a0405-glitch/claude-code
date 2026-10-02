@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { api, type Approval } from '../api';
+import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { href } from '../lib/router';
 import { Icon } from './Icon';
-import { ApprovalChip, useToast } from './ui';
+import { ApprovalChip, StarFace, useToast } from './ui';
 
 /**
  * A structured yes/no for anything Sky can't undo. Shows exactly what will
@@ -16,6 +17,8 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
   const [expanded, setExpanded] = useState(!compact);
   const [busy, setBusy] = useState(false);
   const pending = approval.status === 'pending';
+  const { stars } = useAgent();
+  const asker = stars && stars.length > 1 ? stars.find((s) => s.id === approval.starId) : undefined;
 
   const decide = async (decision: 'approve' | 'reject') => {
     setBusy(true);
@@ -35,6 +38,7 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
   return (
     <article className={`card-inline ${pending ? 'attn' : 'settled'}`} style={compact ? undefined : { width: '100%' }}>
       <div className="ci-head">
+        {asker && !compact && <><StarFace star={asker} size={16} still /> {asker.name} ·</>}
         {pending ? <><Icon name="bolt" size={13} /> Needs your OK</> : <ApprovalChip status={approval.status} />}
         <span className="grow" />
         <span className="t3 xs" style={{ fontWeight: 400 }}>{relTime(approval.createdAt)}</span>

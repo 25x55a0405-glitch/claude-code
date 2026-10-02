@@ -28,13 +28,15 @@ interface Props {
   /** Eyes follow the pointer. Use on the large, featured avatar only. */
   track?: boolean;
   className?: string;
+  /** Who this is, for screen readers. */
+  label?: string;
 }
 
 /**
  * Sky's face. It floats and blinks when idle, reads side to side while working,
  * hops when it needs you, and dozes when paused.
  */
-export function Avatar({ state = 'idle', character = 'cloud', color = 'sky', size = 40, track = false, className = '' }: Props) {
+export function Avatar({ state = 'idle', character = 'cloud', color = 'sky', size = 40, track = false, className = '', label = 'Sky' }: Props) {
   const id = useId().replace(/:/g, '');
   const ref = useRef<SVGSVGElement>(null);
   const shape = SHAPES[character];
@@ -79,7 +81,7 @@ export function Avatar({ state = 'idle', character = 'cloud', color = 'sky', siz
       height={size}
       viewBox="0 0 100 100"
       role="img"
-      aria-label={`Sky, ${state === 'waiting' ? 'needs you' : state}`}
+      aria-label={`${label}, ${state === 'waiting' ? 'needs you' : state}`}
     >
       <defs>
         <radialGradient id={`b${id}`} cx="34%" cy="28%" r="80%">

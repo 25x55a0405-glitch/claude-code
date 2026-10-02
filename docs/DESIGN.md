@@ -5,8 +5,8 @@ working in the background, comes back when something is new or needs you, and
 asks before anything it can't undo.
 
 Naming: the app is **Sky**. Each agent in it is a **Star**, and Stars that work
-together form a **constellation**. Today the UI has one Star; screens for more
-come with the multi-agent back end.
+together form a **constellation**. The first Star is the main one: it talks with
+you first, passes work to the others, and can't be removed.
 
 The look follows three references the user picked:
 
@@ -66,9 +66,12 @@ decorative animation beyond the character.
 | Screen | What it's for |
 | --- | --- |
 | **Chat** | The main chat: bubbles, "reached out" messages, inline goal and approval cards, a capsule composer. An empty chat shows the character, one question and a few ideas |
-| **Side chats** | Extra conversations for a topic, listed in the sidebar |
-| **Profile** (tap the character) | Name, handle, live status, counts, Working on / Upcoming / Done, links to the rest, pause |
-| **Goals** | Everything Sky has taken on, with progress and schedule, plus a goal's step-by-step history |
+| **A Star's chat** | Every Star has its own chat, listed under Stars in the sidebar. Its approval cards appear here, and so do the notes it trades with other Stars (asked, answered, handed work to, told), drawn as dashed cards between the bubbles |
+| **Side chats** | Extra conversations for a topic with the current Star, listed in the sidebar |
+| **Profile** (tap the character) | The current Star: name, role, live status, counts, Working on / Upcoming / Done, who it works with, edit, pause this Star or every Star |
+| **Constellation** | A map of the Stars with lines where they've talked, a card per Star (role, independence, apps, pause), and the feed of notes between them |
+| **New Star / edit a Star** | Start from a template (research, inbox, calendar, code), then name, character and colour, role and instructions, independence (or follow yours), which apps, and its own rules. Pause or remove from here |
+| **Goals** | Everything the Stars have taken on, filterable by Star, with progress and schedule, plus a goal's step-by-step history and who asked for it |
 | **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |
 | **Memory** | What it knows about you; add, edit, pin, forget |

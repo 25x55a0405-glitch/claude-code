@@ -25,7 +25,9 @@ export function Settings() {
 
   return (
     <div className="page">
-      <PageHead title={`Your ${d.agentName}`} sub="Every agent in Sky is a Star. Give yours a name and a look." />
+      <PageHead title={`Your ${d.agentName}`} sub="Your main Star. Give it a name and a look; your other Stars are in the constellation.">
+        <a className="btn" href="#/stars"><Icon name="sparkle" size={15} /> Constellation</a>
+      </PageHead>
 
       <section className="panel studio">
         <div className="studio-stage"><Avatar size={120} track state={status?.state ?? 'idle'} character={d.avatar.character} color={d.avatar.color} /></div>
@@ -126,7 +128,7 @@ export function Settings() {
 
       <button className="btn" style={{ alignSelf: 'flex-start' }} onClick={() => api.setPaused(status?.state !== 'paused')}>
         <Icon name={status?.state === 'paused' ? 'play' : 'pause'} size={15} />
-        {status?.state === 'paused' ? `Wake ${d.agentName} up` : `Pause ${d.agentName} everywhere`}
+        {status?.state === 'paused' ? 'Wake every Star' : 'Pause every Star'}
       </button>
     </div>
   );

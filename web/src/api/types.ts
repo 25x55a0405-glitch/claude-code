@@ -15,6 +15,8 @@ export interface AgentStatus {
   taskId: string | null;
   since: string;
   autonomy: Autonomy;
+  /** The Star doing the current activity, if any. */
+  starId?: string | null;
   counts: {
     activeTasks: number;
     pendingApprovals: number;
@@ -85,6 +87,10 @@ export interface Task {
   connectionIds: string[];
   /** Short line summarising the latest outcome, shown on cards. */
   lastOutcome?: string;
+  /** The Star that owns the task. */
+  starId?: string;
+  /** Set when another Star asked for this work with ask_star or hand_off. */
+  requestedBy?: { starId: string; taskId?: string; depth?: number };
 }
 
 export interface TaskDetail extends Task {
@@ -96,6 +102,7 @@ export interface CreateTaskInput {
   description: string;
   kind: TaskKind;
   schedule?: string;
+  starId?: string;
 }
 
 export type TaskCommand = 'pause' | 'resume' | 'run_now' | 'cancel';
@@ -121,6 +128,7 @@ export interface Approval {
   status: ApprovalStatus;
   createdAt: string;
   expiresAt?: string;
+  starId?: string;
 }
 
 export interface ApprovalDecision {
@@ -142,6 +150,7 @@ export interface Conversation {
   title: string;
   updatedAt: string;
   preview: string;
+  starId?: string;
 }
 
 export interface Message {
@@ -155,6 +164,8 @@ export interface Message {
   proactive?: boolean;
   /** Structured cards rendered under the message text. */
   cards?: MessageCard[];
+  /** The Star that wrote an agent message. */
+  starId?: string;
 }
 
 /** A task or approval shown inline in the chat, like Muse's approval cards. */
@@ -172,6 +183,8 @@ export interface MemoryItem {
   source: string;
   createdAt: string;
   pinned: boolean;
+  /** Private to one Star; absent or null means every Star shares it. */
+  starId?: string | null;
 }
 
 // ---- Connections -------------------------------------------------------
@@ -199,6 +212,8 @@ export interface Rule {
   /** Built-in rules cannot be deleted or disabled. */
   builtIn: boolean;
   createdAt: string;
+  /** Applies to one Star only; absent or null means every Star. */
+  starId?: string | null;
 }
 
 // ---- Activity ----------------------------------------------------------
@@ -219,6 +234,7 @@ export interface ActivityEvent {
   kind: ActivityKind;
   summary: string;
   taskId?: string;
+  starId?: string;
 }
 
 // ---- Settings ----------------------------------------------------------
@@ -256,6 +272,66 @@ export interface Idea {
   createdAt: string;
 }
 
+// ---- Stars and the constellation --------------------------------------
+
+/**
+ * A Star is one of the person's agents. Each has its own role, instructions,
+ * memory, apps, rules, autonomy and chat; together they form a constellation
+ * that can ask each other for help and hand work over.
+ */
+export interface Star {
+  id: string;
+  name: string;
+  /** One line: what this Star is for, e.g. "Finds and compares flights". */
+  role: string;
+  /** Longer standing instructions, like a job description. */
+  instructions: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  /** The first Star. It can't be deleted and its name is Settings.agentName. */
+  main: boolean;
+  /** null means use the global autonomy from Settings. */
+  autonomy: Autonomy | null;
+  /** Connection ids this Star may use; null means every connected app. */
+  connectionIds: string[] | null;
+  paused: boolean;
+  /** This Star's own chat (for the main Star, the main chat). */
+  conversationId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StarStatus {
+  state: AgentState;
+  activity: string | null;
+  taskId: string | null;
+  activeTasks: number;
+  pendingApprovals: number;
+}
+
+/** What the API returns for a Star: the record plus its live status. */
+export interface StarView extends Star {
+  status: StarStatus;
+}
+
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>>;
+
+export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
+
+/** One Star talking to another. */
+export interface ConstellationMessage {
+  id: string;
+  fromStarId: string;
+  toStarId: string;
+  /** request: ask_star asked for help; reply: the answer; handoff: work passed over; message: an FYI. */
+  kind: ConstellationMessageKind;
+  content: string;
+  /** The task the message is about (the new task for request and handoff). */
+  taskId?: string;
+  createdAt: string;
+  /** Whether the receiving Star has seen it yet. */
+  read: boolean;
+}
+
 // ---- Pagination --------------------------------------------------------
 
 export interface Page<T> {
@@ -277,7 +353,10 @@ export type LiveEvent =
   | { type: 'activity'; data: ActivityEvent }
   | { type: 'memory.learned'; data: MemoryItem }
   | { type: 'idea.created'; data: Idea }
-  | { type: 'settings.updated'; data: Settings };
+  | { type: 'settings.updated'; data: Settings }
+  | { type: 'star.updated'; data: StarView }
+  | { type: 'star.deleted'; data: { id: string } }
+  | { type: 'constellation.message'; data: ConstellationMessage };
 
 export type LiveEventType = LiveEvent['type'];
 

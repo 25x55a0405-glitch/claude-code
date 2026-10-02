@@ -19,6 +19,9 @@ import type {
   TaskCommand,
   TaskDetail,
   TaskStatus,
+  ConstellationMessage,
+  StarInput,
+  StarView,
 } from './types';
 
 /**
@@ -41,7 +44,16 @@ export interface SkyApi {
   setPaused(paused: boolean): Promise<AgentStatus>;
   getBriefing(): Promise<Briefing>;
 
-  listTasks(filter?: { status?: TaskStatus[] }): Promise<Task[]>;
+  listStars(): Promise<StarView[]>;
+  createStar(input: StarInput): Promise<StarView>;
+  updateStar(id: string, patch: Partial<StarInput>): Promise<StarView>;
+  /** Not allowed for the main Star. */
+  deleteStar(id: string): Promise<void>;
+  pauseStar(id: string, paused: boolean): Promise<StarView>;
+  /** Messages between Stars, oldest first; with starId, only the ones that Star sent or received. */
+  listConstellationMessages(starId?: string): Promise<ConstellationMessage[]>;
+
+  listTasks(filter?: { status?: TaskStatus[]; starId?: string }): Promise<Task[]>;
   getTask(id: string): Promise<TaskDetail>;
   createTask(input: CreateTaskInput): Promise<Task>;
   commandTask(id: string, command: TaskCommand): Promise<Task>;
@@ -50,7 +62,8 @@ export interface SkyApi {
   decideApproval(id: string, decision: ApprovalDecision): Promise<Approval>;
 
   listConversations(): Promise<Conversation[]>;
-  createConversation(): Promise<Conversation>;
+  /** A side chat with the given Star (the main Star when omitted). */
+  createConversation(starId?: string): Promise<Conversation>;
   listMessages(conversationId: string): Promise<Message[]>;
   /** Returns the stored user message; the agent reply arrives as message.delta / message.done events. */
   sendMessage(conversationId: string, content: string): Promise<Message>;
@@ -66,8 +79,10 @@ export interface SkyApi {
   connect(id: string): Promise<{ authorizeUrl: string | null; connection: Connection }>;
   disconnect(id: string): Promise<Connection>;
 
-  listRules(): Promise<Rule[]>;
-  addRule(text: string): Promise<Rule>;
+  /** With starId: what that Star is bound by, shared rules plus its own. */
+  listRules(starId?: string): Promise<Rule[]>;
+  /** With starId, the rule applies to that Star only. */
+  addRule(text: string, starId?: string): Promise<Rule>;
   updateRule(id: string, patch: Partial<Pick<Rule, 'text' | 'enabled'>>): Promise<Rule>;
   deleteRule(id: string): Promise<void>;
 

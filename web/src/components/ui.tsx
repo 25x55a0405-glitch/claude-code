@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Approval, ConnectionStatus, TaskKind, TaskStatus } from '../api';
+import type { Approval, ConnectionStatus, StarView, TaskKind, TaskStatus } from '../api';
 import { useAgent } from '../lib/agent';
 import { Avatar } from './Avatar';
 import { Icon, type IconName } from './Icon';
@@ -16,6 +16,13 @@ export function Me({ size = 32, track = false, state }: { size?: number; track?:
       color={settings?.avatar.color}
     />
   );
+}
+
+/** One Star's face, in that Star's own state. */
+export function StarFace({ star, size = 32, track = false, still = false }: { star: Pick<StarView, 'name' | 'avatar'> & { status?: StarView['status'] }; size?: number; track?: boolean; still?: boolean }) {
+  const { status } = useAgent();
+  const state = still ? 'idle' : status?.state === 'paused' ? 'paused' : star.status?.state ?? 'idle';
+  return <Avatar size={size} track={track} state={state} character={star.avatar.character} color={star.avatar.color} label={star.name} />;
 }
 
 const statusChip: Record<TaskStatus, [string, string]> = {

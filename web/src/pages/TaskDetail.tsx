@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { api, type StepKind, type TaskCommand, type TaskStep } from '../api';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { Icon, type IconName } from '../components/Icon';
-import { Bar, ErrorNote, Skeleton, StatusChip, kindMeta, useToast } from '../components/ui';
+import { Bar, ErrorNote, Skeleton, StarFace, StatusChip, kindMeta, useToast } from '../components/ui';
+import { useAgent } from '../lib/agent';
 import { clockTime, dayLabel, relTime } from '../lib/format';
 import { useLiveEvents, useResource } from '../lib/hooks';
 import { href } from '../lib/router';
@@ -16,6 +17,7 @@ export function TaskDetailPage({ id }: { id: string }) {
   const task = useResource(() => api.getTask(id), [id], ['task.updated']);
   const approvals = useResource(async () => (await api.listApprovals('pending')).filter((a) => a.taskId === id), [id], ['approval.created', 'approval.updated']);
   const connections = useResource(() => api.listConnections(), []);
+  const { stars } = useAgent();
   const [fresh, setFresh] = useState<Set<string>>(new Set());
   const [open, setOpen] = useState<Set<string>>(new Set());
 
@@ -57,6 +59,16 @@ export function TaskDetailPage({ id }: { id: string }) {
       <div className="col">
         <div className="row wrap">
           <StatusChip status={t.status} />
+          {stars && stars.length > 1 && (() => {
+            const owner = stars.find((s) => s.id === t.starId);
+            const asker = t.requestedBy && stars.find((s) => s.id === t.requestedBy!.starId);
+            return (
+              <>
+                {owner && <a className="chip" href={href('stars', owner.id)}><StarFace star={owner} size={14} still /> {owner.name}</a>}
+                {asker && <span className="chip">Asked by {asker.name}</span>}
+              </>
+            );
+          })()}
           <span className="chip"><Icon name={kind.icon} size={12} /> {t.schedule ?? kind.label}</span>
           {t.connectionIds.map((c) => <span key={c} className="chip">{conn(c) ?? c}</span>)}
         </div>

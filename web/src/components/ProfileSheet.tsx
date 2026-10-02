@@ -1,19 +1,22 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api';
-import { doingLine, useAgent } from '../lib/agent';
+import { api, type StarView } from '../api';
+import { starLine, useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
 import { href } from '../lib/router';
 import { Icon } from './Icon';
-import { Bar, Me, Segmented, StatusChip } from './ui';
+import { Bar, Segmented, StarFace, StatusChip, useToast } from './ui';
 
 type Tab = 'now' | 'upcoming' | 'done';
 
-/** Tap the character to see who it is, what it's doing, and what it's tracking. */
-export function ProfileSheet({ onClose }: { onClose: () => void }) {
-  const { status, settings } = useAgent();
+/** Tap a Star to see who it is, what it's doing, and what it's tracking. */
+export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () => void }) {
+  const { status, settings, stars, upsertStar } = useAgent();
+  const toast = useToast();
   const [tab, setTab] = useState<Tab>('now');
-  const tasks = useResource(() => api.listTasks(), [], ['task.updated']);
+  const tasks = useResource(() => api.listTasks(star.id ? { starId: star.id } : undefined), [star.id], ['task.updated']);
+  const others = (stars ?? []).filter((s) => s.id !== star.id);
+  const allPaused = status?.state === 'paused';
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -24,7 +27,12 @@ export function ProfileSheet({ onClose }: { onClose: () => void }) {
   const list = (tasks.data ?? []).filter((t) =>
     tab === 'now' ? ['active', 'waiting_approval', 'blocked'].includes(t.status) : tab === 'upcoming' ? ['scheduled', 'paused'].includes(t.status) : ['done', 'failed'].includes(t.status),
   );
-  const name = settings?.agentName ?? 'Sky';
+  const done = (tasks.data ?? []).filter((t) => t.status === 'done').length;
+  const name = star.name;
+
+  const pauseStar = async () => {
+    try { upsertStar(await api.pauseStar(star.id, !star.paused)); } catch (e) { toast((e as Error).message); }
+  };
 
   return (
     <>
@@ -36,22 +44,21 @@ export function ProfileSheet({ onClose }: { onClose: () => void }) {
         </div>
         <div className="sheet-scroll">
           <div className="profile">
-            <Me size={112} track />
+            <StarFace star={star} size={112} track />
             <h1 style={{ fontSize: 26, marginTop: 10 }}>{name}</h1>
-            <span className="handle">@{name.toLowerCase().replace(/\s+/g, '')} · {settings?.userName}’s agent</span>
+            <span className="handle">@{name.toLowerCase().replace(/\s+/g, '')} · {star.main ? `${settings?.userName ?? 'your'}’s main Star` : 'a Star'}</span>
+            {star.role && <p className="t2" style={{ marginTop: 6, maxWidth: '34ch' }}>{star.role}</p>}
             <span className="now-doing">
-              <Icon name={status?.state === 'paused' ? 'pause' : 'sparkle'} size={14} />
-              <span className={status?.state === 'working' ? 'shimmer' : 't2'}>{doingLine(status)}</span>
+              <Icon name={allPaused || star.status.state === 'paused' ? 'pause' : 'sparkle'} size={14} />
+              <span className={star.status.state === 'working' && !allPaused ? 'shimmer' : 't2'}>{starLine(star.status, status)}</span>
             </span>
           </div>
 
-          {status && (
-            <div className="stats">
-              <a href={href('goals')} onClick={onClose}><div className="n">{status.counts.activeTasks}</div><div className="k">Working on</div></a>
-              <a href={href('approvals')} onClick={onClose}><div className="n" style={status.counts.pendingApprovals ? { color: 'var(--attn)' } : undefined}>{status.counts.pendingApprovals}</div><div className="k">Needs you</div></a>
-              <a href={href('activity')} onClick={onClose}><div className="n">{status.counts.completedToday}</div><div className="k">Finished</div></a>
-            </div>
-          )}
+          <div className="stats">
+            <a href={href('goals')} onClick={onClose}><div className="n">{star.status.activeTasks}</div><div className="k">Working on</div></a>
+            <a href={href('approvals')} onClick={onClose}><div className="n" style={star.status.pendingApprovals ? { color: 'var(--attn)' } : undefined}>{star.status.pendingApprovals}</div><div className="k">Needs you</div></a>
+            <a href={href('activity')} onClick={onClose}><div className="n">{star.id ? done : status?.counts.completedToday ?? 0}</div><div className="k">Finished</div></a>
+          </div>
 
           <div className="col">
             <Segmented label="Goals" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
@@ -70,15 +77,30 @@ export function ProfileSheet({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
+          {others.length > 0 && (
+            <div>
+              <div className="section-title">Works with</div>
+              <div className="crew">
+                {others.map((s) => (
+                  <a key={s.id} href={href('stars')} onClick={onClose} title={s.role}>
+                    <StarFace star={s} size={40} />
+                    <span>{s.name}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="panel">
             <div className="rows">
               {[
-                ['activity', 'activity', 'Everything it has done'],
-                ['permissions', 'lock', 'Permissions and rules'],
-                ['memory', 'brain', 'What it remembers about you'],
-                ['settings', 'settings', `Customise ${name}`],
+                ...(star.id ? [[href('stars', star.id), 'edit', `Edit ${name}: role, apps, rules`]] : []),
+                [href('stars'), 'sparkle', 'Your constellation'],
+                [href('activity'), 'activity', 'Everything it has done'],
+                [href('memory'), 'brain', 'What it remembers about you'],
+                ...(star.main ? [[href('settings'), 'settings', `Customise ${name}`]] : []),
               ].map(([to, icon, label]) => (
-                <a key={to} className="r" href={href(to)} onClick={onClose}>
+                <a key={to} className="r" href={to} onClick={onClose}>
                   <Icon name={icon as 'activity'} size={17} />
                   <span className="grow">{label}</span>
                   <Icon name="chevron" size={16} />
@@ -87,13 +109,18 @@ export function ProfileSheet({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
-          <button
-            className="btn"
-            onClick={() => api.setPaused(status?.state !== 'paused')}
-          >
-            <Icon name={status?.state === 'paused' ? 'play' : 'pause'} size={15} />
-            {status?.state === 'paused' ? `Wake ${name} up` : `Pause ${name}`}
-          </button>
+          <div className="row wrap">
+            {star.id && others.length > 0 && (
+              <button className="btn" onClick={pauseStar} disabled={allPaused}>
+                <Icon name={star.paused ? 'play' : 'pause'} size={15} />
+                {star.paused ? `Wake ${name}` : `Pause ${name}`}
+              </button>
+            )}
+            <button className="btn" onClick={() => api.setPaused(!allPaused)}>
+              <Icon name={allPaused ? 'play' : 'pause'} size={15} />
+              {others.length > 0 ? (allPaused ? 'Wake every Star' : 'Pause every Star') : allPaused ? `Wake ${name} up` : `Pause ${name}`}
+            </button>
+          </div>
         </div>
       </aside>
     </>

@@ -1,0 +1,293 @@
+import { useEffect, useState } from 'react';
+import { api, type Autonomy, type AvatarCharacter, type AvatarColor, type Rule, type StarView } from '../api';
+import { Avatar } from '../components/Avatar';
+import { Icon } from '../components/Icon';
+import { PageHead, Segmented, Skeleton, Switch, useToast } from '../components/ui';
+import { starChat, useAgent } from '../lib/agent';
+import { useResource } from '../lib/hooks';
+import { href, navigate } from '../lib/router';
+import { LOGO } from './Permissions';
+
+const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
+const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
+
+const AUTONOMY: { value: Autonomy | null; title: string; body: string }[] = [
+  { value: null, title: 'Same as you set', body: 'Follows the independence level in Permissions.' },
+  { value: 'ask', title: 'Ask first', body: 'Checks with you before every action.' },
+  { value: 'balanced', title: 'Balanced', body: 'Handles routine things, asks before sending, spending or deleting.' },
+  { value: 'autonomous', title: 'Hands-off', body: 'Acts on its own and tells you after. Safety rules still apply.' },
+];
+
+/** Ready-made jobs for a new Star, so starting one is a tap. */
+const TEMPLATES: { label: string; name: string; role: string; instructions: string; avatar: { character: AvatarCharacter; color: AvatarColor }; apps?: string[]; autonomy?: Autonomy }[] = [
+  { label: 'Research', name: 'Scout', role: 'Researches trips, prices and places', instructions: 'Compare at least three sources and bring me the options with prices. Never book or pay.', avatar: { character: 'dot', color: 'mint' }, apps: ['web'], autonomy: 'ask' },
+  { label: 'Inbox', name: 'Post', role: 'Looks after your inbox and replies', instructions: 'Keep my inbox at zero. Archive noise, draft replies in my voice, and ask before sending anything.', avatar: { character: 'drop', color: 'peach' }, apps: ['gmail'] },
+  { label: 'Calendar', name: 'Tempo', role: 'Plans your week and protects your focus time', instructions: 'Keep mornings free for deep work. Suggest times, and ask before accepting or moving anything.', avatar: { character: 'cloud', color: 'lilac' }, apps: ['calendar'] },
+  { label: 'Code', name: 'Patch', role: 'Watches your repos, reviews and builds', instructions: 'Tell me when a review or a failing build needs me. Summarise what changed.', avatar: { character: 'dot', color: 'sun' }, apps: ['github'] },
+];
+
+interface Draft {
+  name: string;
+  role: string;
+  instructions: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  autonomy: Autonomy | null;
+  connectionIds: string[] | null;
+}
+
+const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds });
+
+export function StarEditor({ id }: { id: string }) {
+  const isNew = id === 'new';
+  const { stars, status, upsertStar } = useAgent();
+  const toast = useToast();
+  const star = isNew ? null : stars?.find((s) => s.id === id) ?? null;
+  const conns = useResource(() => api.listConnections(), []);
+  const rules = useResource(() => (isNew ? Promise.resolve([] as Rule[]) : api.listRules(id)), [id]);
+  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null } : null);
+  const [newRules, setNewRules] = useState<string[]>([]);
+  const [ruleText, setRuleText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+
+  // Load an existing Star into the form once it's known.
+  useEffect(() => {
+    if (!isNew && star && !draft) setDraft(fromStar(star));
+  }, [isNew, star, draft]);
+
+  if (!isNew && stars && !star) {
+    return <div className="page"><PageHead title="That Star is gone" sub="It may have been removed on another device." /><a className="btn" href={href('stars')}>See your constellation</a></div>;
+  }
+  if (!draft) return <div className="page"><Skeleton h={180} n={2} /></div>;
+
+  const set = (patch: Partial<Draft>) => { setDraft({ ...draft, ...patch }); setError(null); };
+  const connected = (conns.data ?? []).filter((c) => c.status !== 'disconnected');
+  const own = (rules.data ?? []).filter((r) => r.starId === id);
+  const shared = (rules.data ?? []).filter((r) => !r.starId).length;
+  const dirty = isNew || (star && JSON.stringify(fromStar(star)) !== JSON.stringify(draft));
+  const canSave = draft.name.trim() && draft.role.trim() && dirty && !busy;
+
+  const applyTemplate = (t: (typeof TEMPLATES)[number]) => {
+    const taken = stars?.some((s) => s.name.toLowerCase() === t.name.toLowerCase());
+    const apps = t.apps?.filter((a) => connected.some((c) => c.id === a));
+    set({ name: taken ? '' : t.name, role: t.role, instructions: t.instructions, avatar: t.avatar, autonomy: t.autonomy ?? null, connectionIds: apps && apps.length ? apps : null });
+  };
+
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    const body = { ...draft, name: draft.name.trim(), role: draft.role.trim(), instructions: draft.instructions.trim() };
+    try {
+      if (isNew) {
+        const s = await api.createStar(body);
+        upsertStar(s);
+        for (const text of newRules) await api.addRule(text, s.id).catch(() => {});
+        toast(`${s.name} joined your constellation`);
+        window.location.hash = starChat(s);
+      } else {
+        const s = await api.updateStar(id, body);
+        upsertStar(s);
+        setDraft(fromStar(s));
+        toast('Saved');
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addRule = async () => {
+    const text = ruleText.trim();
+    if (!text) return;
+    if (isNew) setNewRules((r) => [...r, text]);
+    else {
+      try { const r = await api.addRule(text, id); rules.setData((d) => [...(d ?? []), r]); } catch (e) { toast((e as Error).message); return; }
+    }
+    setRuleText('');
+  };
+
+  const remove = async () => {
+    try {
+      await api.deleteStar(id);
+      toast(`${star?.name} was removed`);
+      navigate('stars');
+    } catch (e) {
+      toast((e as Error).message);
+      setConfirm(false);
+    }
+  };
+
+  const pause = async () => {
+    if (!star) return;
+    try { upsertStar(await api.pauseStar(id, !star.paused)); } catch (e) { toast((e as Error).message); }
+  };
+
+  const toggleApp = (cid: string, on: boolean) => {
+    const cur = draft.connectionIds ?? [];
+    set({ connectionIds: on ? [...cur, cid] : cur.filter((x) => x !== cid) });
+  };
+
+  return (
+    <div className="page">
+      <PageHead title={isNew ? 'New Star' : draft.name || 'Your Star'} sub={isNew ? 'Give one job its own Star. It gets its own chat, apps and rules, and works with your other Stars.' : star?.main ? 'Your main Star. It talks with you first and passes work to the others.' : 'What it does, what it may use, and how far it can go on its own.'}>
+        {!isNew && <a className="btn" href={star ? starChat(star) : href('chat')}><Icon name="chat" size={15} /> Open chat</a>}
+      </PageHead>
+
+      {isNew && (
+        <section>
+          <div className="section-title">Start from</div>
+          <div className="row wrap">
+            {TEMPLATES.map((t) => (
+              <button key={t.label} className="idea-pill" onClick={() => applyTemplate(t)}>
+                <Avatar size={20} character={t.avatar.character} color={t.avatar.color} label={t.name} />
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="panel studio">
+        <div className="studio-stage"><Avatar size={120} track state={star?.status.state === 'paused' || status?.state === 'paused' ? 'paused' : 'idle'} character={draft.avatar.character} color={draft.avatar.color} label={draft.name || 'New Star'} /></div>
+        <div className="col-lg">
+          <div>
+            <label className="label" htmlFor="star-name">Name</label>
+            <input id="star-name" className="field" maxLength={40} value={draft.name} onChange={(e) => set({ name: e.target.value })} placeholder="Scout, Post, Tempo…" autoFocus={isNew} />
+          </div>
+          <div>
+            <span className="label">Character</span>
+            <div className="pick">
+              {CHARACTERS.map((c) => (
+                <button key={c} type="button" aria-pressed={draft.avatar.character === c} aria-label={c} title={c} onClick={() => set({ avatar: { ...draft.avatar, character: c } })}>
+                  <Avatar size={36} character={c} color={draft.avatar.color} label={c} />
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <span className="label">Colour</span>
+            <div className="row" style={{ gap: 10 }}>
+              {COLORS.map((c) => (
+                <button key={c} type="button" className="swatch" data-av={c} aria-pressed={draft.avatar.color === c} aria-label={c} onClick={() => set({ avatar: { ...draft.avatar, color: c } })} />
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-title">Its job</div>
+        <div className="panel pad col">
+          <div>
+            <label className="label" htmlFor="star-role">Role</label>
+            <input id="star-role" className="field" maxLength={120} value={draft.role} onChange={(e) => set({ role: e.target.value })} placeholder="One line, like “Researches trips, prices and places”" />
+          </div>
+          <div>
+            <label className="label" htmlFor="star-instructions">Instructions</label>
+            <textarea id="star-instructions" className="field" rows={4} value={draft.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="Standing orders. How it should work, what to always or never do." />
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-title">Independence</div>
+        <div className="autonomy four">
+          {AUTONOMY.map((a) => (
+            <button key={String(a.value)} type="button" aria-pressed={draft.autonomy === a.value} onClick={() => set({ autonomy: a.value })}>
+              <h3>{a.title}</h3>
+              <span>{a.body}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <div className="between" style={{ marginBottom: 10 }}>
+          <div className="section-title" style={{ margin: 0 }}>Apps</div>
+          <Segmented label="Which apps" value={draft.connectionIds === null ? 'all' : 'some'} onChange={(v) => set({ connectionIds: v === 'all' ? null : (draft.connectionIds ?? []) })} options={[{ value: 'all', label: 'All your apps' }, { value: 'some', label: 'Only these' }]} />
+        </div>
+        <div className="panel">
+          <div className="rows">
+            {!conns.data && <div className="r"><Skeleton h={30} n={2} /></div>}
+            {conns.data && connected.length === 0 && <div className="r t3">No apps connected yet. Connect them in <a href={href('permissions')} style={{ textDecoration: 'underline' }}>Permissions</a>.</div>}
+            {connected.map((c) => {
+              const on = draft.connectionIds === null || draft.connectionIds.includes(c.id);
+              return (
+                <div key={c.id} className="r">
+                  <div className="app-logo" style={{ background: LOGO[c.provider] ?? '#6b7280' }}>{c.name[0]}</div>
+                  <div className="grow">
+                    <h3>{c.name}</h3>
+                    <p className="t3 xs">{c.access === 'read' ? 'Look only' : 'Look and act'}</p>
+                  </div>
+                  <Switch label={`${draft.name || 'This Star'} can use ${c.name}`} checked={on} disabled={draft.connectionIds === null} onChange={(v) => toggleApp(c.id, v)} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-title">Its own rules</div>
+        <div className="panel">
+          <div className="rows">
+            {own.map((r) => (
+              <div key={r.id} className="r">
+                <p className="grow" style={{ opacity: r.enabled ? 1 : 0.5 }}>{r.text}</p>
+                <button className="icon-btn" aria-label="Delete rule" onClick={async () => { await api.deleteRule(r.id); rules.setData((d) => d && d.filter((x) => x.id !== r.id)); }}><Icon name="trash" size={16} /></button>
+                <Switch label={r.text} checked={r.enabled} onChange={async (enabled) => { const u = await api.updateRule(r.id, { enabled }); rules.setData((d) => d && d.map((x) => (x.id === r.id ? u : x))); }} />
+              </div>
+            ))}
+            {newRules.map((t, i) => (
+              <div key={i} className="r">
+                <p className="grow">{t}</p>
+                <button className="icon-btn" aria-label="Remove rule" onClick={() => setNewRules((r) => r.filter((_, j) => j !== i))}><Icon name="x" size={16} /></button>
+              </div>
+            ))}
+            <form className="r" onSubmit={(e) => { e.preventDefault(); addRule(); }}>
+              <input className="grow" style={{ border: 'none', outline: 'none', background: 'transparent', padding: '6px 0' }} value={ruleText} onChange={(e) => setRuleText(e.target.value)} placeholder="Add a rule just for this Star" aria-label="New rule for this Star" />
+              <button className="btn sm" disabled={!ruleText.trim()}>Add</button>
+            </form>
+          </div>
+        </div>
+        <p className="t3 xs" style={{ marginTop: 8 }}>
+          It also follows {isNew ? 'the' : shared} rules every Star shares, in <a href={href('permissions')} style={{ textDecoration: 'underline' }}>Permissions</a>.
+        </p>
+      </section>
+
+      {error && <p className="send-error" role="alert" style={{ alignSelf: 'flex-start' }}>{error}</p>}
+
+      <div className="save-bar">
+        <button className="btn ink lg" onClick={save} disabled={!canSave}>{busy ? 'Saving…' : isNew ? 'Add to constellation' : 'Save changes'}</button>
+        {isNew ? (
+          <a className="btn quiet lg" href={href('stars')}>Cancel</a>
+        ) : (
+          <>
+            {stars && stars.length > 1 && (
+              <button className="btn lg" onClick={pause} disabled={status?.state === 'paused'}>
+                <Icon name={star?.paused ? 'play' : 'pause'} size={15} />{star?.paused ? `Wake ${star.name}` : `Pause ${star?.name}`}
+              </button>
+            )}
+            <span className="grow" />
+            {!star?.main && <button className="btn quiet danger lg" onClick={() => setConfirm(true)}><Icon name="trash" size={15} /> Remove</button>}
+          </>
+        )}
+      </div>
+
+      {confirm && star && (
+        <div className="modal-scrim" onClick={() => setConfirm(false)}>
+          <div className="modal col" role="dialog" aria-modal="true" aria-label={`Remove ${star.name}`} onClick={(e) => e.stopPropagation()}>
+            <h2>Remove {star.name}?</h2>
+            <p className="t2">Its unfinished goals stop, anything waiting for your OK expires, and its own memory, rules and chats are deleted. Finished work stays in Activity.</p>
+            <div className="row" style={{ justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setConfirm(false)}>Keep {star.name}</button>
+              <button className="btn ink" style={{ background: 'var(--danger)' }} onClick={remove}>Remove</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

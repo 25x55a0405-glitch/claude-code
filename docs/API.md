@@ -185,6 +185,16 @@ here too and is echoed in `AgentStatus.autonomy`. Every change emits
 `settings.updated`, and an autonomy change also emits `status`. Nested objects (`quietHours`, `channels`) are
 sent whole.
 
+## Stars
+
+The UI's Star screens use the endpoints and events in
+[BACKEND.md](BACKEND.md#stars-and-the-constellation-for-the-ui-to-build-on)
+(`/stars`, `/stars/:id/pause`, `/constellation/messages`, `star.updated`,
+`star.deleted`, `constellation.message`) and the optional `starId` fields and
+filters listed there. The shapes are `Star`, `StarView` and
+`ConstellationMessage` in `web/src/api/types.ts`. A server without `/stars`
+still works: the UI shows a single Star built from Settings.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`
