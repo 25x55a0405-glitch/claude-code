@@ -498,28 +498,30 @@ test('lessons: a chat correction shows a lesson card that can be undone', async 
   await ctx.close();
 });
 
-test('browser: the live view shows the Star browsing, and take over pauses it until you hand back', async () => {
+test('browser: the live view follows who has control, and take over and hand back move it', async () => {
   const site = await local((_req, res) => res.writeHead(200, { 'Content-Type': 'text/html' }).end('<title>Ramen list</title><h1>Ramen near Alfama</h1>'));
   const star = await mainStar();
   const conv = (await api('GET', '/conversations')).find((c) => c.main);
+  const control = async () => (await api('GET', '/browser')).sessions.find((x) => x.starId === star.id)?.control;
+  // Typing an address in the live view is the person acting, so the person has control.
   await api('POST', `/browser/${star.id}/input`, { type: 'navigate', url: site + '/list' });
   const { ctx, page } = await open(`/#/chat/${conv.id}`);
   try {
-    const pip = page.getByRole('button', { name: new RegExp(`Watch ${star.name}’s browser`) }).first();
+    const pip = page.getByRole('button', { name: new RegExp(`${star.name}’s browser`) }).first();
     await pip.waitFor({ timeout: 6000 });
-    assert.match(await pip.innerText(), /is browsing[\s\S]*Ramen list/);
+    assert.match(await pip.innerText(), /You have[\s\S]*Ramen list/);
     await pip.click();
     const win = page.getByRole('dialog', { name: `${star.name}’s browser` });
     await win.waitFor();
     assert.equal(await win.getByLabel('Address').inputValue(), site + '/list');
-    await win.getByRole('button', { name: 'Take over' }).click();
-    await win.getByRole('button', { name: `Hand back to ${star.name}` }).waitFor();
-    assert.equal((await mainStar()).paused, true, 'taking over should pause the Star');
     await win.getByRole('button', { name: `Hand back to ${star.name}` }).click();
-    await page.getByText(`${star.name} has the browser again`).waitFor({ timeout: 4000 });
-    assert.equal((await mainStar()).paused, false, 'handing back should wake the Star');
+    await win.getByRole('button', { name: 'Take over' }).waitFor({ timeout: 4000 });
+    assert.notEqual(await control(), 'person', 'handing back gives the Star control');
+    await win.getByRole('button', { name: 'Take over' }).click();
+    await win.getByRole('button', { name: `Hand back to ${star.name}` }).waitFor({ timeout: 4000 });
+    assert.equal(await control(), 'person', 'taking over gives the person control');
   } finally {
-    if ((await mainStar()).paused) await api('POST', `/stars/${star.id}/pause`, { paused: false }).catch(() => {});
+    await api('POST', `/browser/${star.id}/handback`, {}).catch(() => {});
     await ctx.close();
   }
 });
@@ -651,7 +653,7 @@ test('tools: adding a local MCP server with a vault secret lists its tools and n
     await form.getByRole('button', { name: 'Add', exact: true }).click();
     await form.waitFor({ state: 'hidden', timeout: 4000 });
     const card = page.locator('.mcp-card').filter({ has: page.getByRole('heading', { name: 'qa_stub' }) });
-    await card.getByText(/3 tools, 3 look only/).waitFor({ timeout: 20000 });
+    await card.getByText(/3 tools, 3 to choose/).waitFor({ timeout: 20000 });
     await card.getByRole('button', { name: 'Set what needs approval' }).click();
     await card.getByLabel('What wipe does').selectOption('delete');
     await page.waitForTimeout(300);
@@ -698,11 +700,16 @@ test('group chats: start one from the sidebar, mention a Star with a tap, and th
   }
 });
 
-test('templates: Use this on a built-in template makes a new Star and opens it', async () => {
+test('templates: Use this shows what a template asks for, then adding makes the Star and opens it', async () => {
   const { ctx, page } = await open('/#/stars/templates');
   try {
     const card = page.locator('.tpl-card').filter({ has: page.getByRole('heading', { name: 'Builder' }) });
     await card.getByRole('button', { name: 'Use this' }).click();
+    const confirm = page.getByRole('dialog', { name: /^Add Builder/ });
+    await confirm.waitFor({ timeout: 4000 });
+    assert.equal(await starNamed('Builder'), undefined, 'nothing is added before the confirm');
+    await confirm.getByText(/Independence/).waitFor();
+    await confirm.getByRole('button', { name: /^Add/ }).last().click();
     await page.waitForURL((u) => /#\/stars\/star_/.test(u.hash), { timeout: 4000 });
     assert.ok(await starNamed('Builder'));
   } finally {
@@ -722,6 +729,21 @@ test('BUG 26 (UI): importing a template from a file adds the Star straight away,
     const made = await starNamed('Friendly');
     if (made) await api('DELETE', `/stars/${made.id}`);
     assert.equal(made, undefined, 'the Star joined with autonomy “autonomous”, every app and a rule to send without asking, and nothing asked first');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('your computer: Pair a computer shows a one-time 8-character code that runs out in 10 minutes', async () => {
+  const { ctx, page, problems } = await open('/#/settings');
+  try {
+    await page.getByRole('button', { name: 'Pair a computer' }).click();
+    const command = await page.locator('.pair-panel code.mono').last().innerText();
+    assert.match(command, /^node sky-companion\.mjs pair \S+ [A-HJ-NP-Z2-9]{8}$/);
+    await page.getByText(/The code works once, for (10|9) more minutes/).waitFor();
+    assert.deepEqual((await api('GET', '/companion')).devices, []);
+    await page.getByRole('button', { name: 'Cancel pairing' }).click();
+    assert.deepEqual(problems, []);
   } finally {
     await ctx.close();
   }
