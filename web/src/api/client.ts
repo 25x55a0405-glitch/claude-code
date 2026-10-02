@@ -1,0 +1,70 @@
+import type {
+  ActivityEvent,
+  AgentStatus,
+  Approval,
+  ApprovalDecision,
+  ApprovalStatus,
+  Briefing,
+  Connection,
+  Conversation,
+  CreateTaskInput,
+  LiveEvent,
+  MemoryItem,
+  Message,
+  Page,
+  Rule,
+  Settings,
+  Task,
+  TaskCommand,
+  TaskDetail,
+  TaskStatus,
+} from './types';
+
+/**
+ * Everything the UI needs from the back end. HttpApi implements it over
+ * the REST + SSE contract in docs/API.md; MockApi implements it in memory
+ * so the UI can be developed and demoed without a server.
+ */
+export interface SkysApi {
+  getStatus(): Promise<AgentStatus>;
+  setPaused(paused: boolean): Promise<AgentStatus>;
+  getBriefing(): Promise<Briefing>;
+
+  listTasks(filter?: { status?: TaskStatus[] }): Promise<Task[]>;
+  getTask(id: string): Promise<TaskDetail>;
+  createTask(input: CreateTaskInput): Promise<Task>;
+  commandTask(id: string, command: TaskCommand): Promise<Task>;
+
+  listApprovals(status?: ApprovalStatus): Promise<Approval[]>;
+  decideApproval(id: string, decision: ApprovalDecision): Promise<Approval>;
+
+  listConversations(): Promise<Conversation[]>;
+  createConversation(): Promise<Conversation>;
+  listMessages(conversationId: string): Promise<Message[]>;
+  /** Returns the stored user message; the agent reply arrives as message.delta / message.done events. */
+  sendMessage(conversationId: string, content: string): Promise<Message>;
+
+  listMemory(): Promise<MemoryItem[]>;
+  addMemory(input: Pick<MemoryItem, 'category' | 'content'>): Promise<MemoryItem>;
+  updateMemory(id: string, patch: Partial<Pick<MemoryItem, 'content' | 'pinned' | 'category'>>): Promise<MemoryItem>;
+  deleteMemory(id: string): Promise<void>;
+
+  listConnections(): Promise<Connection[]>;
+  updateConnection(id: string, patch: { access?: Connection['access'] }): Promise<Connection>;
+  /** Returns a URL to send the user to for OAuth, or null when connected directly. */
+  connect(id: string): Promise<{ authorizeUrl: string | null; connection: Connection }>;
+  disconnect(id: string): Promise<Connection>;
+
+  listRules(): Promise<Rule[]>;
+  addRule(text: string): Promise<Rule>;
+  updateRule(id: string, patch: Partial<Pick<Rule, 'text' | 'enabled'>>): Promise<Rule>;
+  deleteRule(id: string): Promise<void>;
+
+  listActivity(cursor?: string | null): Promise<Page<ActivityEvent>>;
+
+  getSettings(): Promise<Settings>;
+  updateSettings(patch: Partial<Settings>): Promise<Settings>;
+
+  /** Subscribe to live events. Returns an unsubscribe function. */
+  subscribe(handler: (event: LiveEvent) => void): () => void;
+}
