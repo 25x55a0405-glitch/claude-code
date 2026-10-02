@@ -6,6 +6,7 @@ learns how you like things done.
 
 - [`web/`](web) is the web app (React, TypeScript, Vite).
 - [`docs/DESIGN.md`](docs/DESIGN.md) covers the look, the screens and the principles.
+- [`server/`](server) is the back end: API, agents, the Stars' browser. [`docs/DEPLOY.md`](docs/DEPLOY.md) covers deploying on Cloudflare.
 - [`docs/API.md`](docs/API.md) is the contract the back end implements.
 
 ```

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowserContext, Page } from 'playwright-core';
@@ -171,13 +171,23 @@ export class BrowserManager {
           proxy = { server: `${u.protocol}//${u.host}`, ...(u.username ? { username: decodeURIComponent(u.username), password: decodeURIComponent(u.password) } : {}) };
         }
         try {
+          // Playwright's own Chromium when it's installed; otherwise a Chrome or Chromium already on the machine.
+          let executablePath = this.config.browserPath ?? undefined;
+          if (!executablePath && !this.config.browserChannel) {
+            let bundled = '';
+            try { bundled = chromium.executablePath(); } catch { /* no build for this platform */ }
+            if (!bundled || !existsSync(bundled)) executablePath = findSystemBrowser() ?? undefined;
+          }
+          // A visible window needs a display; on a server without one, run headless instead of failing.
+          const headless = this.config.browserHeadless || (process.platform === 'linux' && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY);
           const ctx = await chromium.launchPersistentContext(this.profileDir(), {
-            headless: this.config.browserHeadless,
+            headless,
             viewport: VIEWPORT,
-            ...(this.config.browserPath ? { executablePath: this.config.browserPath } : {}),
+            ...(executablePath ? { executablePath } : {}),
             ...(this.config.browserChannel ? { channel: this.config.browserChannel } : {}),
             ...(proxy ? { proxy } : {}),
-            args: ['--disable-blink-features=AutomationControlled'],
+            // Containers have a tiny /dev/shm, which crashes Chromium on bigger pages.
+            args: ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
           });
           // Pages a Star's tab reaches by a redirect or a link are held to the same limits as the addresses it opens.
           await ctx.route('**/*', (route) => {
@@ -199,7 +209,7 @@ export class BrowserManager {
           return ctx;
         } catch (err) {
           throw this.fail(`Couldn’t start the browser: ${firstLine((err as Error).message)}. `
-            + 'Install Chromium with `npx playwright install chromium`, or point SKY_BROWSER_PATH at Chrome.');
+            + 'Install Chromium with `npx playwright install chromium` (add `--with-deps` on Linux), install Chrome, or point SKY_BROWSER_PATH at it.');
         }
       })().finally(() => { this.launching = null; });
     }
@@ -649,6 +659,36 @@ export function describeSnapshot(s: Snapshot): string {
   });
   const text = s.text.length > TEXT_LIMIT ? `${s.text.slice(0, TEXT_LIMIT)}\n…(cut; scroll or snapshot again for more)` : s.text;
   return `Page: ${s.title || '(untitled)'} — ${s.url}\n\n${text || '(no text)'}\n\nWhat you can use (pass the ref to browser_click or browser_type):\n${lines.join('\n') || '(nothing interactive)'}`;
+}
+
+/** A Chrome or Chromium installed on this machine, for when Playwright's own download is missing. */
+export function findSystemBrowser(): string | null {
+  const candidates: string[] = [];
+  const add = (p?: string) => { if (p) candidates.push(p); };
+  const win = (base: string | undefined, rest: string) => base && add(`${base}\\${rest}`);
+  if (process.platform === 'darwin') {
+    add('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    add('/Applications/Chromium.app/Contents/MacOS/Chromium');
+    add('/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge');
+  } else if (process.platform === 'win32') {
+    for (const base of [process.env.PROGRAMFILES, process.env['PROGRAMFILES(X86)'], process.env.LOCALAPPDATA]) {
+      win(base, 'Google\\Chrome\\Application\\chrome.exe');
+      win(base, 'Microsoft\\Edge\\Application\\msedge.exe');
+    }
+  } else {
+    for (const dir of (process.env.PATH ?? '').split(':')) {
+      for (const name of ['chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable', 'chrome', 'microsoft-edge']) if (dir) add(`${dir}/${name}`);
+    }
+    // Chromium builds Playwright downloaded to a shared folder, even a different version than this one expects.
+    for (const root of [process.env.PLAYWRIGHT_BROWSERS_PATH, '/opt/pw-browsers', `${process.env.HOME ?? ''}/.cache/ms-playwright`]) {
+      if (!root) continue;
+      add(`${root}/chromium/chrome-linux/chrome`);
+      try {
+        for (const d of readdirSync(root).filter((n) => /^chromium-\d+$/.test(n)).sort().reverse()) add(`${root}/${d}/chrome-linux/chrome`);
+      } catch { /* folder isn't there */ }
+    }
+  }
+  return candidates.find((p) => existsSync(p)) ?? null;
 }
 
 const MISSING_PACKAGE = 'The browser needs the playwright-core package. Run npm install in server/.';

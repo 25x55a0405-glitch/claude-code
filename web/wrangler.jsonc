@@ -1,0 +1,18 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sky",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Send /api and /login to the Worker even though no such file exists.
+    "run_worker_first": ["/api/*", "/login"]
+  },
+  "vars": {
+    // Set to your Sky server's address, e.g. "https://sky-api.example.com".
+    "SKY_BACKEND_URL": ""
+  },
+  "observability": { "enabled": true }
+}
