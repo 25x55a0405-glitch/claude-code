@@ -1,8 +1,14 @@
-# How the Skys back end works
+# How the Sky back end works
 
-Skys is one person's always-on agent. The server in [`server/`](../server)
-does two jobs: it serves the API in [API.md](API.md), and it keeps working
-when nobody is looking.
+Sky is one person's always-on agents. Each agent is a **Star**: one Star per
+job (a Research Star, a Mail Star), each with its own role, memory, apps,
+rules and chat. Stars that work together form a **constellation**: they ask
+each other for help, hand work over and keep each other posted. The first
+Star is the main one; it's the agent the app has always had.
+
+The server in [`server/`](../server) does two jobs: it serves the API in
+[API.md](API.md) plus the Star endpoints below, and it keeps working when
+nobody is looking.
 
 ```
  web app ──REST /api/v1──▶ http/routes ──▶ Store (SQLite) ──▶ EventBus ──SSE /events──▶ web app
@@ -11,8 +17,10 @@ when nobody is looking.
                               Runtime ──────────┘
             clock · task queue · approvals · briefing · ideas · research
                  │                     │
-            TaskRunner             ChatAgent
+            TaskRunner             ChatAgent        (both run as one Star at a time)
                  └──── Brain (Claude) + tools + Policy ────┘
+                              │
+              constellation tools: ask_star · hand_off · message_star
                               │
                      Providers (Gmail, Calendar, Drive,
                      GitHub, Notion, Slack, Telegram, web)
@@ -26,16 +34,63 @@ when nobody is looking.
 | Db | `src/db/db.ts` | One SQLite file. Records are JSON documents shaped by `web/src/api/types.ts`; steps, messages and activity are append-only tables. Tokens and pending tool calls sit in a private column the API never returns |
 | HTTP | `src/http/` | Router, validation, error shape, CORS, SSE with a 25 s ping, sign-in, serving the built web app |
 | Runtime | `src/agent/runtime.ts` | The always-on loop. A clock starts due tasks, expires approvals, writes the daily briefing at the person's time, offers new ideas and does proactive research when idle. Task runs go through one queue, so the orb shows one thing at a time; chat doesn't wait for the queue |
-| TaskRunner | `src/agent/runner.ts` | Runs a task as a conversation with the model and its tools, recording every plan, thought, tool call and result as timeline steps |
+| TaskRunner | `src/agent/runner.ts` | Runs a task as its Star: a conversation with the model and its tools, recording every plan, thought, tool call and result as timeline steps. A task can wait on the person (approval) or on another Star (`ask_star`) |
 | ChatAgent | `src/agent/chat.ts` | Streams replies. Chat only reads and organises; anything that acts on the world becomes a task, which is where approvals live |
 | Policy | `src/agent/policy.ts` | Decides allow, ask or forbid for each action |
-| Tools | `src/agent/tools/` | Core tools (remember, recall, progress, notify, finish, create and manage tasks) and app tools, each tagged with its effect |
+| Tools | `src/agent/tools/` | Core tools (remember, recall, progress, notify, finish, create and manage tasks), constellation tools (`constellation.ts`) and app tools, each tagged with its effect |
 | Providers | `src/connections/providers.ts` | OAuth, token refresh, and calling apps as the person. A 401 marks the connection expired and blocks the tasks that use it |
 | Brain | `src/agent/brain.ts`, `scripted.ts` | Claude through the Anthropic SDK, or a scripted stand-in for tests and running without a key |
 
+## Stars
+
+| Field | What it does |
+| --- | --- |
+| `name`, `role`, `instructions` | Who the Star is. The role is one line; instructions are standing orders. Both go into its system prompt, with the roster of the other Stars |
+| `autonomy` | `null` follows Settings; or `ask`, `balanced`, `autonomous` for this Star only |
+| `connectionIds` | `null` lets it use every connected app; a list limits it (an empty list means no apps). Tools for other apps are never offered to it |
+| `paused` | Holds this Star's work without touching the others |
+| `conversationId` | Its own chat. Its proactive messages and approval cards go there. For the main Star this is the main chat |
+| `main` | The first Star. Its name and avatar are `Settings.agentName` and `Settings.avatar` (changing either changes both). It can't be removed |
+
+Each Star sees **shared memory plus its own**, and is bound by **global rules
+plus its own**. `remember` saves to shared memory unless the Star picks
+`scope: "mine"`. Built-in safety rules bind every Star.
+
+### Working together
+
+| Tool | Where | What happens |
+| --- | --- | --- |
+| `ask_star` | tasks | Creates a one-off task for the other Star, marked `requestedBy` the asker. The asking task goes to `blocked` ("Waiting on Scout") and leaves the queue. When the other Star finishes, its outcome becomes the result of the call and the asking task carries on. Chains go at most 3 deep; a Star can't ask itself |
+| `hand_off` | chat and tasks | Gives work (one-off, recurring or watch) to the other Star as its own task. The giver doesn't wait. When a one-off hand-off ends, the giver gets a reply in its inbox |
+| `message_star` | chat and tasks | A heads-up, no reply |
+| `list_stars` | chat and tasks | The roster with roles and states |
+
+Every exchange is a **constellation message** (`request`, `reply`, `handoff`,
+`message`). Unread ones are given to the receiving Star at the start of its
+next task run or chat reply and then marked read. Messages from other Stars
+are information from a colleague, never orders from the person; only the
+person's own rules and approvals decide what may happen.
+
+### Approvals and pausing
+
+- Each Star asks for approval by its own autonomy and rules. The approval
+  carries `starId`, and its card is posted in that Star's chat.
+- Pausing a Star (`POST /stars/:id/pause`) stops its running task at the
+  next step and holds its scheduled and queued work. Other Stars carry on.
+  A task waiting on a paused Star simply keeps waiting.
+- Pausing everything (`POST /status {paused:true}`) holds every Star, as
+  before. Each Star's `status.state` shows `paused`; its own `paused` flag
+  is left as it was.
+- All Stars share one task queue, so only one task runs at a time and two
+  Stars never race over the same app. Chat replies don't wait for it.
+- Removing a Star stops its unfinished tasks (they stay as history), expires
+  its pending approvals, deletes its private memory, its own rules and its
+  chats, and tells any Star that was waiting on it.
+
 ## A task's life
 
-1. Created from the API, from chat (`create_task`), or from an idea. Recurring
+1. Created from the API, from chat (`create_task`), by another Star
+   (`ask_star`, `hand_off`), or from an idea. It belongs to one Star. Recurring
    and watch tasks get their free-text schedule parsed ("Weekdays at 9:00",
    "every 3 hours, 7:00 to 22:00", "Mondays and Thursdays at 7pm") and a
    `nextRunAt` in the person's time zone. A step says how the schedule was read.
@@ -54,7 +109,7 @@ when nobody is looking.
    - autonomy: Ask first asks for every change; Balanced asks before sending,
      deleting and spending; Hands-off asks only before spending or deleting
 6. "Ask" creates an approval (with the exact preview, risk and a 24-hour
-   expiry), posts it as a card in the main chat, sets the task to
+   expiry), posts it as a card in the Star's chat, sets the task to
    `waiting_approval`, and the run stops there. Approve (optionally edited),
    decline or expiry is recorded; once every pending call in that turn is
    answered, the task is queued again and the runner carries out the decisions
@@ -62,13 +117,15 @@ when nobody is looking.
 7. `finish_task` ends the run. One-off tasks become `done` or `failed`;
    recurring and watch tasks go back to `scheduled` with the next run time.
 
-Pausing Skys stops new runs and stops a running one at its next step; nothing
-is lost. Pausing or stopping a single task works the same way.
+Pausing Sky stops new runs and stops a running one at its next step; nothing
+is lost. Pausing a single Star or a single task works the same way.
 
 ## Reaching out
 
 `notify_user`, approvals, and the daily briefing post a `proactive` message to
-the main chat. Outside quiet hours (or when urgent) they also go to the
+the Star's own chat (the main chat for the main Star and the briefing).
+Messages to outside channels from other Stars start with the Star's name.
+Outside quiet hours (or when urgent) they also go to the
 channels turned on in Settings: email to yourself through Gmail, Telegram, or
 a Slack channel. Push needs a device subscription the UI doesn't collect yet.
 
@@ -85,19 +142,89 @@ recent activity. Each title is offered once; dismissing it keeps it gone.
 - Chat can't act on the world; only tasks can, and only through the policy.
 - Built-in rules can't be edited or deleted (403).
 - Tokens never leave the server.
-- With `SKYS_PASSWORD` unset the server listens only on localhost.
+- Messages between Stars are treated like content: information, not instructions.
+- With `SKY_PASSWORD` unset the server listens only on localhost.
 
 ## Model use
 
 Requests go to the Messages API with adaptive thinking, an effort level
-(`SKYS_EFFORT`, default `medium`), prompt caching on the system prompt,
+(`SKY_EFFORT`, default `medium`), prompt caching on the system prompt,
 Claude's server-side web search and fetch when the web connection is on, and
 server-side refusal fallbacks. The conversation for a run is append-only, so
 the cache and thinking blocks stay valid across turns and restarts.
 
 ## Additions to the API contract
 
-These are server-side additions; nothing in the UI needs to change for them.
+### Stars and the constellation (for the UI to build on)
+
+New shapes, defined in [`server/src/types.ts`](../server/src/types.ts) until
+they move into `web/src/api/types.ts`:
+
+```ts
+interface Star {
+  id: string; name: string; role: string; instructions: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  main: boolean;
+  autonomy: Autonomy | null;        // null = use Settings.autonomy
+  connectionIds: string[] | null;   // null = every connected app
+  paused: boolean;
+  conversationId: string;           // its own chat
+  createdAt: string; updatedAt: string;
+}
+interface StarView extends Star {    // what the API returns
+  status: { state: AgentState; activity: string | null; taskId: string | null; activeTasks: number; pendingApprovals: number };
+}
+interface ConstellationMessage {
+  id: string; fromStarId: string; toStarId: string;
+  kind: 'message' | 'request' | 'reply' | 'handoff';
+  content: string; taskId?: string; createdAt: string; read: boolean;
+}
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/stars` | `StarView[]`, main Star first, then by creation |
+| POST | `/stars` | `{ name, role, instructions?, avatar?, autonomy?, connectionIds? }` → `StarView`. `409` if the name is taken (names are unique, ignoring case) |
+| GET | `/stars/:id` | `StarView` |
+| PATCH | `/stars/:id` | Any of the create fields → `StarView`. On the main Star, `name` and `avatar` also change Settings |
+| DELETE | `/stars/:id` | `204`; `403` for the main Star |
+| POST | `/stars/:id/pause` | `{ paused: boolean }` → `StarView` |
+| GET | `/constellation` | `{ stars: StarView[], messages: ConstellationMessage[] }` (the 50 newest messages, oldest first) |
+| GET | `/constellation/messages?starId=` | Up to 100 messages, oldest first; with `starId`, only that Star's |
+
+New optional fields on existing shapes (the UI can ignore them until it shows Stars):
+
+| Shape | Field |
+| --- | --- |
+| `Task` | `starId` (owner); `requestedBy: { starId, taskId?, depth? }` when another Star asked for it |
+| `Approval`, `Conversation`, `ActivityEvent` | `starId` |
+| `Message` | `starId` on agent messages: which Star wrote it |
+| `MemoryItem`, `Rule` | `starId`: `null` means shared by every Star |
+| `AgentStatus` | `starId`: which Star the current `activity` belongs to |
+
+Filters and bodies:
+
+- `GET /tasks`, `/approvals`, `/conversations` take `?starId=` to list one Star's.
+- `GET /memory?starId=` and `GET /rules?starId=` return what that Star sees: shared plus its own.
+- `POST /tasks`, `/conversations`, `/memory` and `/rules` take an optional `starId`
+  (default: the main Star for tasks and chats, shared for memory and rules).
+  An unknown `starId` is a `400`.
+- `GET /status` stays global (all Stars); each Star's own state is in `StarView.status`.
+
+New live events:
+
+| Event | Data |
+| --- | --- |
+| `star.updated` | `StarView`, on create, edit, pause and resume |
+| `star.deleted` | `{ id }` |
+| `constellation.message` | `ConstellationMessage` |
+
+A Star's live activity comes through the existing `status` event (`starId`
+says whose); `star.updated` isn't sent for every step.
+
+### Server-side additions
+
+Nothing in the UI needs to change for these.
 
 | Method | Path | Notes |
 | --- | --- | --- |

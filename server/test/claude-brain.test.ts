@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 
 // Points the Anthropic SDK at a local stand-in for the Messages API, so the
-// exact request Skys sends can be checked without an API key.
+// exact request Sky sends can be checked without an API key.
 let requests: { headers: Record<string, string | string[] | undefined>; body: any }[] = [];
 let reply: (body: any) => unknown[] = () => [];
 const fake = createServer(async (req, res) => {

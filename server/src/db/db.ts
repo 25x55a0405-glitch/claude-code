@@ -22,12 +22,15 @@ CREATE TABLE IF NOT EXISTS messages (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, conversation_id TEXT NOT NULL, data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_conv ON messages (conversation_id, seq);
+CREATE TABLE IF NOT EXISTS team_messages (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, to_star TEXT NOT NULL, from_star TEXT NOT NULL, data TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS activity (
   seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, at TEXT NOT NULL, kind TEXT NOT NULL, data TEXT NOT NULL
 );
 `;
 
-export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea';
+export type Kind = 'task' | 'approval' | 'conversation' | 'memory' | 'connection' | 'rule' | 'briefing' | 'run' | 'idea' | 'star';
 
 export class Db {
   sql: DatabaseSync;

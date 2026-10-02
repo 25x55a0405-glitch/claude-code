@@ -2,7 +2,7 @@ import type { Runtime } from '../agent/runtime.ts';
 import { validTimeZone, parseHHMM } from '../agent/time.ts';
 import type { Providers } from '../connections/providers.ts';
 import type { Store } from '../store.ts';
-import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, TaskStatus, Tone } from '../types.ts';
+import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, Star, TaskStatus, Tone } from '../types.ts';
 import { badRequest, firstLine, iso, uid } from '../util.ts';
 import type { Router } from './router.ts';
 
@@ -32,8 +32,65 @@ const hhmm = (v: unknown, field: string): string => {
   return v;
 };
 
-/** Every endpoint in docs/API.md, under /api/v1. */
+/** Every endpoint in docs/API.md, plus the Star endpoints in docs/BACKEND.md, under /api/v1. */
 export function registerRoutes(r: Router, store: Store, runtime: Runtime, providers: Providers) {
+  /** An optional Star id from a query or body; an unknown one is a 400. */
+  const starRef = (v: unknown, field = 'starId'): string | undefined => {
+    if (v === undefined || v === null || v === '') return undefined;
+    if (typeof v !== 'string' || !store.findStar(v) || store.findStar(v)!.id !== v) throw badRequest(`${field} must be the id of one of your Stars`);
+    return v;
+  };
+  const avatar = (v: unknown) => {
+    const a = v as Record<string, unknown>;
+    if (!a || typeof a !== 'object') throw badRequest('avatar must be an object');
+    return { character: oneOf(a.character, CHARACTERS, 'avatar.character'), color: oneOf(a.color, COLORS, 'avatar.color') };
+  };
+  const starFields = (b: Record<string, unknown>) => {
+    const p: Partial<Pick<Star, 'name' | 'role' | 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>> = {};
+    if (b.name !== undefined) p.name = text(b.name, 'name', 40);
+    if (b.role !== undefined) p.role = text(b.role, 'role', 200);
+    if (b.instructions !== undefined) {
+      if (typeof b.instructions !== 'string' || b.instructions.length > 4000) throw badRequest('instructions must be text up to 4000 characters');
+      p.instructions = b.instructions.trim();
+    }
+    if (b.avatar !== undefined) p.avatar = avatar(b.avatar);
+    if (b.autonomy !== undefined) p.autonomy = b.autonomy === null ? null : oneOf(b.autonomy, AUTONOMY, 'autonomy');
+    if (b.connectionIds !== undefined) {
+      const known = store.listConnections().map((c) => c.id);
+      if (b.connectionIds !== null && (!Array.isArray(b.connectionIds) || b.connectionIds.some((c) => !known.includes(c)))) {
+        throw badRequest(`connectionIds must be null (every app) or a list of: ${known.join(', ')}`);
+      }
+      p.connectionIds = b.connectionIds === null ? null : [...new Set(b.connectionIds as string[])];
+    }
+    return p;
+  };
+  const object = (body: unknown) => {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send a JSON object');
+    return body as Record<string, unknown>;
+  };
+
+  // ---- stars and the constellation ----
+  r.get('/stars', () => store.listStars().map((s) => store.starView(s)));
+  r.post('/stars', ({ body }) => {
+    const b = object(body);
+    const f = starFields(b);
+    if (!f.name) throw badRequest('name is required');
+    if (!f.role) throw badRequest('role is required');
+    const colors = COLORS.filter((c) => c !== 'sky');
+    const star = runtime.createStar({
+      name: f.name, role: f.role, instructions: f.instructions ?? '',
+      avatar: f.avatar ?? { character: 'dot', color: colors[store.listStars().length % colors.length] },
+      autonomy: f.autonomy ?? null, connectionIds: f.connectionIds ?? null,
+    });
+    return store.starView(star);
+  });
+  r.get('/stars/:id', ({ params }) => store.starView(store.getStar(params.id)));
+  r.patch('/stars/:id', ({ params, body }) => store.starView(store.patchStar(params.id, starFields(object(body)))));
+  r.delete('/stars/:id', ({ params }) => runtime.deleteStar(params.id));
+  r.post('/stars/:id/pause', ({ params, body }) => store.starView(runtime.setStarPaused(params.id, boolean(body?.paused, 'paused'))));
+  r.get('/constellation', () => ({ stars: store.listStars().map((s) => store.starView(s)), messages: store.teamMessages(undefined, 50) }));
+  r.get('/constellation/messages', ({ query }) => store.teamMessages(starRef(query.get('starId'))));
+
   // ---- status and briefing ----
   r.get('/status', () => store.status());
   r.post('/status', ({ body }) => runtime.setPaused(boolean(body?.paused, 'paused')));
@@ -43,7 +100,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   r.get('/tasks', ({ query }) => {
     const raw = query.get('status');
     const statuses = raw ? raw.split(',').map((s) => oneOf(s.trim(), TASK_STATUSES, 'status')) : undefined;
-    return store.listTasks(statuses);
+    return store.listTasks(statuses, starRef(query.get('starId')));
   });
   r.get('/tasks/:id', ({ params }) => store.taskDetail(params.id));
   r.post('/tasks', ({ body }) => runtime.createTask({
@@ -51,6 +108,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
     description: typeof body?.description === 'string' ? body.description : '',
     kind: oneOf(body?.kind, ['one_off', 'recurring', 'watch'], 'kind'),
     schedule: typeof body?.schedule === 'string' ? body.schedule : undefined,
+    starId: starRef(body?.starId),
   }));
   for (const command of ['pause', 'resume', 'run_now', 'cancel'] as const) {
     r.post(`/tasks/:id/${command}`, ({ params }) => runtime.commandTask(params.id, command));
@@ -59,7 +117,7 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   // ---- approvals ----
   r.get('/approvals', ({ query }) => {
     const s = query.get('status');
-    return store.listApprovals(s ? oneOf(s, ['pending', 'approved', 'rejected', 'expired'] as ApprovalStatus[], 'status') : undefined);
+    return store.listApprovals(s ? oneOf(s, ['pending', 'approved', 'rejected', 'expired'] as ApprovalStatus[], 'status') : undefined, starRef(query.get('starId')));
   });
   r.post('/approvals/:id/decision', ({ params, body }) => runtime.decide(params.id, {
     decision: oneOf(body?.decision, ['approve', 'reject'], 'decision'),
@@ -68,8 +126,8 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   }));
 
   // ---- conversations ----
-  r.get('/conversations', () => store.listConversations());
-  r.post('/conversations', () => store.createConversation());
+  r.get('/conversations', ({ query }) => store.listConversations(starRef(query.get('starId'))));
+  r.post('/conversations', ({ body }) => store.createConversation('New chat', starRef(body?.starId)));
   r.get('/conversations/:id/messages', ({ params }) => {
     store.getConversation(params.id);
     return store.messages(params.id);
@@ -89,8 +147,10 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   });
 
   // ---- memory ----
-  r.get('/memory', () => store.listMemory());
-  r.post('/memory', ({ body }) => store.addMemory(oneOf(body?.category, CATEGORIES, 'category'), text(body?.content, 'content', 1000), 'Added by you'));
+  r.get('/memory', ({ query }) => store.listMemory(starRef(query.get('starId'))));
+  r.post('/memory', ({ body }) => store.addMemory(
+    oneOf(body?.category, CATEGORIES, 'category'), text(body?.content, 'content', 1000), 'Added by you', false, undefined, starRef(body?.starId) ?? null,
+  ));
   r.patch('/memory/:id', ({ params, body }) => store.patchMemory(params.id, {
     ...(body?.content !== undefined ? { content: text(body.content, 'content', 1000) } : {}),
     ...(body?.pinned !== undefined ? { pinned: boolean(body.pinned, 'pinned') } : {}),
@@ -108,8 +168,8 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   r.post('/connections/:id/disconnect', ({ params }) => providers.disconnect(params.id));
 
   // ---- rules ----
-  r.get('/rules', () => store.listRules());
-  r.post('/rules', ({ body }) => store.addRule(text(body?.text, 'text', 500)));
+  r.get('/rules', ({ query }) => store.listRules(starRef(query.get('starId'))));
+  r.post('/rules', ({ body }) => store.addRule(text(body?.text, 'text', 500), starRef(body?.starId) ?? null));
   r.patch('/rules/:id', ({ params, body }) => store.patchRule(params.id, {
     ...(body?.text !== undefined ? { text: text(body.text, 'text', 500) } : {}),
     ...(body?.enabled !== undefined ? { enabled: boolean(body.enabled, 'enabled') } : {}),
@@ -126,10 +186,10 @@ export function registerRoutes(r: Router, store: Store, runtime: Runtime, provid
   // ---- settings ----
   r.get('/settings', () => store.settings());
   r.patch('/settings', ({ body }) => {
-    const patch = validateSettings(body ?? {});
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw badRequest('Send the settings to change as a JSON object');
+    const patch = validateSettings(body);
     const before = store.settings();
     const next = store.updateSettings(patch);
-    if (patch.agentName) store.patchConversation(store.mainConversation().id, { title: patch.agentName });
     if (patch.timezone && patch.timezone !== before.timezone) {
       // Wall-clock schedules move with the person's time zone.
       for (const t of store.listTasks(['scheduled'])) store.patchTask(t.id, { nextRunAt: runtime.nextRunAt({ ...t, lastRunAt: undefined }, new Date()) });

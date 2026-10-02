@@ -1,9 +1,9 @@
 {
-  "name": "skys-server",
+  "name": "sky-server",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Skys back end: REST + live events API, agent runtime, scheduler and connections",
+  "description": "Sky back end: REST + live events API, agent runtime, scheduler and connections",
   "engines": { "node": ">=22.18" },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/main.ts",

@@ -126,7 +126,7 @@ export function createHttpServer(config: Config, store: Store, runtime: Runtime,
       }
       if (req.method === 'DELETE') return send(res, 204, undefined, { 'Set-Cookie': auth.clearCookie() });
     }
-    if (!auth.isSignedIn(req)) return fail(res, 401, 'unauthorized', 'Please sign in to Skys first');
+    if (!auth.isSignedIn(req)) return fail(res, 401, 'unauthorized', 'Please sign in to Sky first');
 
     if (path === '/events' && req.method === 'GET') return events(req, res);
     if (path === '/oauth/callback' && req.method === 'GET') {

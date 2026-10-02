@@ -27,8 +27,12 @@ export function TaskDetailPage({ id }: { id: string }) {
   });
 
   const command = async (c: TaskCommand) => {
-    await api.commandTask(id, c);
-    toast({ pause: 'Paused', resume: 'Resumed', run_now: 'Running now', cancel: 'Stopped' }[c]);
+    try {
+      await api.commandTask(id, c);
+      toast({ pause: 'Paused', resume: 'Resumed', run_now: 'Running now', cancel: 'Stopped' }[c]);
+    } catch (e) {
+      toast((e as Error).message);
+    }
     task.reload();
   };
 
@@ -85,7 +89,7 @@ export function TaskDetailPage({ id }: { id: string }) {
       {approvals.data?.map((a) => <ApprovalCard key={a.id} approval={a} onDecided={() => approvals.reload()} />)}
 
       <section>
-        <div className="section-title">What Skys did</div>
+        <div className="section-title">What Sky did</div>
         <div className="panel pad col-lg">
           {groups.map(([label, items]) => (
             <div key={label} className="col">

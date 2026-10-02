@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icon';
 
-export function Composer({ onSend, placeholder, autoFocus }: { onSend: (text: string) => void; placeholder: string; autoFocus?: boolean }) {
+/** onSend may reject; the text is then put back so nothing typed is lost. */
+export function Composer({ onSend, placeholder, autoFocus }: { onSend: (text: string) => void | Promise<void>; placeholder: string; autoFocus?: boolean }) {
   const [text, setText] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -15,8 +16,8 @@ export function Composer({ onSend, placeholder, autoFocus }: { onSend: (text: st
   const send = () => {
     const t = text.trim();
     if (!t) return;
-    onSend(t);
     setText('');
+    Promise.resolve(onSend(t)).catch(() => setText((cur) => cur || t));
   };
 
   return (

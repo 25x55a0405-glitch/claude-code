@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { ApprovalChip, useToast } from './ui';
 
 /**
- * A structured yes/no for anything Skys can't undo. Shows exactly what will
+ * A structured yes/no for anything Sky can't undo. Shows exactly what will
  * happen and lets you edit it first.
  */
 export function ApprovalCard({ approval, onDecided, compact = false }: { approval: Approval; onDecided?: (a: Approval) => void; compact?: boolean }) {
@@ -23,6 +23,10 @@ export function ApprovalCard({ approval, onDecided, compact = false }: { approva
       const a = await api.decideApproval(approval.id, { decision, editedPreview: editing && draft !== approval.preview ? draft : undefined });
       toast(decision === 'approve' ? 'Approved' : 'Declined');
       onDecided?.(a);
+    } catch (e) {
+      // e.g. 409 when it was already answered on another device.
+      toast((e as Error).message);
+      onDecided?.(approval);
     } finally {
       setBusy(false);
     }

@@ -1,8 +1,12 @@
-# Skys design
+# Sky design
 
-Skys is an always-on personal agent. You hand it something once and it keeps
+Sky is an always-on personal agent. You hand it something once and it keeps
 working in the background, comes back when something is new or needs you, and
 asks before anything it can't undo.
+
+Naming: the app is **Sky**. Each agent in it is a **Star**, and Stars that work
+together form a **constellation**. Today the UI has one Star; screens for more
+come with the multi-agent back end.
 
 The look follows three references the user picked:
 
@@ -21,7 +25,7 @@ The look follows three references the user picked:
    findings arrive there as messages and cards. Other screens exist to look
    things up, not to run the day.
 2. **The character is the only colour.** Everything else is monochrome, so the
-   one living thing on screen is Skys. Warm orange is reserved for "needs you".
+   one living thing on screen is Sky. Warm orange is reserved for "needs you".
 3. **Always say what it's doing.** The line under the character updates live
    and shimmers while it works.
 4. **You stay in charge.** Approvals show the exact email or event, can be
@@ -64,8 +68,8 @@ decorative animation beyond the character.
 | **Chat** | The main chat: bubbles, "reached out" messages, inline goal and approval cards, a capsule composer. An empty chat shows the character, one question and a few ideas |
 | **Side chats** | Extra conversations for a topic, listed in the sidebar |
 | **Profile** (tap the character) | Name, handle, live status, counts, Working on / Upcoming / Done, links to the rest, pause |
-| **Goals** | Everything Skys has taken on, with progress and schedule, plus a goal's step-by-step history |
-| **Ideas** | Suggestions Skys came up with. "Do it" sends it to chat |
+| **Goals** | Everything Sky has taken on, with progress and schedule, plus a goal's step-by-step history |
+| **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |
 | **Memory** | What it knows about you; add, edit, pin, forget |
 | **Permissions** | Independence level, apps with look-only or look-and-act access, and rules |

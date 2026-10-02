@@ -217,7 +217,7 @@ test('sign-in: password, session cookie and API token', async () => {
   const cookie = ok.headers.get('set-cookie')!.split(';')[0];
   assert.equal((await s.call('GET', '/status', undefined, { Cookie: cookie })).status, 200);
   assert.equal((await s.call('GET', '/status', undefined, { Authorization: 'Bearer tok_123' })).status, 200);
-  assert.equal((await s.call('GET', '/status', undefined, { Cookie: 'skys_session=1.forged' })).status, 401);
+  assert.equal((await s.call('GET', '/status', undefined, { Cookie: 'sky_session=1.forged' })).status, 401);
 });
 
 test('CORS allows the configured web origin with credentials', async () => {

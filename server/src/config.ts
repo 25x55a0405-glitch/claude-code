@@ -44,42 +44,44 @@ const pair = (env: NodeJS.ProcessEnv, prefix: string) => {
 };
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Partial<Config> = {}): Config {
-  const port = Number(env.PORT ?? env.SKYS_PORT ?? 8787);
-  const dataDir = resolve(env.SKYS_DATA_DIR ?? 'data');
-  const publicUrl = (env.SKYS_PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, '');
-  const webOrigin = env.SKYS_WEB_ORIGIN ?? null;
+  // SKY_* settings, still accepting the older SKYS_* names.
+  const v = (name: string) => env[`SKY_${name}`] ?? env[`SKYS_${name}`];
+  const port = Number(env.PORT ?? v('PORT') ?? 8787);
+  const dataDir = resolve(v('DATA_DIR') ?? 'data');
+  const publicUrl = (v('PUBLIC_URL') ?? `http://localhost:${port}`).replace(/\/$/, '');
+  const webOrigin = v('WEB_ORIGIN') ?? null;
   const anthropicKey = Boolean(env.ANTHROPIC_API_KEY || env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_PROFILE);
-  const brain = (env.SKYS_BRAIN as Config['brain']) ?? (anthropicKey ? 'claude' : 'scripted');
-  const telegram = env.SKYS_TELEGRAM_BOT_TOKEN && env.SKYS_TELEGRAM_CHAT_ID
-    ? { botToken: env.SKYS_TELEGRAM_BOT_TOKEN, chatId: env.SKYS_TELEGRAM_CHAT_ID }
-    : undefined;
+  const brain = (v('BRAIN') as Config['brain']) ?? (anthropicKey ? 'claude' : 'scripted');
+  const botToken = v('TELEGRAM_BOT_TOKEN');
+  const chatId = v('TELEGRAM_CHAT_ID');
+  const telegram = botToken && chatId ? { botToken, chatId } : undefined;
   return {
     port,
-    host: env.SKYS_HOST ?? (env.SKYS_PASSWORD ? '0.0.0.0' : '127.0.0.1'),
+    host: v('HOST') ?? (v('PASSWORD') ? '0.0.0.0' : '127.0.0.1'),
     dataDir,
-    dbPath: env.SKYS_DB ?? resolve(dataDir, 'skys.db'),
+    dbPath: v('DB') ?? resolve(dataDir, 'sky.db'),
     publicUrl,
     webOrigin,
-    webUrl: (env.SKYS_WEB_URL ?? webOrigin ?? publicUrl).replace(/\/$/, ''),
-    webDist: resolve(env.SKYS_WEB_DIST ?? '../web/dist'),
-    password: env.SKYS_PASSWORD || null,
-    apiToken: env.SKYS_API_TOKEN || null,
-    sessionSecret: env.SKYS_SESSION_SECRET || null,
+    webUrl: (v('WEB_URL') ?? webOrigin ?? publicUrl).replace(/\/$/, ''),
+    webDist: resolve(v('WEB_DIST') ?? '../web/dist'),
+    password: v('PASSWORD') || null,
+    apiToken: v('API_TOKEN') || null,
+    sessionSecret: v('SESSION_SECRET') || null,
     anthropicKey,
-    model: env.SKYS_MODEL ?? 'claude-opus-5-5',
-    effort: (env.SKYS_EFFORT as Config['effort']) ?? 'medium',
-    fallbacks: env.SKYS_FALLBACKS !== '0',
+    model: v('MODEL') ?? 'claude-opus-5-5',
+    effort: (v('EFFORT') as Config['effort']) ?? 'medium',
+    fallbacks: v('FALLBACKS') !== '0',
     brain,
-    userName: env.SKYS_USER_NAME ?? 'there',
-    tickMs: Number(env.SKYS_TICK_MS ?? 15_000),
-    researchEveryMs: Number(env.SKYS_RESEARCH_EVERY_MIN ?? 240) * 60_000,
-    maxStepsPerRun: Number(env.SKYS_MAX_STEPS ?? 24),
+    userName: v('USER_NAME') ?? 'there',
+    tickMs: Number(v('TICK_MS') ?? 15_000),
+    researchEveryMs: Number(v('RESEARCH_EVERY_MIN') ?? 240) * 60_000,
+    maxStepsPerRun: Number(v('MAX_STEPS') ?? 24),
     providers: {
       google: pair(env, 'GOOGLE'),
       github: pair(env, 'GITHUB'),
       notion: pair(env, 'NOTION'),
       slack: pair(env, 'SLACK'),
-      githubToken: env.SKYS_GITHUB_TOKEN || undefined,
+      githubToken: v('GITHUB_TOKEN') || undefined,
       telegram,
     },
     ...overrides,

@@ -3,14 +3,14 @@ import type { IncomingMessage } from 'node:http';
 import type { Config } from '../config.ts';
 import type { Db } from '../db/db.ts';
 
-const COOKIE = 'skys_session';
+const COOKIE = 'sky_session';
 const MAX_AGE_S = 60 * 60 * 24 * 30;
 
 /**
- * Single-person sign-in. With SKYS_PASSWORD unset the server trusts everyone
+ * Single-person sign-in. With SKY_PASSWORD unset the server trusts everyone
  * who can reach it, so it only listens on localhost by default. With it set,
  * the browser signs in once and gets a signed, HttpOnly session cookie;
- * scripts can send SKYS_API_TOKEN as a bearer token instead.
+ * scripts can send SKY_API_TOKEN as a bearer token instead.
  */
 export class Auth {
   private secret: Buffer;

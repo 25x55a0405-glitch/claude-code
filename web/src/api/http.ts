@@ -1,4 +1,4 @@
-import type { SkysApi } from './client';
+import type { SkyApi } from './client';
 import type { LiveEvent, LiveEventType } from './types';
 
 const LIVE_EVENT_TYPES: LiveEventType[] = [
@@ -25,8 +25,11 @@ export class HttpError extends Error {
   }
 }
 
-/** Talks to the Skys back end over the contract in docs/API.md. */
-export function createHttpApi(baseUrl: string): SkysApi {
+/** Fired on window whenever the server says the session is missing or expired. */
+export const UNAUTHORIZED_EVENT = 'sky:unauthorized';
+
+/** Talks to the Sky back end over the contract in docs/API.md. */
+export function createHttpApi(baseUrl: string): SkyApi {
   const root = baseUrl.replace(/\/$/, '') + '/api/v1';
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -39,6 +42,7 @@ export function createHttpApi(baseUrl: string): SkysApi {
     if (res.status === 204) return undefined as T;
     const json = await res.json().catch(() => null);
     if (!res.ok) {
+      if (res.status === 401 && path !== '/session') window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
       throw new HttpError(res.status, json?.error?.code ?? 'unknown', json?.error?.message ?? res.statusText);
     }
     return json as T;
@@ -51,7 +55,36 @@ export function createHttpApi(baseUrl: string): SkysApi {
     return str ? `?${str}` : '';
   };
 
+  // One EventSource for the whole app, shared by every subscriber. Browsers
+  // allow about six connections per host, and each open stream holds one.
+  const handlers = new Set<(e: LiveEvent) => void>();
+  let source: EventSource | null = null;
+  const openStream = () => {
+    source = new EventSource(root + '/events', { withCredentials: true });
+    for (const type of LIVE_EVENT_TYPES) {
+      source.addEventListener(type, (e) => {
+        const event = { type, data: JSON.parse((e as MessageEvent).data) } as LiveEvent;
+        for (const h of [...handlers]) h(event);
+      });
+    }
+  };
+  const closeStream = () => {
+    source?.close();
+    source = null;
+  };
+
   return {
+    getSession: () => call('GET', '/session'),
+    signIn: async (password) => {
+      await call('POST', '/session', { password });
+      // Reconnect so the stream carries the new session cookie.
+      if (source) { closeStream(); openStream(); }
+    },
+    signOut: async () => {
+      await call('DELETE', '/session');
+      closeStream();
+    },
+
     getStatus: () => call('GET', '/status'),
     setPaused: (paused) => call('POST', '/status', { paused }),
     getBriefing: () => call('GET', '/briefing'),
@@ -93,15 +126,11 @@ export function createHttpApi(baseUrl: string): SkysApi {
     updateSettings: (patch) => call('PATCH', '/settings', patch),
 
     subscribe(handler) {
-      const source = new EventSource(root + '/events', { withCredentials: true });
-      const listeners = LIVE_EVENT_TYPES.map((type) => {
-        const fn = (e: MessageEvent) => handler({ type, data: JSON.parse(e.data) } as LiveEvent);
-        source.addEventListener(type, fn);
-        return [type, fn] as const;
-      });
+      handlers.add(handler);
+      if (!source) openStream();
       return () => {
-        for (const [type, fn] of listeners) source.removeEventListener(type, fn);
-        source.close();
+        handlers.delete(handler);
+        if (handlers.size === 0) closeStream();
       };
     },
   };

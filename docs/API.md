@@ -1,6 +1,6 @@
-# Skys API contract (v1)
+# Sky API contract (v1)
 
-This is what the Skys web UI expects from the back end. The source of truth for
+This is what the Sky web UI expects from the back end. The source of truth for
 every shape is [`web/src/api/types.ts`](../web/src/api/types.ts); the client
 that calls these endpoints is [`web/src/api/http.ts`](../web/src/api/http.ts).
 [`web/src/api/mock.ts`](../web/src/api/mock.ts) is a working in-memory
@@ -32,10 +32,10 @@ the quickest way to see what each call should do.
 
 `AgentStatus.state` drives the orb everywhere in the UI:
 
-- `working` when Skys is actively running a step (`activity` says what, `taskId` links to it)
+- `working` when Sky is actively running a step (`activity` says what, `taskId` links to it)
 - `waiting` when nothing is running and at least one approval is pending
 - `idle` when nothing is running and nothing is pending
-- `paused` when the user paused Skys; no background work or actions may run
+- `paused` when the user paused Sky; no background work or actions may run
 - `offline` when the agent runtime is unreachable
 
 `counts.activeTasks` counts tasks in `active`, `waiting_approval` or `blocked`.
@@ -104,11 +104,11 @@ stream: one or more `message.delta` events with the same `messageId`, then a
 
 `Message.cards` puts structured cards under a message: `{ kind: "task", taskId }`
 shows a live goal card and `{ kind: "approval", approvalId }` shows an approval
-the user can answer right in chat. When Skys needs an approval, post a main-chat
+the user can answer right in chat. When Sky needs an approval, post a main-chat
 message with the approval card as well as creating the approval.
 
-Set `proactive: true` on messages Skys sends on its own (briefings, findings,
-requests for a decision). The UI labels them "Skys reached out". Keep the bar
+Set `proactive: true` on messages Sky sends on its own (briefings, findings,
+requests for a decision). The UI labels them "Sky reached out". Keep the bar
 high: only send one when something is new or needs the user.
 
 ## Memory
@@ -160,7 +160,7 @@ Rules are plain language and are given to the agent as hard constraints.
 | GET | `/ideas` | `Idea[]`, newest first |
 | POST | `/ideas/:id/dismiss` | `204` |
 
-Ideas are things Skys could do, generated from the user's goals and patterns.
+Ideas are things Sky could do, generated from the user's goals and patterns.
 "Do it" in the UI sends `Idea.prompt` to the main chat and then dismisses the
 idea. Emit `idea.created` when a new one appears.
 

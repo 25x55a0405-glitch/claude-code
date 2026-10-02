@@ -274,7 +274,7 @@ const notionText = (rich: any[] = []) => rich.map((r) => r.plain_text ?? '').joi
 
 export const notionSearch: ToolDef<{ query: string }> = {
   name: 'notion_search',
-  description: 'Search Notion pages and databases the person shared with Skys.',
+  description: 'Search Notion pages and databases the person shared with Sky.',
   input_schema: schema({ query: str('Words to search for') }, ['query']),
   effect: 'read',
   connection: 'notion',

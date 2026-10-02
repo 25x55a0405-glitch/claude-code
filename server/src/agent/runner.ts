@@ -1,21 +1,28 @@
 import type { BetaContentBlock, BetaMessageParam, BetaToolResultBlockParam, BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
-import type { Approval, ApprovalDecision, Task } from '../types.ts';
+import type { Approval, ApprovalDecision, Star, Task } from '../types.ts';
 import { firstLine, iso, truncate } from '../util.ts';
 import { BrainUnavailable } from './brain.ts';
 import type { AgentDeps } from './deps.ts';
 import { errorResult, executeTool } from './execute.ts';
 import { contextMemory } from './memory.ts';
-import { contextNote, systemPrompt, taskBrief } from './prompt.ts';
+import { contextNote, systemPrompt, takeInbox, taskBrief } from './prompt.ts';
+import { MAX_ASK_DEPTH, targetStar } from './tools/constellation.ts';
 import { availableTools, findTool, toSpec } from './tools/index.ts';
 import { validateInput, type ToolContext } from './tools/types.ts';
 
-/** A tool call waiting on the person, and what they decided once they have. */
+/**
+ * A tool call waiting on someone: the person (an approval) or another Star
+ * (an ask_star request, answered when its task ends).
+ */
 interface PendingCall {
   toolUseId: string;
-  approvalId: string;
+  approvalId?: string;
+  childTaskId?: string;
   name: string;
   input: unknown;
-  decision?: { outcome: 'approved' | 'rejected' | 'expired'; editedPreview?: string; note?: string };
+  decision?:
+    | { outcome: 'approved' | 'rejected' | 'expired'; editedPreview?: string; note?: string }
+    | { outcome: 'answered'; answer: string; failed: boolean };
 }
 
 /**
@@ -58,11 +65,12 @@ export class TaskRunner {
     this.deps.store.db.delete('run', taskId);
   }
 
-  private fresh(task: Task): RunState {
+  private fresh(task: Task, star: Star): RunState {
     const { store } = this.deps;
     const recent = task.kind === 'one_off' ? [] : store.steps(task.id, 12).map((s) => `${s.at} ${s.kind}: ${s.summary}`);
-    const memory = contextMemory(store.listMemory(), `${task.title} ${task.description}`);
-    const text = `${contextNote(store.settings(), memory)}\n\n${taskBrief(task, recent)}`;
+    const memory = contextMemory(store.listMemory(star.id), `${task.title} ${task.description}`);
+    const asker = task.requestedBy ? store.findStar(task.requestedBy.starId)?.name : undefined;
+    const text = `${contextNote(store.settings(), memory, takeInbox(store, star.id))}\n\n${taskBrief(task, recent, asker)}`;
     return { id: task.id, messages: [{ role: 'user', content: text }], results: [], pending: [], turns: 0, startedAt: iso() };
   }
 
@@ -70,21 +78,25 @@ export class TaskRunner {
   async run(taskId: string, shouldStop: () => boolean): Promise<RunEnd> {
     const { store, brain, providers, config } = this.deps;
     let task = store.getTask(taskId);
+    const star = store.findStar(store.starIdOf(task)) ?? store.mainStar();
     let state = this.load(taskId);
     if (!state) {
-      state = this.fresh(task);
+      state = this.fresh(task, star);
       this.save(state);
       store.log('task_started', task.lastRunAt ? `Running: ${task.title}` : `Started: ${task.title}`, task.id);
     }
     store.setActivity(`Working on ${firstLine(task.title, 60)}`, task.id);
 
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
     };
 
-    // Carry out whatever the person decided on while the task was waiting.
+    // Carry out whatever the person decided, or read the other Star's answer, while the task was waiting.
     if (state.pending.length) {
-      if (state.pending.some((p) => !p.decision)) return 'waiting';
+      if (state.pending.some((p) => !p.decision)) {
+        this.markWaiting(task, state);
+        return 'waiting';
+      }
       for (const p of state.pending) state.results.push(await this.applyDecision(p, ctx));
       state.pending = [];
       this.flushResults(state);
@@ -105,11 +117,11 @@ export class TaskRunner {
       }
       state.turns++;
 
-      const tools = availableTools('task', providers);
+      const tools = availableTools('task', providers, star);
       let turn;
       try {
         turn = await brain.turn({
-          system: systemPrompt(store, providers, 'task'),
+          system: systemPrompt(store, providers, 'task', star),
           messages: state.messages,
           tools: tools.map(toSpec),
           web: providers.isUsable('web') && brain.name === 'claude',
@@ -168,20 +180,26 @@ export class TaskRunner {
           state.results.push({ type: 'tool_result', tool_use_id: use.id, content: 'Finished.' });
           continue;
         }
-        const verdict = await this.deps.policy.check(tool, use.input, firstLine(why, 300));
+        if (tool.name === 'ask_star') {
+          const asked = this.askStar(task, ctx, use.id, use.input as { star: string; request: string });
+          if (typeof asked === 'string') state.results.push(errorResult(use.id, asked));
+          else state.pending.push(asked);
+          continue;
+        }
+        const verdict = await this.deps.policy.check(tool, use.input, firstLine(why, 300), star);
         if (verdict.kind === 'forbid') {
           store.addStep(task.id, { kind: 'note', summary: firstLine(`Didn’t ${tool.label(use.input).toLowerCase()}: ${verdict.reason}`, 160) });
           state.results.push(errorResult(use.id, `Not allowed: ${verdict.reason}`));
         } else if (verdict.kind === 'ask') {
-          const p = tool.approval?.(use.input) ?? { action: tool.label(use.input), target: tool.connection ?? 'Skys', preview: JSON.stringify(use.input, null, 2) };
+          const p = tool.approval?.(use.input) ?? { action: tool.label(use.input), target: tool.connection ?? star.name, preview: JSON.stringify(use.input, null, 2) };
           const approval = store.createApproval({
-            taskId: task.id, action: p.action, target: p.target, reason: verdict.reason, preview: p.preview,
+            taskId: task.id, starId: star.id, action: p.action, target: p.target, reason: verdict.reason, preview: p.preview,
             ...(tool.connection ? { connectionId: tool.connection } : {}),
             risk: verdict.risk, expiresAt: iso(Date.now() + 24 * 3_600_000),
           });
           store.addStep(task.id, { kind: 'approval', summary: firstLine(`Asked you before: ${p.action} to ${p.target}`, 160), ...(tool.connection ? { connectionId: tool.connection } : {}) });
           await this.deps.hooks.notify(`Can I ${lowerFirst(p.action)} to ${p.target}? ${firstLine(verdict.reason, 200)}`, {
-            taskId: task.id, cards: [{ kind: 'approval', approvalId: approval.id }],
+            taskId: task.id, starId: star.id, cards: [{ kind: 'approval', approvalId: approval.id }],
           });
           state.pending.push({ toolUseId: use.id, approvalId: approval.id, name: tool.name, input: use.input });
         } else {
@@ -191,14 +209,13 @@ export class TaskRunner {
 
       if (state.pending.length) {
         if (finishing) {
-          // Don't let the task close before the person has answered.
+          // Don't let the task close before the person (or the other Star) has answered.
           const r = state.results.find((x) => x.content === 'Finished.');
-          if (r) r.content = 'Not finished yet: some actions are waiting for the person. Call finish_task again once you have their answers.';
+          if (r) r.content = 'Not finished yet: some calls are still waiting for an answer. Call finish_task again once you have them.';
           finishing = null;
         }
         this.save(state);
-        store.patchTask(task.id, { status: 'waiting_approval', lastOutcome: 'Waiting for your OK' });
-        store.setActivity(null);
+        this.markWaiting(task, state);
         return 'waiting';
       }
       this.flushResults(state);
@@ -208,6 +225,49 @@ export class TaskRunner {
         return 'finished';
       }
     }
+  }
+
+  /** Shows what a waiting task waits on: the person's OK, or another Star. */
+  private markWaiting(task: Task, state: RunState) {
+    const { store } = this.deps;
+    const open = state.pending.filter((p) => !p.decision);
+    if (open.some((p) => p.approvalId)) {
+      store.patchTask(task.id, { status: 'waiting_approval', lastOutcome: 'Waiting for your OK' });
+    } else {
+      const names = [...new Set(open.map((p) => store.findTask(p.childTaskId!)).map((t) => (t && store.findStar(store.starIdOf(t))?.name) ?? 'another Star'))];
+      store.patchTask(task.id, { status: 'blocked', lastOutcome: `Waiting on ${names.join(' and ')}` });
+    }
+    store.setActivity(null);
+  }
+
+  /** Starts an ask_star request: a task for the other Star that answers this call when it ends. */
+  private askStar(task: Task, ctx: ToolContext, toolUseId: string, input: { star: string; request: string }): PendingCall | string {
+    const { store, hooks } = this.deps;
+    let target: Star;
+    try {
+      target = targetStar(ctx, input.star);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    const depth = (task.requestedBy?.depth ?? 0) + 1;
+    if (depth > MAX_ASK_DEPTH) return `Too many Stars are already waiting on each other in this chain (limit ${MAX_ASK_DEPTH}). Do this part yourself.`;
+    const child = hooks.createTask(
+      { title: firstLine(input.request, 80).replace(/^./, (c) => c.toUpperCase()), description: input.request, kind: 'one_off', starId: target.id },
+      ctx.star.name, { starId: ctx.star.id, taskId: task.id, depth },
+    );
+    store.sendTeamMessage({ fromStarId: ctx.star.id, toStarId: target.id, kind: 'request', content: input.request, taskId: child.id });
+    store.addStep(task.id, { kind: 'note', summary: firstLine(`Asked ${target.name}: ${input.request}`, 160) });
+    return { toolUseId, childTaskId: child.id, name: 'ask_star', input };
+  }
+
+  /** Records another Star's answer. Returns null if nothing was waiting on it, else whether every pending call is now answered. */
+  recordReply(parentTaskId: string, childTaskId: string, answer: string, failed: boolean): boolean | null {
+    const state = this.load(parentTaskId);
+    const p = state?.pending.find((x) => x.childTaskId === childTaskId);
+    if (!state || !p) return null;
+    p.decision = { outcome: 'answered', answer, failed };
+    this.save(state);
+    return state.pending.every((x) => x.decision);
   }
 
   private flushResults(state: RunState) {
@@ -250,6 +310,12 @@ export class TaskRunner {
     const { store } = this.deps;
     const tool = findTool(p.name)!;
     const d = p.decision!;
+    if (d.outcome === 'answered') {
+      const child = store.findTask(p.childTaskId!);
+      const who = (child && store.findStar(store.starIdOf(child))?.name) ?? 'The other Star';
+      if (ctx.task) store.addStep(ctx.task.id, { kind: 'result', summary: firstLine(`${who} ${d.failed ? 'couldn’t do it' : 'answered'}: ${d.answer}`, 160), ...(d.answer.length > 140 ? { detail: d.answer } : {}) });
+      return { type: 'tool_result', tool_use_id: p.toolUseId, content: `${who} ${d.failed ? 'couldn’t do it' : 'replied'}: ${d.answer}`, ...(d.failed ? { is_error: true } : {}) };
+    }
     const note = d.note ? ` Their note: “${d.note}”` : '';
     if (d.outcome === 'approved') {
       const input = d.editedPreview && tool.applyEdit ? tool.applyEdit(p.input, d.editedPreview) : p.input;
@@ -284,6 +350,7 @@ export class TaskRunner {
     }
     store.log(failed ? 'task_failed' : 'task_completed', `${failed ? 'Failed' : task.kind === 'one_off' ? 'Finished' : 'Ran'}: ${firstLine(task.title, 60)}. ${firstLine(outcome, 120)}`, task.id);
     store.setActivity(null);
+    if (task.kind === 'one_off' && task.requestedBy) this.deps.hooks.starAnswered(task, outcome, failed);
   }
 }
 

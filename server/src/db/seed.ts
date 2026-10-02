@@ -2,7 +2,7 @@ import type { Connection, Rule, Settings } from '../types.ts';
 
 export const defaultSettings = (userName: string): Settings => ({
   userName,
-  agentName: 'Skys',
+  agentName: 'Sky',
   avatar: { character: 'cloud', color: 'sky' },
   tone: 'warm',
   timezone: process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
@@ -28,5 +28,5 @@ export const connectionCatalog: Omit<Connection, 'status' | 'lastSyncAt'>[] = [
   { id: 'github', provider: 'github', name: 'GitHub', description: 'Watch repos, issues and pull requests', access: 'read' },
   { id: 'notion', provider: 'notion', name: 'Notion', description: 'Read and update pages and databases', access: 'read_write' },
   { id: 'slack', provider: 'slack', name: 'Slack', description: 'Post updates to Slack', access: 'read' },
-  { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Skys from your phone', access: 'read_write' },
+  { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Sky from your phone', access: 'read_write' },
 ];

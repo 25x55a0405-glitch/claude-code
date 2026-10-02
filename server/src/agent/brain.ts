@@ -30,7 +30,7 @@ export interface TurnResult {
 }
 
 /**
- * The model behind Skys. ClaudeBrain is the real one; ScriptedBrain (in
+ * The model behind every Star. ClaudeBrain is the real one; ScriptedBrain (in
  * scripted.ts) is a deterministic stand-in so the whole server runs and is
  * testable without an API key.
  */

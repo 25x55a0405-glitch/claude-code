@@ -1,10 +1,10 @@
-import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Approval, ConnectionStatus, TaskKind, TaskStatus } from '../api';
 import { useAgent } from '../lib/agent';
 import { Avatar } from './Avatar';
 import { Icon, type IconName } from './Icon';
 
-/** The user's own Skys, in its current state. */
+/** The user's own Sky, in its current state. */
 export function Me({ size = 32, track = false, state }: { size?: number; track?: boolean; state?: 'idle' }) {
   const { status, settings } = useAgent();
   return (
@@ -117,8 +117,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const show = useCallback((text: string) => {
     window.clearTimeout(timer.current);
     setMsg({ text, key: Date.now() });
-    timer.current = window.setTimeout(() => setMsg(null), 2400);
+    timer.current = window.setTimeout(() => setMsg(null), 3200);
   }, []);
+  // Any request that fails without its own handling still tells the person why.
+  useEffect(() => {
+    const onReject = (e: PromiseRejectionEvent) => {
+      const err = e.reason as { message?: string; status?: number } | undefined;
+      if (err?.message && err.status !== 401) show(err.message);
+    };
+    window.addEventListener('unhandledrejection', onReject);
+    return () => window.removeEventListener('unhandledrejection', onReject);
+  }, [show]);
   return (
     <ToastCtx.Provider value={show}>
       {children}

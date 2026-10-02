@@ -1,12 +1,12 @@
-import type { LiveEvent } from './types.ts';
+import type { ServerEvent } from './types.ts';
 
-type Handler = (e: LiveEvent) => void;
+type Handler = (e: ServerEvent) => void;
 
 /** Fan-out of live events to every open event stream. */
 export class EventBus {
   private handlers = new Set<Handler>();
 
-  emit(event: LiveEvent) {
+  emit(event: ServerEvent) {
     for (const h of this.handlers) {
       try {
         h(event);
