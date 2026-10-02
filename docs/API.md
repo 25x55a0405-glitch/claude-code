@@ -231,6 +231,19 @@ checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
 - **Password fill** (Permissions, Signing in): `settings.passwordFill` is off until the person confirms what it relaxes. `listLogins`, `createLogin`, `updateLogin`, `deleteLogin`; passwords are write-only.
 - Events: `browser.control`, `recording.updated`, `workspace.changed`.
 
+## Round 4
+
+- **Templates**: "Use this" and imports call `previewTemplate` (`POST /templates/preview`) first and show what it wants, what it gets under your settings, and what was left out, before `importTemplate`.
+- **Tools**: a tool with `confirmed: false` asks every time until you choose; its `hint` is offered as the suggestion and it isn't counted as looking only.
+- **Chat apps**: the pairing code shows `pairExpiresAt` and `pairLocked`, with `newPairCode` (`POST /messaging/:app/code`).
+- **Goals**: "Triggered by …" steps show the sender's text from `detail`.
+
+## Wave 4
+
+- **Voice**: `getVoice` first. With server speech, the mic records audio for `sendVoice` (`POST /conversations/:id/voice`) and replies play from `speak` (`POST /voice/speak`); otherwise the browser's own speech recognition and synthesis are used and the text goes through `sendMessage(…, "voice")`. `setVoice` (`PUT /voice`) in Settings; `Star.voice` on a Star's page.
+- **Your computer** (Settings): `listCompanion`, `pairCompanion`, `updateCompanionDevice` (`{ enabled }`), `deleteCompanionDevice`. The allowlist is read-only here. Which Stars can use it is the `computer` entry in each Star's `connectionIds`. Events: `companion.updated`, `companion.deleted`.
+- **Checkout**: `BrowserSession.checkout`. At `waiting_ok` the approval shows the total and "OK, I’ll pay"; at `paying` the browser is the person's, and "I’ve paid, hand back" returns it. Stars never enter card details.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

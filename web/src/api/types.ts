@@ -209,7 +209,7 @@ export interface Message {
   /** The Star that wrote an agent message. */
   starId?: string;
   /** Came in from a messaging app. */
-  via?: 'telegram' | 'slack';
+  via?: 'telegram' | 'slack' | 'voice';
   /** Set on "Got it. I'll remember: …" messages, so the UI can offer Undo. */
   lessonId?: string;
 }
@@ -260,6 +260,8 @@ export interface Rule {
   createdAt: string;
   /** Applies to one Star only; absent or null means every Star. */
   starId?: string | null;
+  /** Came with a template: it can only make a Star ask or stop, never skip asking. */
+  askOnly?: boolean;
 }
 
 // ---- Activity ----------------------------------------------------------
@@ -362,6 +364,8 @@ export interface Star {
   providerIds?: string[] | null;
   /** MCP servers this Star gets; null means all. Absent on older servers. */
   mcpServerIds?: string[] | null;
+  /** The voice it speaks with (like "nova"). Absent or null: the default. */
+  voice?: string | null;
   /** Its character, in its own words. '' means none. Absent on older servers. */
   personality?: string;
   /** How its replies look: length, format, emoji. */
@@ -389,7 +393,7 @@ export interface StarView extends Star {
   email?: string | null;
 }
 
-export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'mcpServerIds'>> & { notify?: Partial<NonNullable<Star['notify']>> };
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'mcpServerIds' | 'voice'>> & { notify?: Partial<NonNullable<Star['notify']>> };
 
 export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
 
@@ -489,6 +493,72 @@ export interface BrowserSession {
   waitingTaskId?: string | null;
   /** Set while the person is recording a task to teach. */
   recordingId?: string | null;
+  /** A Star stopped at payment: waiting for your OK, then your turn to pay. */
+  checkout?: CheckoutHandover | null;
+}
+
+export interface CheckoutHandover {
+  taskId: string;
+  total: string;
+  merchant: string;
+  summary: string;
+  url: string;
+  /** waiting_ok: the approval is waiting; paying: your turn, then hand back. */
+  stage: 'waiting_ok' | 'paying';
+}
+
+// ---- Voice -------------------------------------------------------------
+
+export interface VoiceSettings {
+  sttProviderIds: string[];
+  sttModel: string;
+  ttsProviderIds: string[];
+  ttsModel: string;
+  ttsVoice: string;
+}
+
+export interface VoiceStatus {
+  speechToText: { id: string; name: string }[];
+  textToSpeech: { id: string; name: string }[];
+  /** false: use the browser's own speech recognition. */
+  serverSpeechToText: boolean;
+  /** false: use the browser's speechSynthesis. */
+  serverTextToSpeech: boolean;
+  settings: VoiceSettings;
+}
+
+export interface VoiceTurn {
+  heard: string;
+  provider: string;
+  message: Message;
+  /** The Star's answer, or null if it's still coming (it streams as usual). */
+  reply: Message | null;
+}
+
+// ---- Your computer (the Sky companion) ----------------------------------
+
+export interface CompanionDevice {
+  id: string;
+  name: string;
+  platform: string;
+  /** The switch in the app. */
+  enabled: boolean;
+  /** The switch on the computer (press o in the companion). */
+  localEnabled: boolean;
+  connected: boolean;
+  /** Set on the computer; shown read-only. */
+  allow: { folders: string[]; commands: string[]; openUrls: boolean };
+  /** Also asks on the computer before each action. */
+  confirmLocally: boolean;
+  pairedAt: string;
+  lastSeenAt: string | null;
+}
+
+export interface CompanionPairing {
+  code: string;
+  expiresAt: string;
+  /** What to run on the computer. */
+  command: string;
 }
 
 // ---- Teach a task ------------------------------------------------------
@@ -667,6 +737,10 @@ export interface MessagingStatus {
   /** Telegram bot username, or the Slack workspace. */
   botName: string | null;
   error: string | null;
+  /** When the pairing code stops working. */
+  pairExpiresAt?: string | null;
+  /** Too many wrong codes: pairCode is null until a new one is made. */
+  pairLocked?: boolean;
 }
 
 export type ToolEffect = 'read' | 'write' | 'send' | 'delete' | 'spend';
@@ -685,7 +759,8 @@ export interface McpServer {
   toolEffects: Record<string, ToolEffect>;
   status: 'off' | 'connecting' | 'ready' | 'error';
   error: string | null;
-  tools: { name: string; toolName: string; description: string; effect: string }[];
+  /** effect: your choice, or the server's hint until you choose. Unconfirmed tools ask every time. */
+  tools: { name: string; toolName: string; description: string; effect: string; hint?: ToolEffect; confirmed?: boolean }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -700,6 +775,14 @@ export interface McpInput {
   headers?: Record<string, string>;
   enabled?: boolean;
   toolEffects?: Record<string, ToolEffect>;
+}
+
+/** What a template asks for, and what it would actually get here. Makes nothing. */
+export interface TemplatePreview {
+  template: StarTemplate;
+  wants: { autonomy: Autonomy | null; apps: string[] | null; rules: string[]; skills: string[] };
+  gets: { autonomy: Autonomy | null; connectionIds: string[] | null; rulesAskOnly: boolean };
+  skipped: string[];
 }
 
 export interface StarTemplate {
@@ -763,7 +846,9 @@ export type LiveEvent =
   | { type: 'messaging.updated'; data: MessagingStatus }
   | { type: 'browser.control'; data: BrowserSession }
   | { type: 'recording.updated'; data: Recording }
-  | { type: 'workspace.changed'; data: { starId: string; path: string } };
+  | { type: 'workspace.changed'; data: { starId: string; path: string } }
+  | { type: 'companion.updated'; data: CompanionDevice }
+  | { type: 'companion.deleted'; data: { id: string } };
 
 export type LiveEventType = LiveEvent['type'];
 

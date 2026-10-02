@@ -43,6 +43,7 @@ import type {
   MessagingStatus,
   StarTemplate,
   TemplateEntry,
+  TemplatePreview,
   TriggerEvent,
   TriggerInput,
   TriggerSetup,
@@ -52,6 +53,11 @@ import type {
   SavedLoginInput,
   WorkspaceFile,
   WorkspaceStatus,
+  VoiceSettings,
+  VoiceStatus,
+  VoiceTurn,
+  CompanionDevice,
+  CompanionPairing,
 } from './types';
 
 /**
@@ -118,6 +124,18 @@ export interface SkyApi {
   uploadFile(starId: string, path: string, file: Blob): Promise<WorkspaceFile>;
   deleteFile(starId: string, path: string): Promise<void>;
 
+  getVoice(): Promise<VoiceStatus>;
+  setVoice(patch: Partial<VoiceSettings>): Promise<VoiceStatus>;
+  /** Rejects with 422 nothing_heard for silence, 503 voice_unavailable to use the browser's speech. */
+  sendVoice(conversationId: string, audio: Blob): Promise<VoiceTurn>;
+  /** The reply as audio (audio/mpeg), in the Star's voice. */
+  speak(text: string, starId?: string): Promise<Blob>;
+
+  listCompanion(): Promise<{ devices: CompanionDevice[]; socketPath: string; download: string }>;
+  pairCompanion(): Promise<CompanionPairing>;
+  updateCompanionDevice(id: string, patch: { enabled?: boolean; name?: string }): Promise<CompanionDevice>;
+  deleteCompanionDevice(id: string): Promise<void>;
+
   listLogins(): Promise<{ enabled: boolean; logins: SavedLogin[] }>;
   createLogin(input: SavedLoginInput): Promise<SavedLogin>;
   updateLogin(id: string, patch: Partial<Omit<SavedLoginInput, 'origin'>>): Promise<SavedLogin>;
@@ -156,6 +174,8 @@ export interface SkyApi {
   connectTelegram(botToken: string): Promise<MessagingStatus>;
   connectSlack(botToken: string, appToken: string): Promise<MessagingStatus>;
   disconnectMessaging(app: MessagingApp): Promise<MessagingStatus>;
+  /** A fresh pairing code, after the last one expired or locked. */
+  newPairCode(app: MessagingApp): Promise<MessagingStatus>;
   /** The Slack app manifest, as text to paste. */
   slackManifest(): Promise<string>;
 
@@ -171,6 +191,8 @@ export interface SkyApi {
 
   listTemplates(): Promise<{ templates: TemplateEntry[]; galleryError: string | null }>;
   starTemplate(starId: string): Promise<StarTemplate>;
+  /** What importing would do, without making anything. */
+  previewTemplate(from: { template: StarTemplate } | { id: string } | { url: string }): Promise<TemplatePreview>;
   importTemplate(from: { template: StarTemplate } | { id: string } | { url: string }): Promise<{ star: StarView; skipped: string[] }>;
 
   listTasks(filter?: { status?: TaskStatus[]; starId?: string }): Promise<Task[]>;
@@ -186,7 +208,7 @@ export interface SkyApi {
   createConversation(starId?: string): Promise<Conversation>;
   listMessages(conversationId: string): Promise<Message[]>;
   /** Returns the stored user message; the agent reply arrives as message.delta / message.done events. */
-  sendMessage(conversationId: string, content: string): Promise<Message>;
+  sendMessage(conversationId: string, content: string, via?: 'voice'): Promise<Message>;
 
   listMemory(): Promise<MemoryItem[]>;
   addMemory(input: Pick<MemoryItem, 'category' | 'content'>): Promise<MemoryItem>;

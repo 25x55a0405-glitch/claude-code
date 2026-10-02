@@ -38,18 +38,19 @@ export function hostOf(url: string) {
 
 /** A small live thumbnail of what the Star is looking at. Opens the full view. */
 export function BrowserPip({ star, tab, onOpen }: { star: StarView; tab: BrowserSession; onOpen: () => void }) {
-  const needs = tab.control === 'person' && !!tab.waitingTaskId;
+  const co = tab.checkout;
+  const needs = (tab.control === 'person' && !!tab.waitingTaskId) || !!co;
   const yours = tab.control === 'person';
   return (
     <button className={`browser-pip ${needs ? 'needs' : ''}`} onClick={onOpen} aria-label={needs ? `${star.name} needs you in the browser` : `Watch ${star.name}’s browser`}>
       <span className="thumb"><img src={api.browserFrameUrl(star.id, tab.frameId)} alt="" /></span>
       <span className="grow" style={{ minWidth: 0 }}>
         <span className="k">
-          {tab.recordingId ? <><span className="rec-dot" />Recording what you do</> : needs ? <><span className="live-dot attn" />{star.name} needs you</> : yours ? <><span className="live-dot" />You have {star.name}’s browser</> : <><span className="live-dot" />{star.name} is browsing</>}
+          {co ? <><span className="live-dot attn" />{co.stage === 'paying' ? `Your turn to pay ${co.total}` : `${star.name} is ready to pay ${co.total}`}</> : tab.recordingId ? <><span className="rec-dot" />Recording what you do</> : needs ? <><span className="live-dot attn" />{star.name} needs you</> : yours ? <><span className="live-dot" />You have {star.name}’s browser</> : <><span className="live-dot" />{star.name} is browsing</>}
         </span>
-        <span className="v">{needs && tab.controlNote ? tab.controlNote : tab.title || hostOf(tab.url)}</span>
+        <span className="v">{co ? `at ${co.merchant}` : needs && tab.controlNote ? tab.controlNote : tab.title || hostOf(tab.url)}</span>
       </span>
-      <span className="go">{needs ? 'Help' : yours ? 'Open' : 'Watch'}</span>
+      <span className="go">{co ? (co.stage === 'paying' ? 'Pay' : 'Review') : needs ? 'Help' : yours ? 'Open' : 'Watch'}</span>
     </button>
   );
 }
@@ -204,7 +205,9 @@ export function BrowserWindow({ star, tab, onClose, onTab }: { star: StarView; t
           <button className="icon-btn" onClick={close} aria-label="Close"><Icon name="x" /></button>
         </div>
 
-        {waiting && !rec && (
+        {tab.checkout && <CheckoutBanner star={star} checkout={tab.checkout} />}
+
+        {waiting && !rec && !tab.checkout && (
           <div className="browser-ask" role="status">
             <span className="glyph"><Icon name="cursor" size={15} /></span>
             <div className="grow" style={{ minWidth: 0 }}>
@@ -241,6 +244,11 @@ export function BrowserWindow({ star, tab, onClose, onTab }: { star: StarView; t
               <button type="button" className="btn quiet" onClick={() => setTeach(null)}>Cancel</button>
               <button className="btn ink" disabled={busy}><Icon name="record" size={15} /> Start recording</button>
             </form>
+          ) : control && tab.checkout?.stage === 'paying' ? (
+            <>
+              <p className="grow t2" style={{ fontSize: 14 }}>When you’ve paid, hand back and {star.name} checks the page for the confirmation. It won’t assume it went through.</p>
+              <button className="btn ink" onClick={handBack}>I’ve paid, hand back</button>
+            </>
           ) : control ? (
             <>
               <div className="grow col" style={{ gap: 8 }}>
@@ -260,6 +268,46 @@ export function BrowserWindow({ star, tab, onClose, onTab }: { star: StarView; t
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A Star stopped at payment: the total, then "You pay" once you say yes. */
+function CheckoutBanner({ star, checkout }: { star: StarView; checkout: NonNullable<BrowserSession['checkout']> }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const ok = async () => {
+    setBusy(true);
+    try {
+      const a = (await api.listApprovals('pending')).find((x) => x.taskId === checkout.taskId && /^Pay /.test(x.action));
+      if (!a) { toast('That payment isn’t waiting any more'); return; }
+      await api.decideApproval(a.id, { decision: 'approve' });
+      toast('Your turn: pay, then press Hand back');
+    } catch (e) { toast((e as Error).message); } finally { setBusy(false); }
+  };
+  const paying = checkout.stage === 'paying';
+  return (
+    <div className={`checkout ${paying ? 'paying' : ''}`} role="status">
+      <div className="checkout-sum">
+        <span className="glyph"><Icon name="card" size={17} /></span>
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row wrap" style={{ gap: 8, alignItems: 'baseline' }}>
+            <strong className="checkout-total">{checkout.total}</strong>
+            <span className="t2">at {checkout.merchant}</span>
+          </div>
+          {checkout.summary && <p className="t3 xs">{checkout.summary}</p>}
+        </div>
+        {!paying && <button className="btn ink sm" onClick={ok} disabled={busy}>{busy ? 'One moment…' : 'OK, I’ll pay'}</button>}
+      </div>
+      {paying ? (
+        <ol className="you-pay">
+          <li><span>1</span>Enter your card on the page. Only you do this.</li>
+          <li><span>2</span>Finish paying.</li>
+          <li><span>3</span>Press Hand back, and {star.name} carries on.</li>
+        </ol>
+      ) : (
+        <p className="t3 xs">{star.name} filled in everything up to payment and is waiting for your OK. Saying yes gives you this browser so you can pay. It never enters card details.</p>
+      )}
     </div>
   );
 }

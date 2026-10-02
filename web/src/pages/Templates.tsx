@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { api, type StarTemplate, type StarView, type TemplateEntry } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { api, type Autonomy, type StarTemplate, type StarView, type TemplateEntry, type TemplatePreview } from '../api';
 import { Icon } from '../components/Icon';
 import { ErrorNote, PageHead, Skeleton, StarFace, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
@@ -34,9 +34,16 @@ export function Templates() {
     toast(skipped.length ? `${star.name} joined. Skipped ${skipped.join(', ')}, which ${skipped.length === 1 ? 'isn’t' : 'aren’t'} connected here.` : `${star.name} joined your constellation`);
     navigate('stars', star.id);
   };
+  const [confirm, setConfirm] = useState<{ key: string; from: Parameters<typeof api.importTemplate>[0]; preview: TemplatePreview } | null>(null);
+  // First show what it asks for and what it would get here; nothing is made until you say so.
   const run = async (key: string, from: Parameters<typeof api.importTemplate>[0]) => {
     setBusy(key);
-    try { const r = await api.importTemplate(from); done(r.star, r.skipped); } catch (e) { toast((e as Error).message); } finally { setBusy(null); }
+    try { setConfirm({ key, from, preview: await api.previewTemplate(from) }); } catch (e) { toast((e as Error).message); } finally { setBusy(null); }
+  };
+  const add = async () => {
+    if (!confirm) return;
+    setBusy(confirm.key);
+    try { const r = await api.importTemplate(confirm.from); setConfirm(null); done(r.star, r.skipped); } catch (e) { toast((e as Error).message); } finally { setBusy(null); }
   };
   const fromFile = async (f: File) => {
     let template: StarTemplate;
@@ -114,6 +121,87 @@ export function Templates() {
           </div>
         </section>
       )}
+
+      {confirm && <ImportConfirm preview={confirm.preview} busy={busy === confirm.key} onAdd={add} onClose={() => setConfirm(null)} />}
+    </div>
+  );
+}
+
+const AUTONOMY_LABEL: Record<Autonomy, string> = { ask: 'Ask first', balanced: 'Balanced', autonomous: 'Hands-off' };
+
+/** What the template asks for, next to what it would actually get here. */
+function ImportConfirm({ preview, busy, onAdd, onClose }: { preview: TemplatePreview; busy: boolean; onAdd: () => void; onClose: () => void }) {
+  const { settings } = useAgent();
+  const conns = useResource(() => api.listConnections(), []);
+  const t = preview.template;
+  const own = settings?.autonomy ? AUTONOMY_LABEL[settings.autonomy] : 'your own';
+  const appName = (id: string) => conns.data?.find((c) => c.id === id)?.name ?? id;
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const w = preview.wants;
+  const g = preview.gets;
+  return (
+    <div className="modal-scrim" onClick={onClose}>
+      <div className="modal col-lg tpl-confirm" role="dialog" aria-modal="true" aria-label={`Add ${t.name}?`} onClick={(e) => e.stopPropagation()}>
+        <div className="between">
+          <div className="row" style={{ gap: 12 }}>
+            <StarFace star={{ name: t.name, avatar: t.avatar }} size={40} still />
+            <div>
+              <h2>Add {t.name}?</h2>
+              <p className="t3" style={{ fontSize: 14 }}>{t.role}</p>
+            </div>
+          </div>
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
+        </div>
+        <p className="t2" style={{ fontSize: 14 }}>Here’s what this template asks for. A template can never give a Star more freedom than you already allow.</p>
+        <div className="grant">
+          <div>
+            <span className="k">Independence</span>
+            <span className="v">
+              {w.autonomy ? `Asks for ${AUTONOMY_LABEL[w.autonomy]}` : 'Uses yours'}
+              <span className="t3">{g.autonomy ? `Gets ${AUTONOMY_LABEL[g.autonomy]}, which is stricter than yours.` : `Gets your own setting (${own})${w.autonomy && w.autonomy !== settings?.autonomy ? ', since a template can’t raise it' : ''}.`}</span>
+            </span>
+          </div>
+          <div>
+            <span className="k">Apps</span>
+            <span className="v">
+              {w.apps === null ? 'Asks for all your apps' : w.apps.length ? `Asks for ${w.apps.map(appName).join(', ')}` : 'No apps'}
+              <span className="t3">{g.connectionIds === null ? 'Gets every app you’ve connected. You can narrow it on its page.' : g.connectionIds.length ? `Gets ${g.connectionIds.map(appName).join(', ')}.` : 'Gets none.'}</span>
+            </span>
+          </div>
+          {w.rules.length > 0 && (
+            <div>
+              <span className="k">Rules</span>
+              <span className="v">
+                <ul>{w.rules.map((r) => <li key={r}>{r}</li>)}</ul>
+                {g.rulesAskOnly && <span className="t3">These can only make it ask you or stop. A rule like “without asking” won’t skip an approval.</span>}
+              </span>
+            </div>
+          )}
+          {w.skills.length > 0 && (
+            <div>
+              <span className="k">Skills</span>
+              <span className="v">{w.skills.join(', ')}</span>
+            </div>
+          )}
+          {preview.skipped.length > 0 && (
+            <div>
+              <span className="k">Left out</span>
+              <span className="v t3">{preview.skipped.join(', ')}</span>
+            </div>
+          )}
+        </div>
+        <p className="t3 xs">It doesn’t bring any memory, chats or secrets.</p>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn quiet" onClick={onClose}>Cancel</button>
+          <button className="btn ink" onClick={onAdd} disabled={busy} autoFocus>{busy ? 'Adding…' : `Add ${t.name}`}</button>
+        </div>
+      </div>
     </div>
   );
 }

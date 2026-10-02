@@ -6,12 +6,14 @@ import { Icon } from './Icon';
  * Pass value and onChange to keep the draft outside, so it survives the box
  * being swapped for another one (the chat does this when it turns out empty).
  */
-export function Composer({ onSend, placeholder, autoFocus, value, onChange }: {
+export function Composer({ onSend, placeholder, autoFocus, value, onChange, onVoice }: {
   onSend: (text: string) => void | Promise<void>;
   placeholder: string;
   autoFocus?: boolean;
   value?: string;
   onChange?: (text: string) => void;
+  /** Shows a mic in place of send while the box is empty. */
+  onVoice?: () => void;
 }) {
   const [own, setOwn] = useState('');
   const text = value ?? own;
@@ -63,7 +65,9 @@ export function Composer({ onSend, placeholder, autoFocus, value, onChange }: {
           }
         }}
       />
-      <button className="send" type="submit" disabled={!text.trim()} aria-label="Send"><Icon name="up" size={18} /></button>
+      {onVoice && !text.trim()
+        ? <button className="send voice" type="button" onClick={onVoice} aria-label="Talk out loud" title="Talk out loud"><Icon name="mic" size={18} /></button>
+        : <button className="send" type="submit" disabled={!text.trim()} aria-label="Send"><Icon name="up" size={18} /></button>}
     </form>
   );
 }

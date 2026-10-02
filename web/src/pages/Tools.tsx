@@ -89,7 +89,7 @@ export function Tools() {
                   <div className="row wrap" style={{ gap: 8 }}>
                     <span className="t3 xs" style={{ minWidth: 70 }}>Tools</span>
                     <span className="grow t2" style={{ fontSize: 14 }}>
-                      {m.tools.length ? `${m.tools.length} tool${m.tools.length === 1 ? '' : 's'}, ${m.tools.filter((t) => (m.toolEffects[t.name] ?? t.effect) === 'read').length} look only` : m.status === 'connecting' ? 'Finding its tools…' : 'None yet'}
+                      {m.tools.length ? toolCount(m) : m.status === 'connecting' ? 'Finding its tools…' : 'None yet'}
                     </span>
                     {m.tools.length > 0 && <button className="btn sm quiet" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : m.id)}>{expanded ? 'Hide' : 'Set what needs approval'}</button>}
                     {m.status === 'error' && <button className="btn sm" onClick={async () => { try { replace(await api.reconnectMcp(m.id)); } catch (e) { toast((e as Error).message); } }}>Try again</button>}
@@ -97,18 +97,30 @@ export function Tools() {
                   </div>
                   {expanded && (
                     <div className="tool-list">
-                      {m.tools.map((t) => (
-                        <div key={t.name} className="tool-row">
-                          <div className="grow" style={{ minWidth: 0 }}>
-                            <div className="mono" style={{ fontSize: 13 }}>{t.name}</div>
-                            {t.description && <p className="t3 xs">{t.description}</p>}
+                      {m.tools.map((t) => {
+                        const unset = t.confirmed === false && !m.toolEffects[t.name];
+                        const hint = (t.hint ?? t.effect) as ToolEffect;
+                        return (
+                          <div key={t.name} className={`tool-row ${unset ? 'unset' : ''}`}>
+                            <div className="grow" style={{ minWidth: 0 }}>
+                              <div className="mono" style={{ fontSize: 13 }}>{t.name}</div>
+                              {t.description && <p className="t3 xs">{t.description}</p>}
+                              {unset && (
+                                <p className="xs tool-unset">
+                                  <span className="chip attn">Asks every time until you choose</span>
+                                  <span className="t3">Looks like it {EFFECTS.find((e) => e.value === hint)?.label.toLowerCase() ?? 'changes things'}.</span>
+                                  <button className="link-btn" onClick={() => setEffect(m, t.name, hint)}>Use that</button>
+                                </p>
+                              )}
+                            </div>
+                            <select className="field select" aria-label={`What ${t.name} does`} value={unset ? '' : m.toolEffects[t.name] ?? t.effect} onChange={(e) => setEffect(m, t.name, e.target.value as ToolEffect)}>
+                              {unset && <option value="" disabled>Choose…</option>}
+                              {EFFECTS.map((ef) => <option key={ef.value} value={ef.value}>{ef.label}{unset && ef.value === hint ? ' (suggested)' : ''}</option>)}
+                            </select>
                           </div>
-                          <select className="field select" aria-label={`What ${t.name} does`} value={m.toolEffects[t.name] ?? t.effect} onChange={(e) => setEffect(m, t.name, e.target.value as ToolEffect)}>
-                            {EFFECTS.map((ef) => <option key={ef.value} value={ef.value}>{ef.label}</option>)}
-                          </select>
-                        </div>
-                      ))}
-                      <p className="t3 xs">Look-only tools run without asking and can be used in chat. Everything else asks first, as set by each Star’s independence in <a href={href('permissions')} style={{ textDecoration: 'underline' }}>Permissions</a>, and only runs inside a goal.</p>
+                        );
+                      })}
+                      <p className="t3 xs">Look-only tools run without asking and can be used in chat. The rest only run inside a goal and follow each Star’s independence in <a href={href('permissions')} style={{ textDecoration: 'underline' }}>Permissions</a>: Ask first checks every one, Balanced goes ahead with changes but asks before anything that sends, deletes or spends, and Hands-off tells you after. A tool you haven’t chosen for asks every time.</p>
                     </div>
                   )}
                 </div>
@@ -256,4 +268,11 @@ function McpForm({ server, onClose, onSaved, onDeleted }: { server: McpServer | 
       </form>
     </div>
   );
+}
+
+/** "3 tools, 1 look only, 2 to choose". A tool you haven't chosen for isn't counted as looking only. */
+function toolCount(m: McpServer) {
+  const unset = m.tools.filter((t) => t.confirmed === false && !m.toolEffects[t.name]).length;
+  const read = m.tools.filter((t) => !(t.confirmed === false && !m.toolEffects[t.name]) && (m.toolEffects[t.name] ?? t.effect) === 'read').length;
+  return [`${m.tools.length} tool${m.tools.length === 1 ? '' : 's'}`, (read || !unset) && `${read} look only`, unset && `${unset} to choose`].filter(Boolean).join(', ');
 }

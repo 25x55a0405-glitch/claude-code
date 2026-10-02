@@ -7,6 +7,8 @@ import { starChat, useAgent } from '../lib/agent';
 import { useResource } from '../lib/hooks';
 import { href, navigate } from '../lib/router';
 import { StarAddress } from '../components/StarAddress';
+import { sayAs } from '../components/Voice';
+import { VoiceNames } from '../components/VoiceSettings';
 import { HealthChip } from './Models';
 import { downloadTemplate } from './Templates';
 import { LOGO } from './Permissions';
@@ -45,10 +47,11 @@ interface Draft {
   providerIds: string[] | null;
   personality: string;
   replyStyle: string;
+  voice: string;
   notify: { whenDone: boolean; whenNeedsYou: boolean };
 }
 
-const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds, providerIds: s.providerIds ?? null, personality: s.personality ?? '', replyStyle: s.replyStyle ?? '', notify: { whenDone: s.notify?.whenDone ?? false, whenNeedsYou: s.notify?.whenNeedsYou ?? true } });
+const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds, providerIds: s.providerIds ?? null, personality: s.personality ?? '', replyStyle: s.replyStyle ?? '', voice: s.voice ?? '', notify: { whenDone: s.notify?.whenDone ?? false, whenNeedsYou: s.notify?.whenNeedsYou ?? true } });
 
 export function StarEditor({ id }: { id: string }) {
   const isNew = id === 'new';
@@ -58,7 +61,7 @@ export function StarEditor({ id }: { id: string }) {
   const conns = useResource(() => api.listConnections(), []);
   const models = useResource(() => api.listProviders(), [], ['provider.updated', 'provider.deleted']);
   const rules = useResource(() => (isNew ? Promise.resolve([] as Rule[]) : api.listRules(id)), [id]);
-  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null, personality: '', replyStyle: '', notify: { whenDone: false, whenNeedsYou: true } } : null);
+  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null, personality: '', replyStyle: '', voice: '', notify: { whenDone: false, whenNeedsYou: true } } : null);
   const [newRules, setNewRules] = useState<string[]>([]);
   const [ruleText, setRuleText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +94,7 @@ export function StarEditor({ id }: { id: string }) {
   const save = async () => {
     setBusy(true);
     setError(null);
-    const body = { ...draft, name: draft.name.trim(), role: draft.role.trim(), instructions: draft.instructions.trim(), personality: draft.personality.trim(), replyStyle: draft.replyStyle.trim() };
+    const body = { ...draft, name: draft.name.trim(), role: draft.role.trim(), instructions: draft.instructions.trim(), personality: draft.personality.trim(), replyStyle: draft.replyStyle.trim(), voice: draft.voice.trim() || null };
     try {
       if (isNew) {
         const s = await api.createStar(body);
@@ -237,6 +240,15 @@ export function StarEditor({ id }: { id: string }) {
             </div>
           </div>
           <p className="t3 xs">You can also just tell {draft.name || 'it'} in chat, like “be more brief”, and it updates this itself.</p>
+          <div>
+            <label className="label" htmlFor="star-voice">Its voice</label>
+            <div className="row" style={{ gap: 8 }}>
+              <input id="star-voice" className="field grow" value={draft.voice} onChange={(e) => set({ voice: e.target.value })} placeholder="The default voice" list="voice-names" spellCheck={false} />
+              <button type="button" className="btn quiet" onClick={() => api.getVoice().then((v) => sayAs(`Hi, I’m ${draft.name || 'your Star'}.`, { id: star?.id ?? '', voice: draft.voice.trim() || v.settings.ttsVoice || null }, v.serverTextToSpeech), () => sayAs(`Hi, I’m ${draft.name || 'your Star'}.`, { id: '', voice: draft.voice.trim() || null }, false))}><Icon name="play" size={13} /> Hear it</button>
+            </div>
+            <VoiceNames />
+            <p className="t3 xs" style={{ marginTop: 6 }}>Used when you talk to it out loud. A name like nova, or one of your browser’s voices.</p>
+          </div>
         </div>
         <div className="panel" style={{ marginTop: 12 }}>
           <div className="rows">

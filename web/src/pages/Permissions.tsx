@@ -16,7 +16,7 @@ const AUTONOMY: { value: Autonomy; title: string; body: string }[] = [
   { value: 'autonomous', title: 'Hands-off', body: 'Acts on its own and tells you after. Safety rules still apply.' },
 ];
 
-export const LOGO: Record<string, string> = { gmail: '#ea4335', calendar: '#1a73e8', github: '#24292f', web: '#6b7280', notion: '#191919', slack: '#4a154b', drive: '#188038', telegram: '#229ed9' };
+export const LOGO: Record<string, string> = { gmail: '#ea4335', calendar: '#1a73e8', github: '#24292f', web: '#6b7280', notion: '#191919', slack: '#4a154b', drive: '#188038', telegram: '#229ed9', computer: '#374151' };
 
 export function Permissions() {
   const toast = useToast();
@@ -94,7 +94,7 @@ export function Permissions() {
                 <div className="grow">
                   <p style={{ opacity: r.enabled ? 1 : 0.5 }}>{r.text}</p>
                   {r.builtIn && <p className="t3 xs">Always on</p>}
-                  {r.starId && <p className="t3 xs">Only for {stars?.find((s) => s.id === r.starId)?.name ?? 'one Star'}</p>}
+                  {r.starId && <p className="t3 xs">Only for {stars?.find((s) => s.id === r.starId)?.name ?? 'one Star'}{r.askOnly ? '. Came with a template, so it can only make it ask or stop' : ''}</p>}
                 </div>
                 {!r.builtIn && <button className="icon-btn" aria-label="Delete rule" onClick={async () => { await api.deleteRule(r.id); rules.setData((d) => d && d.filter((x) => x.id !== r.id)); }}><Icon name="trash" size={16} /></button>}
                 <Switch label={r.text} checked={r.enabled} disabled={r.builtIn} onChange={async (enabled) => { const u = await api.updateRule(r.id, { enabled }); rules.setData((d) => d && d.map((x) => (x.id === r.id ? u : x))); }} />

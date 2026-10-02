@@ -50,6 +50,9 @@ const paths: Record<string, string> = {
   key: 'M14.5 13.5a4.5 4.5 0 1 0-4.2-2.9L3 18v3h3v-2h2v-2h2l1.6-1.6a4.5 4.5 0 0 0 2.9.1zM16 8.5h.01',
   record: 'M12 19a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z',
   stop: 'M7 7h10v10H7z',
+  mic: 'M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21',
+  laptop: 'M5 5h14v10H5zM3 19h18',
+  card: 'M3 6h18v12H3zM3 10h18M7 15h4',
 };
 
 export type IconName = keyof typeof paths;

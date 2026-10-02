@@ -116,9 +116,10 @@ export function TaskDetailPage({ id }: { id: string }) {
                     <div className="pip"><Icon name={stepIcon[s.kind]} size={12} /></div>
                     <div style={{ minWidth: 0 }}>
                       <div>{s.summary}</div>
+                      {/^Triggered by/.test(s.summary) && s.detail && <p className="said">{s.detail}</p>}
                       <div className="when">
                         {clockTime(s.at)}{conn(s.connectionId) && ` · ${conn(s.connectionId)}`}
-                        {s.detail && (
+                        {s.detail && !/^Triggered by/.test(s.summary) && (
                           <>{' · '}<button className="linkish" aria-expanded={open.has(s.id)} onClick={() => setOpen((o) => { const n = new Set(o); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); return n; })}>{open.has(s.id) ? 'Hide details' : 'Details'}</button></>
                         )}
                       </div>

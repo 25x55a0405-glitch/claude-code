@@ -4,6 +4,7 @@ import { ApprovalCard } from '../components/ApprovalCard';
 import { BrowserPip, BrowserWindow, useBrowserTab } from '../components/BrowserView';
 import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/Composer';
+import { VoiceMode, voiceSupported } from '../components/Voice';
 import { GroupForm, MentionBar } from '../components/GroupChat';
 import { TaskInline } from '../components/TaskInline';
 import { LessonCard } from '../components/LessonCard';
@@ -32,6 +33,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const [notes, setNotes] = useState<ConstellationMessage[]>([]);
   const browser = useBrowserTab(group ? undefined : star?.id || undefined);
   const [watching, setWatching] = useState(false);
+  const [talking, setTalking] = useState(false);
   const tasks = useResource(() => api.listTasks(), [], ['task.updated']);
   const approvals = useResource(() => api.listApprovals(), [], ['approval.created', 'approval.updated']);
   const ideas = useResource(() => api.listIdeas(), []);
@@ -88,6 +90,13 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     first.current = false;
   }, [messages, thinking, notes.length]);
 
+  // The reply can start streaming before the send returns, so put the
+  // user's message ahead of anything that arrived after it was sent.
+  const placeUser = (m: Message, before: Set<string>) => setMessages((ms) => {
+    const list = (ms ?? []).filter((x) => x.id !== m.id);
+    const at = list.findIndex((x) => !before.has(x.id) && new Date(x.createdAt) >= new Date(m.createdAt));
+    return at === -1 ? [...list, m] : [...list.slice(0, at), m, ...list.slice(at)];
+  });
   const send = async (text: string) => {
     if (!activeId) return;
     setSendError(null);
@@ -95,13 +104,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     const before = new Set((messages ?? []).map((x) => x.id));
     try {
       const m = await api.sendMessage(activeId, text);
-      // The reply can start streaming before this call returns, so put the
-      // user's message ahead of anything that arrived after it was sent.
-      setMessages((ms) => {
-        const list = (ms ?? []).filter((x) => x.id !== m.id);
-        const at = list.findIndex((x) => !before.has(x.id));
-        return at === -1 ? [...list, m] : [...list.slice(0, at), m, ...list.slice(at)];
-      });
+      placeUser(m, before);
     } catch (e) {
       setThinking(false);
       setSendError(`Couldn’t send that. ${(e as Error).message}`);
@@ -159,6 +162,9 @@ export function Chat({ conversationId }: { conversationId?: string }) {
     );
   }
 
+  // Keyed, so it stays open when the first spoken message turns the welcome view into the chat.
+  const voiceEl = talking && star && activeId ? <VoiceMode key="voice" star={star} conversationId={activeId} onUserMessage={(m) => { placeUser(m, new Set((messages ?? []).map((x) => x.id))); setThinking(true); }} onClose={() => setTalking(false)} /> : null;
+
   if (messages && messages.length === 0 && notes.length === 0) {
     const sideChat = conv && !conv.main && !home;
     if (group) {
@@ -176,12 +182,13 @@ export function Chat({ conversationId }: { conversationId?: string }) {
       );
     }
     return (
+      <>
       <div className="scroll">
         <div className="hero">
           {star && <StarFace star={star} size={104} track />}
           <h1>{sideChat ? 'What’s this side chat about?' : star && !star.main ? `What should ${name} take on?` : `What can I take off your plate${settings ? `, ${settings.userName}` : ''}?`}</h1>
           {star && !star.main && !sideChat && <p className="t2" style={{ marginTop: -10 }}>{star.role}</p>}
-          <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus value={draft} onChange={setDraft} />
+          <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus value={draft} onChange={setDraft} onVoice={star && voiceSupported() ? () => setTalking(true) : undefined} />
           {sendError && <p className="send-error" role="alert">{sendError}</p>}
           {star && browser.tab && <div className="hero-pip"><BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} /></div>}
           {(!star || star.main) && (
@@ -194,6 +201,8 @@ export function Chat({ conversationId }: { conversationId?: string }) {
         </div>
         {watching && star && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
       </div>
+      {voiceEl}
+      </>
     );
   }
 
@@ -245,7 +254,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
                       const a = approvalById(c.approvalId);
                       return a ? <ApprovalCard key={a.id + a.status} approval={a} compact onDecided={() => approvals.reload()} /> : null;
                     })}
-                    {(last || m.via) && m.status !== 'streaming' && <span className="stamp">{clockTime(m.createdAt)}{m.via ? ` · via ${m.via === 'telegram' ? 'Telegram' : 'Slack'}` : ''}</span>}
+                    {(last || m.via) && m.status !== 'streaming' && <span className="stamp">{clockTime(m.createdAt)}{m.via ? (m.via === 'voice' ? ' · spoken' : ` · via ${m.via === 'telegram' ? 'Telegram' : 'Slack'}`) : ''}</span>}
                   </div>
                 </div>
               </Fragment>
@@ -265,10 +274,11 @@ export function Chat({ conversationId }: { conversationId?: string }) {
         {star && browser.tab && <BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} />}
         {sendError && <p className="send-error" role="alert">{sendError}</p>}
         {groupBits && <div className="dock-group">{groupBits}</div>}
-        <Composer onSend={send} placeholder={group ? 'Message the group. @Name picks who answers' : conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} />
+        <Composer onSend={send} placeholder={group ? 'Message the group. @Name picks who answers' : conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} onVoice={!group && star && voiceSupported() ? () => setTalking(true) : undefined} />
         <div className="hint">{group ? 'Up to two Stars reply to each message. They still ask before anything they can’t undo.' : `${name} keeps working after you close this tab, and asks before anything it can’t undo.`}</div>
       </div>
       {watching && star && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
+      {voiceEl}
     </>
   );
 }

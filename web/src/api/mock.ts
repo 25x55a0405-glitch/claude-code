@@ -13,7 +13,7 @@ import type {
   StarView,
 } from './types';
 import * as seed from './mockData';
-import type { BrowserSession, RecordedStep, Recording, SavedLogin, WorkspaceFile, Lesson, McpServer, MessagingStatus, ModelProvider, PushSubscriptionInfo, Secret, Skill, TriggerInput, TriggerSetup } from './types';
+import type { BrowserSession, CompanionDevice, RecordedStep, Recording, SavedLogin, WorkspaceFile, Lesson, McpServer, MessagingStatus, ModelProvider, PushSubscriptionInfo, Secret, Skill, TriggerInput, TriggerSetup } from './types';
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -22,7 +22,10 @@ function mockFrame(s: BrowserSession, clicks: { x: number; y: number }[]): strin
   let host = s.url;
   try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch { /* keep the raw text */ }
   const flights = /kayak|flights|skyscanner/.test(host);
-  const rows = flights
+  const shop = /bertrand|checkout/.test(s.url);
+  const rows = shop
+    ? [['Lisbon: The Rough Guide', 'Paperback · 1', '', '€19.90'], ['Delivery', '3 to 5 days', '', '€5.00'], ['Card number', 'You fill this in', '', ''], ['Total', 'Including VAT', '', '€24.90']]
+    : flights
     ? [['TAP Air Portugal', '1 stop · EWR', '8h 05m', '$642'], ['United', 'Nonstop', '6h 50m', '$711'], ['Iberia', '1 stop · MAD', '10h 20m', '$658'], ['Delta', 'Nonstop', '6h 55m', '$733']]
     : [['Result one', 'A page Sky found', '', ''], ['Result two', 'Another source', '', ''], ['Result three', 'Worth a look', '', '']];
   const cards = rows.map(([a, b, c, d], i) => {
@@ -80,6 +83,8 @@ export function createMockApi(): SkyApi {
     recordings: clone(seed.seedRecordings),
     files: clone(seed.seedFiles),
     logins: clone(seed.seedLogins),
+    companion: clone(seed.seedCompanion),
+    voice: { sttProviderIds: [] as string[], sttModel: 'whisper-large-v3-turbo', ttsProviderIds: [] as string[], ttsModel: 'tts-1', ttsVoice: 'nova' },
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
     activityTask: 't_flights' as string | null,
@@ -548,7 +553,7 @@ export function createMockApi(): SkyApi {
       await wait(500);
       if (!/^\d+:[\w-]{20,}$/.test(botToken.trim())) throw new Error('Telegram didn’t accept that token. Copy it again from @BotFather.');
       const code = String(Math.floor(100000 + Math.random() * 900000));
-      const m = setMessaging({ app: 'telegram', state: 'pairing', pairCode: code, pairLink: `https://t.me/my_sky_bot?start=${code}`, botName: 'my_sky_bot', error: null });
+      const m = setMessaging({ app: 'telegram', state: 'pairing', pairCode: code, pairLink: `https://t.me/my_sky_bot?start=${code}`, botName: 'my_sky_bot', error: null, pairExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), pairLocked: false });
       setTimeout(() => setMessaging({ ...m, state: 'on', pairCode: null, pairLink: null }), 15000);
       return m;
     },
@@ -556,11 +561,18 @@ export function createMockApi(): SkyApi {
       await wait(500);
       if (!botToken.startsWith('xoxb-') || !appToken.startsWith('xapp-')) throw new Error('The bot token starts with xoxb- and the app token with xapp-.');
       const code = String(Math.floor(100000 + Math.random() * 900000));
-      const m = setMessaging({ app: 'slack', state: 'pairing', pairCode: code, pairLink: null, botName: 'Acme workspace', error: null });
+      const m = setMessaging({ app: 'slack', state: 'pairing', pairCode: code, pairLink: null, botName: 'Acme workspace', error: null, pairExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), pairLocked: false });
       setTimeout(() => setMessaging({ ...m, state: 'on', pairCode: null }), 15000);
       return m;
     },
-    async disconnectMessaging(app) { await wait(); return setMessaging({ app, state: 'off', pairCode: null, pairLink: null, botName: null, error: null }); },
+    async disconnectMessaging(app) { await wait(); return setMessaging({ app, state: 'off', pairCode: null, pairLink: null, botName: null, error: null, pairExpiresAt: null, pairLocked: false }); },
+    async newPairCode(app) {
+      await wait();
+      const cur = db.messaging.find((m) => m.app === app);
+      if (!cur || cur.state === 'on') throw new Error('Already paired');
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      return setMessaging({ ...cur, state: 'pairing', pairCode: code, pairLink: app === 'telegram' && cur.botName ? `https://t.me/${cur.botName}?start=${code}` : null, pairExpiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), pairLocked: false });
+    },
     async slackManifest() {
       await wait();
       return JSON.stringify({ display_information: { name: db.settings.agentName }, features: { bot_user: { display_name: db.settings.agentName, always_online: true } }, oauth_config: { scopes: { bot: ['chat:write', 'im:history', 'im:read', 'im:write', 'channels:history', 'groups:history', 'users:read'] } }, settings: { event_subscriptions: { bot_events: ['message.im', 'message.channels', 'message.groups'] }, interactivity: { is_enabled: true }, socket_mode_enabled: true } }, null, 2);
@@ -630,22 +642,33 @@ export function createMockApi(): SkyApi {
         rules: db.rules.filter((r) => r.starId === id).map((r) => r.text),
       };
     },
-    async importTemplate(from) {
-      await wait(500);
+    async previewTemplate(from) {
+      await wait(300);
       let template;
       if ('template' in from) template = from.template;
       else if ('id' in from) template = seed.seedTemplates.find((t) => t.id === from.id)?.template;
       else throw new Error('The preview can’t fetch links. Try a file instead.');
       if (!template || template.format !== 'sky.star') throw new Error('That isn’t a Sky Star template');
+      const strict: Record<string, number> = { autonomous: 0, balanced: 1, ask: 2 };
+      const skipped: string[] = [];
+      const apps = template.apps === null ? null : template.apps.filter((a) => db.connections.some((c) => c.id === a) || (skipped.push(`app ${a} (not available here)`), false));
+      const builtIn = 'id' in from && from.id.startsWith('builtin:');
+      return {
+        template: clone(template),
+        wants: { autonomy: template.autonomy, apps: template.apps, rules: template.rules, skills: template.skills.map((k) => k.name) },
+        gets: { autonomy: template.autonomy && strict[template.autonomy] > strict[db.settings.autonomy] ? template.autonomy : null, connectionIds: apps, rulesAskOnly: !builtIn },
+        skipped,
+      };
+    },
+    async importTemplate(from) {
+      const pv = await api.previewTemplate(from);
+      const template = pv.template;
       let name = template.name;
       for (let n = 2; db.stars.some((x) => x.name.toLowerCase() === name.toLowerCase()); n++) name = `${template.name} ${n}`;
-      const apps = template.apps;
-      const known = apps?.filter((a) => db.connections.some((c) => c.id === a)) ?? null;
-      const skipped = apps?.filter((a) => !db.connections.some((c) => c.id === a)) ?? [];
-      const star = await api.createStar({ name, role: template.role, instructions: template.instructions, avatar: template.avatar, autonomy: template.autonomy, connectionIds: known, personality: template.personality, replyStyle: template.replyStyle });
+      const star = await api.createStar({ name, role: template.role, instructions: template.instructions, avatar: template.avatar, autonomy: pv.gets.autonomy, connectionIds: pv.gets.connectionIds, personality: template.personality, replyStyle: template.replyStyle });
       template.skills.forEach((k) => db.skills.push({ id: uid('sk'), ...k, starId: star.id, source: 'you', uses: 0, lastUsedAt: null, createdAt: iso(), updatedAt: iso() }));
-      template.rules.forEach((text) => db.rules.push({ id: uid('r'), text, enabled: true, builtIn: false, starId: star.id, createdAt: iso() }));
-      return { star, skipped };
+      template.rules.forEach((text) => db.rules.push({ id: uid('r'), text, enabled: true, builtIn: false, starId: star.id, createdAt: iso(), askOnly: pv.gets.rulesAskOnly }));
+      return { star, skipped: pv.skipped };
     },
 
     async listProviders() { await wait(); return clone(db.providers); },
@@ -755,6 +778,12 @@ export function createMockApi(): SkyApi {
       if (!s) throw new Error('That Star’s browser isn’t open.');
       const r = db.recordings.find((x) => x.starId === starId && x.status === 'recording');
       if (r) finishRecording(r);
+      if (s.checkout?.stage === 'paying') {
+        const t = db.tasks.find((x) => x.id === s.checkout!.taskId);
+        if (t) { const step = { id: uid('s'), at: iso(), kind: 'result' as const, summary: 'You paid and handed back. Checking the page for the order confirmation' }; t.steps.push(step); t.status = 'done'; t.progress = 1; emit({ type: 'task.step', data: { taskId: t.id, step } }); emit({ type: 'task.updated', data: summary(t) }); }
+        s.checkout = null;
+        s.waitingTaskId = null;
+      }
       setControl(s, 'star', note ?? null);
       return clone(s);
     },
@@ -837,6 +866,46 @@ export function createMockApi(): SkyApi {
       emit({ type: 'workspace.changed', data: { starId, path } });
     },
 
+    async getVoice() {
+      await wait();
+      // The preview has no speech providers, so the browser's own speech is used.
+      return { speechToText: [], textToSpeech: [], serverSpeechToText: false, serverTextToSpeech: false, settings: clone(db.voice) };
+    },
+    async setVoice(patch) {
+      await wait();
+      Object.assign(db.voice, patch);
+      return api.getVoice();
+    },
+    async sendVoice() { await wait(); throw Object.assign(new Error('No speech provider is set up, so the browser listens instead'), { status: 503, code: 'voice_unavailable' }); },
+    async speak() { await wait(); throw Object.assign(new Error('No speech provider is set up'), { status: 503, code: 'voice_unavailable' }); },
+
+    async listCompanion() { await wait(); return { devices: clone(db.companion), socketPath: '/api/v1/companion/socket', download: 'companion/sky-companion.mjs' }; },
+    async pairCompanion() {
+      await wait();
+      const code = Array.from({ length: 8 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 31)]).join('');
+      // Pretend a computer pairs a little later.
+      setTimeout(() => {
+        if (db.companion.some((d) => d.id === 'pc_new')) return;
+        const d: CompanionDevice = { id: 'pc_new', name: 'Work laptop', platform: 'win32', enabled: true, localEnabled: true, connected: true, allow: { folders: [], commands: [], openUrls: false }, confirmLocally: true, pairedAt: iso(), lastSeenAt: iso() };
+        db.companion.push(d);
+        emit({ type: 'companion.updated', data: clone(d) });
+      }, 9000);
+      return { code, expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(), command: `node sky-companion.mjs pair ${location.origin} ${code}` };
+    },
+    async updateCompanionDevice(id, patch) {
+      await wait();
+      const d = db.companion.find((x) => x.id === id);
+      if (!d) throw new Error('That computer is no longer paired');
+      Object.assign(d, patch);
+      emit({ type: 'companion.updated', data: clone(d) });
+      return clone(d);
+    },
+    async deleteCompanionDevice(id) {
+      await wait();
+      db.companion = db.companion.filter((d) => d.id !== id);
+      emit({ type: 'companion.deleted', data: { id } });
+    },
+
     async listLogins() { await wait(); return { enabled: db.settings.passwordFill === true, logins: clone(db.logins) }; },
     async createLogin(input) {
       await wait();
@@ -899,6 +968,12 @@ export function createMockApi(): SkyApi {
       a.status = d.decision === 'approve' ? 'approved' : 'rejected';
       if (d.editedPreview) a.preview = d.editedPreview;
       emit({ type: 'approval.updated', data: clone(a) });
+      // Saying yes to a payment gives you the browser; the Star never pays.
+      const tabFor = a.starId ? db.browser.find((b) => b.starId === a.starId && b.checkout) : undefined;
+      if (tabFor?.checkout && /^Pay /.test(a.action)) {
+        if (a.status === 'approved') { tabFor.checkout.stage = 'paying'; idle[tabFor.starId] = false; setControl(tabFor, 'person', `Pay ${tabFor.checkout.total} at ${tabFor.checkout.merchant}, then hand back`); }
+        else { tabFor.checkout = null; tabFor.waitingTaskId = null; emit({ type: 'browser.control', data: clone(tabFor) }); }
+      }
       logActivity('approval_resolved', `${a.status === 'approved' ? 'Approved' : 'Declined'}: ${a.action} to ${a.target}`, a.taskId);
       if (a.taskId) {
         const t = findTask(a.taskId);
@@ -927,9 +1002,9 @@ export function createMockApi(): SkyApi {
       return clone(c);
     },
     async listMessages(cid) { await wait(); return clone(db.messages.filter((m) => m.conversationId === cid)); },
-    async sendMessage(cid, content) {
+    async sendMessage(cid, content, via) {
       await wait(80);
-      const m: Message = { id: uid('msg'), conversationId: cid, role: 'user', content, createdAt: iso(), status: 'done' };
+      const m: Message = { id: uid('msg'), conversationId: cid, role: 'user', content, createdAt: iso(), status: 'done', ...(via ? { via } : {}) };
       db.messages.push(m);
       const conv = db.conversations.find((c) => c.id === cid);
       if (conv && conv.title === 'New chat') conv.title = content.slice(0, 40);

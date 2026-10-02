@@ -1,5 +1,6 @@
 import type {
   ActivityEvent,
+  CompanionDevice,
   Recording,
   SavedLogin,
   Approval,
@@ -59,10 +60,30 @@ export const seedConnections: Connection[] = [
   { id: 'notion', provider: 'notion', name: 'Notion', description: 'Read and update pages and databases', status: 'expired', access: 'read_write', lastSyncAt: ago(60 * 26) },
   { id: 'slack', provider: 'slack', name: 'Slack', description: 'Talk to Sky and post to channels', status: 'disconnected', access: 'read' },
   { id: 'drive', provider: 'drive', name: 'Google Drive', description: 'Find and read documents', status: 'disconnected', access: 'read' },
+  { id: 'computer', provider: 'computer', name: 'Your computer', description: 'Open pages, read and write files, and run programs you allow, through the Sky companion', status: 'connected', access: 'read_write', lastSyncAt: ago(2) },
   { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Sky from your phone', status: 'disconnected', access: 'read_write' },
 ];
 
 export const seedTasks: TaskDetail[] = [
+  {
+    id: 't_guide',
+    starId: 'star_sky',
+    title: 'Buy the Lisbon guidebook',
+    description: 'The Rough Guide to Lisbon, paperback, delivered home.',
+    status: 'waiting_approval',
+    kind: 'one_off',
+    progress: 0.85,
+    createdAt: ago(12),
+    updatedAt: ago(1),
+    lastRunAt: ago(1),
+    connectionIds: ['browser'],
+    lastOutcome: 'Ready to pay €24.90 at Livraria Bertrand',
+    steps: [
+      { id: 'g1', at: ago(11), kind: 'plan', summary: 'Find the paperback at a shop that delivers to you' },
+      { id: 'g2', at: ago(6), kind: 'tool', summary: 'Filled in the delivery address and chose standard delivery', connectionId: 'browser' },
+      { id: 'g3', at: ago(1), kind: 'approval', summary: 'Stopped at payment: €24.90 at Livraria Bertrand. Waiting for you to pay' },
+    ],
+  },
   {
     id: 't_bank',
     starId: 'star_post',
@@ -76,7 +97,7 @@ export const seedTasks: TaskDetail[] = [
     connectionIds: ['gmail', 'drive'],
     lastOutcome: 'Saved the September statement to Drive',
     trigger: { kind: 'email', query: 'from:statements@mybank.com has:attachment', fired: 3, lastFiredAt: ago(60 * 26) },
-    steps: [{ id: 'bk1', at: ago(60 * 26), kind: 'result', summary: 'Triggered: statement email. Saved the PDF to Drive/Finance' }],
+    steps: [{ id: 'bk1', at: ago(60 * 26), kind: 'result', summary: 'Triggered by an email', detail: 'Your statement for September is ready (statements@mybank.com)' }, { id: 'bk2', at: ago(60 * 26 - 1), kind: 'result', summary: 'Saved the PDF to Drive/Finance' }],
   },
   {
     id: 't_ship',
@@ -91,7 +112,7 @@ export const seedTasks: TaskDetail[] = [
     connectionIds: ['github'],
     lastOutcome: 'Push by d: new Models screen and live browser',
     trigger: { kind: 'github', events: ['push'], fired: 7, lastFiredAt: ago(40) },
-    steps: [{ id: 'sh1', at: ago(40), kind: 'result', summary: 'Triggered: push to main. Summarised 2 commits' }],
+    steps: [{ id: 'sh1', at: ago(40), kind: 'result', summary: 'Triggered by GitHub', detail: 'push to main: “Fix the briefing time zone” and 1 more' }, { id: 'sh2', at: ago(39), kind: 'result', summary: 'Summarised 2 commits' }],
   },
   {
     id: 't_inbox',
@@ -227,6 +248,32 @@ export const seedApprovals: Approval[] = [
     risk: 'low',
     status: 'pending',
     createdAt: ago(2),
+  },
+  {
+    id: 'a_pay',
+    starId: 'star_sky',
+    taskId: 't_guide',
+    action: 'Pay €24.90 at Livraria Bertrand',
+    target: 'bertrand.pt',
+    reason: 'Everything is filled in up to payment. You pay; Sky never enters card details.',
+    preview: 'Lisbon: The Rough Guide (paperback), delivery to your address in 3 to 5 days\nTotal: €24.90 including delivery\nhttps://www.bertrand.pt/checkout/payment',
+    connectionId: 'browser',
+    risk: 'high',
+    status: 'pending',
+    createdAt: ago(1),
+  },
+  {
+    id: 'a_comp',
+    starId: 'star_post',
+    taskId: 't_inbox',
+    action: 'Read ~/Documents/budget.csv',
+    target: 'd’s MacBook',
+    reason: 'To check the hotel budget before replying to Maya about the offsite.',
+    preview: 'Read the file ~/Documents/budget.csv.',
+    connectionId: 'computer',
+    risk: 'medium',
+    status: 'pending',
+    createdAt: ago(3),
   },
 ];
 
@@ -389,7 +436,8 @@ export const seedPresets: ProviderPreset[] = [
 ];
 
 export const seedBrowser: BrowserSession[] = [
-  { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1), control: 'star', controlNote: null, waitingTaskId: null, recordingId: null },
+  { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1), control: 'star', controlNote: null, waitingTaskId: null, recordingId: null, checkout: null },
+  { starId: 'star_sky', url: 'https://www.bertrand.pt/checkout/payment', title: 'Payment · Livraria Bertrand', frameId: 'f2', updatedAt: ago(1), control: 'star', controlNote: null, waitingTaskId: 't_guide', recordingId: null, checkout: { taskId: 't_guide', total: '€24.90', merchant: 'Livraria Bertrand', summary: 'Lisbon: The Rough Guide (paperback), delivered in 3 to 5 days', url: 'https://www.bertrand.pt/checkout/payment', stage: 'waiting_ok' } },
 ];
 
 /** Each Star's folder, as path → text (folders are implied). */
@@ -419,6 +467,14 @@ export const seedRecordings: Recording[] = [
       { at: ago(92.5), kind: 'scroll', url: 'https://www.flytap.com/en-us/account/miles' },
     ],
     draft: { name: 'Check my TAP miles', whenToUse: 'When d asks how many TAP miles they have, or before booking a TAP flight', steps: '1. Open flytap.com and choose Log in.\n2. Sign in with the saved TAP login (ask d if there isn’t one).\n3. Open My miles.\n4. Report the balance and anything expiring in the next 3 months.' },
+  },
+];
+
+export const seedCompanion: CompanionDevice[] = [
+  {
+    id: 'pc_mac', name: 'd’s MacBook', platform: 'darwin', enabled: true, localEnabled: true, connected: true,
+    allow: { folders: ['~/Documents', '~/Downloads/sky'], commands: ['python3', 'pandoc'], openUrls: true },
+    confirmLocally: true, pairedAt: ago(60 * 24 * 2), lastSeenAt: ago(0.2),
   },
 ];
 
@@ -452,8 +508,8 @@ export const seedTriggerEvents: TriggerEvent[] = [
 ];
 
 export const seedMessaging: MessagingStatus[] = [
-  { app: 'telegram', state: 'on', pairCode: null, pairLink: null, botName: 'my_sky_bot', error: null },
-  { app: 'slack', state: 'off', pairCode: null, pairLink: null, botName: null, error: null },
+  { app: 'telegram', state: 'on', pairCode: null, pairLink: null, botName: 'my_sky_bot', error: null, pairExpiresAt: null, pairLocked: false },
+  { app: 'slack', state: 'off', pairCode: null, pairLink: null, botName: null, error: null, pairExpiresAt: null, pairLocked: false },
 ];
 
 export const seedMcp: McpServer[] = [
@@ -461,9 +517,10 @@ export const seedMcp: McpServer[] = [
     id: 'mcp_fs', name: 'files', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/home/d/notes'], url: null,
     envKeys: [], headerKeys: [], enabled: true, toolEffects: {}, status: 'ready', error: null,
     tools: [
-      { name: 'read_file', toolName: 'mcp_files_read_file', description: 'Read a file', effect: 'read' },
-      { name: 'list_directory', toolName: 'mcp_files_list_directory', description: 'List a folder', effect: 'read' },
-      { name: 'write_file', toolName: 'mcp_files_write_file', description: 'Create or overwrite a file', effect: 'write' },
+      { name: 'read_file', toolName: 'mcp_files_read_file', description: 'Read a file', effect: 'read', hint: 'read', confirmed: true },
+      { name: 'list_directory', toolName: 'mcp_files_list_directory', description: 'List a folder', effect: 'read', hint: 'read', confirmed: true },
+      { name: 'write_file', toolName: 'mcp_files_write_file', description: 'Create or overwrite a file', effect: 'write', hint: 'write', confirmed: true },
+      { name: 'move_file', toolName: 'mcp_files_move_file', description: 'Move or rename a file', effect: 'write', hint: 'write', confirmed: false },
     ],
     createdAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3),
   },

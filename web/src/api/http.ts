@@ -30,6 +30,8 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'browser.control',
   'recording.updated',
   'workspace.changed',
+  'companion.updated',
+  'companion.deleted',
 ];
 
 export class HttpError extends Error {
@@ -152,6 +154,31 @@ export function createHttpApi(baseUrl: string): SkyApi {
     },
     deleteFile: (starId, path) => call('DELETE', `/stars/${encodeURIComponent(starId)}/files` + qs({ path })),
 
+    getVoice: () => call('GET', '/voice'),
+    setVoice: (patch) => call('PUT', '/voice', patch),
+    async sendVoice(conversationId, audio) {
+      const res = await fetch(`${root}/conversations/${conversationId}/voice`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': audio.type.split(';')[0] || 'audio/webm' }, body: audio });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+        throw new HttpError(res.status, json?.error?.code ?? 'unknown', json?.error?.message ?? res.statusText);
+      }
+      return json;
+    },
+    async speak(text, starId) {
+      const res = await fetch(`${root}/voice/speak`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, starId }) });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        throw new HttpError(res.status, json?.error?.code ?? 'unknown', json?.error?.message ?? res.statusText);
+      }
+      return res.blob();
+    },
+
+    listCompanion: () => call('GET', '/companion'),
+    pairCompanion: () => call('POST', '/companion/pair'),
+    updateCompanionDevice: (id, patch) => call('PATCH', `/companion/devices/${id}`, patch),
+    deleteCompanionDevice: (id) => call('DELETE', `/companion/devices/${id}`),
+
     listLogins: () => call('GET', '/logins'),
     createLogin: (input) => call('POST', '/logins', input),
     updateLogin: (id, patch) => call('PATCH', `/logins/${id}`, patch),
@@ -185,6 +212,7 @@ export function createHttpApi(baseUrl: string): SkyApi {
     connectTelegram: (botToken) => call('POST', '/messaging/telegram', { botToken }),
     connectSlack: (botToken, appToken) => call('POST', '/messaging/slack', { botToken, appToken }),
     disconnectMessaging: (app) => call('DELETE', `/messaging/${app}`),
+    newPairCode: (app) => call('POST', `/messaging/${app}/code`),
     slackManifest: async () => {
       const m = await call<unknown>('GET', '/messaging/slack/manifest');
       return typeof m === 'string' ? m : JSON.stringify(m, null, 2);
@@ -201,6 +229,7 @@ export function createHttpApi(baseUrl: string): SkyApi {
 
     listTemplates: () => call('GET', '/templates'),
     starTemplate: (id) => call('GET', `/stars/${id}/template`),
+    previewTemplate: (from) => call('POST', '/templates/preview', from),
     importTemplate: (from) => call('POST', '/templates/import', from),
 
     listTasks: (filter) => call('GET', '/tasks' + qs({ status: filter?.status?.join(','), starId: filter?.starId })),
@@ -214,7 +243,7 @@ export function createHttpApi(baseUrl: string): SkyApi {
     listConversations: () => call('GET', '/conversations'),
     createConversation: (starId) => call('POST', '/conversations', starId ? { starId } : {}),
     listMessages: (id) => call('GET', `/conversations/${id}/messages`),
-    sendMessage: (id, content) => call('POST', `/conversations/${id}/messages`, { content }),
+    sendMessage: (id, content, via) => call('POST', `/conversations/${id}/messages`, via ? { content, via } : { content }),
 
     listMemory: () => call('GET', '/memory'),
     addMemory: (input) => call('POST', '/memory', input),

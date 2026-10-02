@@ -93,6 +93,9 @@ decorative animation beyond the character.
 | **Permissions** | Independence level, apps with look-only or look-and-act access, rules, the safety guard, signing in with saved logins (off until confirmed), and secrets |
 | **Safety guard** | How strict the second check is, and every action it stopped or asked about, with its reason |
 | **Workspace** | Each Star's folder (browse, add, download, delete) and a read-only terminal of the commands it ran |
+| **Voice** | The mic in a Star's chat opens a full-screen talk mode with the Star's character as its face; push to talk or hands-free. Settings has speech providers, and each Star can have its own voice |
+| **Your computer** | Settings: pair with a one-time command, switch each computer on or off, see its allowlist (changed only on the computer), and choose which Stars can use it. Its approvals say plainly what it wants to open, read, write or run |
+| **Checkout** | When a Star reaches payment it shows the total; "OK, I’ll pay" hands you the browser, and "I’ve paid, hand back" returns it |
 | **Activity** | Everything it has done, by day |
 | **Settings** | Name, character and colour, tone, briefing, quiet hours, channels, theme |
 

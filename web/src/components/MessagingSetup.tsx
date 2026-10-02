@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, type MessagingApp, type MessagingStatus } from '../api';
 import { useAgent } from '../lib/agent';
 import { useLiveEvents, useResource } from '../lib/hooks';
@@ -66,6 +66,9 @@ function AppCard({ m, onChange }: { m: MessagingStatus; onChange: (m: MessagingS
   const disconnect = async () => {
     try { onChange(await api.disconnectMessaging(m.app)); toast(`${name} disconnected`); } catch (e) { toast((e as Error).message); }
   };
+  const newCode = async () => {
+    try { onChange(await api.newPairCode(m.app)); } catch (e) { toast((e as Error).message); }
+  };
   const getManifest = async () => {
     try {
       const text = await api.slackManifest();
@@ -92,13 +95,22 @@ function AppCard({ m, onChange }: { m: MessagingStatus; onChange: (m: MessagingS
 
       {m.state === 'pairing' && m.pairCode && (
         <div className="pairing">
-          <p className="t2" style={{ fontSize: 14 }}>Send this code to {m.botName ? `${m.app === 'telegram' ? '@' : ''}${m.botName}` : 'your bot'} {m.app === 'slack' ? 'in a direct message' : ''} to finish:</p>
+          <p className="t2" style={{ fontSize: 14 }}>Send exactly this code to {m.botName ? `${m.app === 'telegram' ? '@' : ''}${m.botName}` : 'your bot'}{m.app === 'slack' ? ' in a direct message' : ''}, with nothing else in the message:</p>
           <div className="code" aria-label={`Pairing code ${m.pairCode.split('').join(' ')}`}>{m.pairCode.split('').map((c, i) => <span key={i}>{c}</span>)}</div>
           <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
             {m.pairLink && <a className="btn ink sm" href={m.pairLink} target="_blank" rel="noreferrer">Open in Telegram</a>}
             <button className="btn sm quiet" onClick={disconnect}>Cancel</button>
           </div>
-          <p className="t3 xs">This screen updates by itself once it’s paired.</p>
+          <p className="t3 xs">This screen updates by itself once it’s paired.{m.pairExpiresAt && <> <Expires at={m.pairExpiresAt} onExpired={newCode} /></>}</p>
+        </div>
+      )}
+      {m.state === 'pairing' && !m.pairCode && (
+        <div className="pairing">
+          <p className="t2" style={{ fontSize: 14 }}>{m.pairLocked ? 'That code stopped working after too many wrong tries, so nobody can guess their way in.' : 'That code ran out before it was sent.'}</p>
+          <div className="row wrap" style={{ gap: 8, justifyContent: 'center' }}>
+            <button className="btn ink sm" onClick={newCode}>Make a new code</button>
+            <button className="btn sm quiet" onClick={disconnect}>Cancel</button>
+          </div>
         </div>
       )}
 
@@ -138,4 +150,13 @@ function AppCard({ m, onChange }: { m: MessagingStatus; onChange: (m: MessagingS
       {m.state !== 'off' && m.state !== 'pairing' && <p className="t3 xs"><Icon name="lock" size={12} /> Tokens stay on your Sky server.</p>}
     </div>
   );
+}
+
+/** "Works for 9 more minutes", ticking down; offers a new code once it runs out. */
+function Expires({ at, onExpired }: { at: string; onExpired: () => void }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 15_000); return () => window.clearInterval(t); }, []);
+  const left = Math.ceil((new Date(at).getTime() - now) / 60_000);
+  if (left <= 0) return <>It has run out. <button className="link-btn" onClick={onExpired}>Make a new code</button></>;
+  return <>Works for {left} more minute{left === 1 ? '' : 's'}.</>;
 }
