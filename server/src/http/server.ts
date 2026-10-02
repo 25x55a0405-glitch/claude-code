@@ -9,6 +9,8 @@ import { ApiError } from '../util.ts';
 import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
 import { registerRoutes } from './routes.ts';
+import type { Vault } from '../vault.ts';
+import type { Push } from '../push.ts';
 import type { ModelRouter } from '../models/router.ts';
 import type { BrowserManager } from '../browser/browser.ts';
 import { Router, type Req } from './router.ts';
@@ -21,10 +23,10 @@ const TYPES: Record<string, string> = {
   '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
 };
 
-export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager): Server {
+export function createHttpServer(config: Config, store: Store, runtime: Runtime, providers: Providers, models: ModelRouter, browser: BrowserManager, vault: Vault, push: Push): Server {
   const auth = new Auth(config, store.db);
   const router = new Router();
-  registerRoutes(router, store, runtime, providers, models, browser);
+  registerRoutes(router, store, runtime, providers, models, browser, vault, push);
   const origins = new Set((config.webOrigin ?? '').split(',').map((s) => s.trim()).filter(Boolean));
 
   const send = (res: ServerResponse, status: number, body?: unknown, headers: Record<string, string> = {}) => {

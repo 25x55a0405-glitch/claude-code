@@ -42,6 +42,20 @@ declare module '../../web/src/api/types.ts' {
     /** Applies to one Star only; absent or null means every Star. */
     starId?: string | null;
   }
+  interface Message {
+    /** Set on the "Got it, I'll…" note a Star posts after learning from a correction. */
+    lessonId?: string;
+  }
+  interface Settings {
+    /** Reflect on declined or edited approvals, failed tasks and "no, like this" in chat. Default true. */
+    learnFromCorrections?: boolean;
+    /** A cheaper provider chain for background calls like reflection; null uses each Star's own. */
+    smallProviderIds?: string[] | null;
+    /** ntfy topic for phone notifications (https://ntfy.sh/<topic>); null turns ntfy off. */
+    ntfyTopic?: string | null;
+    /** A self-hosted ntfy server instead of ntfy.sh. */
+    ntfyServer?: string;
+  }
 }
 
 /**
@@ -66,6 +80,12 @@ export interface Star {
   paused: boolean;
   /** Model providers this Star uses, in order; null means the global order. */
   providerIds: string[] | null;
+  /** Free-text character, added to the tone preset ("dry humour, never uses emoji"). Empty: none. */
+  personality: string;
+  /** How replies should look ("short bullet points", "always end with a next step"). Empty: none. */
+  replyStyle: string;
+  /** When this Star pushes to your devices (Web Push and ntfy). */
+  notify: { whenDone: boolean; whenNeedsYou: boolean };
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -74,6 +94,7 @@ export interface Star {
 
 export interface StarStatus {
   state: AgentState;
+  /** Short present-tense phrase for under the avatar ("Reading your inbox"), from a task or a chat reply. */
   activity: string | null;
   taskId: string | null;
   activeTasks: number;
@@ -148,6 +169,69 @@ export interface ProviderPreset {
   note: string;
 }
 
+// ---- Skills -------------------------------------------------------------------
+
+/** A saved, editable recipe for doing a kind of task. */
+export interface Skill {
+  id: string;
+  name: string;
+  /** When a Star should reach for it. Shown in the prompt; the steps are read on use. */
+  whenToUse: string;
+  /** The recipe, as plain text or Markdown. */
+  steps: string;
+  /** Belongs to one Star; null means every Star can use it. */
+  starId: string | null;
+  /** you: written by the person; star: saved by a Star; builtIn: ships with Sky and can't be changed. */
+  source: 'you' | 'star' | 'builtIn';
+  uses: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---- Learning -----------------------------------------------------------------
+
+/** Something a Star learned from a correction, which the person can undo. */
+export interface Lesson {
+  id: string;
+  starId: string;
+  /** What it will do differently, one sentence ("Keep emails to Maya under five lines"). */
+  lesson: string;
+  /** What prompted it. */
+  trigger: 'declined' | 'edited' | 'failed' | 'chat';
+  /** Where it went: a new memory, or a line added to a skill. */
+  memoryId?: string;
+  skillId?: string;
+  taskId?: string;
+  undone: boolean;
+  createdAt: string;
+}
+
+// ---- Secrets ------------------------------------------------------------------
+
+/** A stored secret. The value is encrypted on the server and never returned or shown to a model. */
+export interface Secret {
+  id: string;
+  /** Used as {{secret:NAME}} in tool inputs. Letters, digits and underscores. */
+  name: string;
+  description: string;
+  /** Stars that may use it; null means all. */
+  starIds: string[] | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---- Push ---------------------------------------------------------------------
+
+export interface PushSubscriptionInfo {
+  id: string;
+  /** A name for the device, e.g. "Pixel" or "Work laptop". */
+  label: string;
+  createdAt: string;
+  lastSentAt: string | null;
+}
+
 // ---- Browser ------------------------------------------------------------------
 
 /** A Star's tab in the shared real browser. */
@@ -165,6 +249,11 @@ export type ServerEvent =
   | { type: 'provider.updated'; data: ModelProvider }
   | { type: 'provider.deleted'; data: { id: string } }
   | { type: 'browser.frame'; data: BrowserSession }
+  | { type: 'star.activity'; data: { starId: string; activity: string | null; taskId: string | null; at: string } }
+  | { type: 'skill.updated'; data: Skill }
+  | { type: 'skill.deleted'; data: { id: string } }
+  | { type: 'lesson.learned'; data: Lesson }
+  | { type: 'lesson.undone'; data: Lesson }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
   | { type: 'constellation.message'; data: ConstellationMessage };

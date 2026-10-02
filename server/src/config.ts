@@ -36,6 +36,8 @@ export interface Config {
   /** e.g. "chrome" to use the installed Google Chrome. */
   browserChannel: string | null;
   browserProxy: string | null;
+  /** Encrypts the secrets vault. Unset: a key file in DATA_DIR. */
+  secretKey: string | null;
   providers: {
     google?: { clientId: string; clientSecret: string };
     github?: { clientId: string; clientSecret: string };
@@ -90,6 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     browserPath: v('BROWSER_PATH') ?? null,
     browserChannel: v('BROWSER_CHANNEL') ?? null,
     browserProxy: v('BROWSER_PROXY') ?? null,
+    secretKey: v('SECRET_KEY') ?? null,
     providers: {
       google: pair(env, 'GOOGLE'),
       github: pair(env, 'GITHUB'),

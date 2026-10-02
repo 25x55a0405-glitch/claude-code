@@ -33,7 +33,18 @@ export class ScriptedBrain implements Brain {
 
   async complete(_system: string, prompt: string): Promise<string> {
     if (prompt.startsWith('Rules the person set')) return this.ruleCheck(prompt);
+    if (prompt.startsWith('A correction')) return this.lesson(prompt);
     return '';
+  }
+
+  /** The lesson is the person's own words: their note on a decision, or what they said in chat. */
+  private lesson(prompt: string): string {
+    const note = /Their note: “([^”]+)”/.exec(prompt)?.[1];
+    const said = /They said: “([^”]+)”/.exec(prompt)?.[1]?.replace(/^\s*(no|nope|actually)[,.!]?\s*/i, '');
+    const lesson = (note ?? said)?.trim().replace(/^./, (c) => c.toUpperCase()) ?? null;
+    const skill = /skills: "([^"]+)"/.exec(prompt)?.[1];
+    const mentions = skill && lesson && lesson.toLowerCase().includes(skill.toLowerCase().split(' ')[0]) ? skill : null;
+    return JSON.stringify({ lesson, skill: mentions });
   }
 
   /** Keyword version of the rule check: a rule applies when it shares a meaningful word with the action. */

@@ -1,3 +1,4 @@
+import type { Correction } from '../learning.ts';
 import type { Config } from '../../config.ts';
 import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
@@ -22,11 +23,15 @@ export interface RuntimeHooks {
   createTask(input: CreateTaskInput, origin: string, requestedBy?: Task['requestedBy']): Task;
   commandTask(id: string, command: TaskCommand): Task;
   /** Posts to the Star's own chat (the main chat for the main Star) and the person's channels. */
-  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string }): Promise<string>;
+  notify(message: string, opts: { urgent?: boolean; taskId?: string; cards?: MessageCard[]; starId?: string; kind?: 'needs_you' }): Promise<string>;
   /** A task another Star asked for has ended: answer the Star that asked, and wake its task if it was waiting. */
   starAnswered(task: Task, answer: string, failed: boolean): void;
   /** A task has ended: stop the ask_star requests it still had open with other Stars. */
   dropAsks(taskId: string, reason: string): void;
+  /** Learns from a correction in the background (see learning.ts); `fallback` runs if no lesson came of it. */
+  learn(starId: string, c: Correction, fallback?: () => void): void;
+  /** A run ended. `reported` is true when the Star itself called finish_task (so a failure is worth learning from). */
+  taskEnded(task: Task, outcome: string, failed: boolean, reported: boolean): void;
   /** When a recurring or watch task should next run. */
   nextRunAt(task: Task, after: Date): string | undefined;
 }

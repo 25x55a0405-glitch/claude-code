@@ -57,7 +57,8 @@ through approvals, but it doesn't really think. It's what the tests use.
 | `SKY_BROWSER_PROXY` | | Proxy for the browser, like `http://user:pass@host:port` |
 | `PORT` | `8787` | |
 | `SKY_HOST` | `127.0.0.1` (`0.0.0.0` when a password is set) | |
-| `SKY_DATA_DIR` | `./data` | Where `sky.db` lives |
+| `SKY_DATA_DIR` | `./data` | Where `sky.db` lives, and `secret.key` when `SKY_SECRET_KEY` isn't set (back it up) |
+| `SKY_SECRET_KEY` | | Passphrase the secrets vault's key is made from. Without it a random key file is created |
 | `SKY_PASSWORD` | | Turns on sign-in. Visit `/login` once; the browser keeps a session cookie |
 | `SKY_API_TOKEN` | | Bearer token for scripts, accepted alongside the password |
 | `SKY_PUBLIC_URL` | `http://localhost:PORT` | This server's public URL, used for OAuth redirects |

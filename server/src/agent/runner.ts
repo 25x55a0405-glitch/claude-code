@@ -200,7 +200,7 @@ export class TaskRunner {
           });
           store.addStep(task.id, { kind: 'approval', summary: firstLine(`Asked you before: ${p.action} to ${p.target}`, 160), ...(tool.connection ? { connectionId: tool.connection } : {}) });
           await this.deps.hooks.notify(`Can I ${lowerFirst(p.action)} to ${p.target}? ${firstLine(verdict.reason, 200)}`, {
-            taskId: task.id, starId: star.id, cards: [{ kind: 'approval', approvalId: approval.id }],
+            taskId: task.id, starId: star.id, kind: 'needs_you', cards: [{ kind: 'approval', approvalId: approval.id }],
           });
           state.pending.push({ toolUseId: use.id, approvalId: approval.id, name: tool.name, input: use.input });
         } else {
@@ -222,7 +222,7 @@ export class TaskRunner {
       this.flushResults(state);
       this.save(state);
       if (finishing && store.getTask(taskId).status === 'active') {
-        this.finish(store.getTask(taskId), finishing.outcome, Boolean(finishing.failed));
+        this.finish(store.getTask(taskId), finishing.outcome, Boolean(finishing.failed), true);
         return 'finished';
       }
     }
@@ -333,7 +333,7 @@ export class TaskRunner {
   }
 
   /** Closes a run: one-off tasks end, recurring and watch tasks go back to their schedule. */
-  finish(task: Task, outcome: string, failed: boolean) {
+  finish(task: Task, outcome: string, failed: boolean, reported = false) {
     const { store } = this.deps;
     this.discard(task.id);
     // Stopped by the person while this run was in flight: their stop wins.
@@ -353,6 +353,7 @@ export class TaskRunner {
     store.setActivity(null);
     this.deps.hooks.dropAsks(task.id, `No longer needed: “${firstLine(task.title, 60)}” ended`);
     if (task.kind === 'one_off' && task.requestedBy) this.deps.hooks.starAnswered(task, outcome, failed);
+    this.deps.hooks.taskEnded(task, outcome, failed, reported);
   }
 }
 

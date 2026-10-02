@@ -33,7 +33,7 @@ export const recall: ToolDef<{ query: string }> = {
   label: (i) => `Checked memory for “${i.query}”`,
   async run(i, ctx) {
     const hits = relevantMemory(ctx.store.listMemory(ctx.star.id), i.query, 10);
-    return hits.length ? hits.map((m) => `- [${m.category}] ${m.content}`).join('\n') : 'Nothing remembered about that.';
+    return hits.length ? hits.map((m) => `- ${m.id} [${m.category}] ${m.content}`).join('\n') : 'Nothing remembered about that.';
   },
 };
 

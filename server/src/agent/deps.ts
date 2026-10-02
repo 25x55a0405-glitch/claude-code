@@ -5,6 +5,7 @@ import type { Brain } from './brain.ts';
 import type { Policy } from './policy.ts';
 import type { RuntimeHooks } from './tools/types.ts';
 import type { BrowserManager } from '../browser/browser.ts';
+import type { Vault } from '../vault.ts';
 
 /** Everything the agent pieces share. */
 export interface AgentDeps {
@@ -15,4 +16,5 @@ export interface AgentDeps {
   policy: Policy;
   hooks: RuntimeHooks;
   browser?: BrowserManager;
+  vault?: Vault;
 }

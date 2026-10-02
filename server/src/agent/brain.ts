@@ -42,7 +42,8 @@ export interface Brain {
   readonly name: string;
   turn(req: TurnRequest): Promise<TurnResult>;
   /** One short, tool-free completion (briefing copy, rule checks). */
-  complete(system: string, prompt: string, maxTokens?: number): Promise<string>;
+  /** `chain` picks the providers to use, like TurnRequest.chain. */
+  complete(system: string, prompt: string, maxTokens?: number, chain?: string[] | null): Promise<string>;
 }
 
 /** Thrown when the model can't be reached at all, so the runtime can show "offline" and retry later. */

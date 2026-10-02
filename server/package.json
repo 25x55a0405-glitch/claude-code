@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
-    "playwright-core": "^1.56.1"
+    "playwright-core": "^1.56.1",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.18.0",
+    "@types/web-push": "^3.6.4",
     "typescript": "~5.9.0"
   }
 }

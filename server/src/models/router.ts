@@ -88,9 +88,9 @@ export class ModelRouter implements Brain {
     });
   }
 
-  async complete(system: string, prompt: string, maxTokens?: number): Promise<string> {
+  async complete(system: string, prompt: string, maxTokens?: number, chain?: string[] | null): Promise<string> {
     if (this.name === 'scripted') return this.scripted.complete(system, prompt);
-    return this.walk(undefined, (brain) => brain.complete(system, prompt, maxTokens));
+    return this.walk(chain, (brain) => brain.complete(system, prompt, maxTokens));
   }
 
   /** Tries one provider directly, for the "Test" button. Records the outcome like any call. */

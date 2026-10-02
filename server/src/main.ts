@@ -10,6 +10,8 @@ import { Store } from './store.ts';
 import { ModelRegistry } from './models/registry.ts';
 import { ModelRouter } from './models/router.ts';
 import { BrowserManager } from './browser/browser.ts';
+import { Vault } from './vault.ts';
+import { Push } from './push.ts';
 
 export interface App {
   config: Config;
@@ -18,6 +20,8 @@ export interface App {
   providers: Providers;
   models: ModelRouter;
   browser: BrowserManager;
+  vault: Vault;
+  push: Push;
   server: ReturnType<typeof createHttpServer>;
   close(): Promise<void>;
 }
@@ -29,10 +33,13 @@ export function createApp(config: Config, brain?: Brain): App {
   const providers = new Providers(store, config);
   const models = new ModelRouter(new ModelRegistry(store, config), config);
   const browser = new BrowserManager(store, config);
-  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser);
-  const server = createHttpServer(config, store, runtime, providers, models, browser);
+  const vault = new Vault(store, config);
+  // Through the providers' fetch, so tests can stand in for ntfy.
+  const push = new Push(store, config, () => providers.fetch);
+  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser, { vault, push });
+  const server = createHttpServer(config, store, runtime, providers, models, browser, vault, push);
   return {
-    config, store, runtime, providers, models, browser, server,
+    config, store, runtime, providers, models, browser, vault, push, server,
     async close() {
       await runtime.stop();
       await browser.close();

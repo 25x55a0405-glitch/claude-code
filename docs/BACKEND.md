@@ -207,8 +207,60 @@ is lost. Pausing a single Star or a single task works the same way.
 the Star's own chat (the main chat for the main Star and the briefing).
 Messages to outside channels from other Stars start with the Star's name.
 Outside quiet hours (or when urgent) they also go to the
-channels turned on in Settings: email to yourself through Gmail, Telegram, or
-a Slack channel. Push needs a device subscription the UI doesn't collect yet.
+channels turned on in Settings: email to yourself through Gmail, Telegram, a
+Slack channel, and push to your devices (Web Push and ntfy, below). Push also
+tells you when a one-off task you gave a Star finishes, if that Star's
+`notify.whenDone` is on, and skips a Star's "can I…?" questions when its
+`notify.whenNeedsYou` is off.
+
+## Wave 1: personality, live status, skills, learning, secrets, push
+
+- **Personality.** Each Star has `personality` (its character) and
+  `replyStyle` (how replies look). Both go into its system prompt. A Star can
+  change its own with `set_personality` when the person asks in chat.
+- **Live status.** `star.activity` events carry a short phrase per Star
+  ("Thinking", "Writing", "Reading your inbox", "Browsing"…) while it chats or
+  works, and `null` when it stops. `StarView.status.activity` has the same.
+- **Skills.** Saved recipes: a name, when to use it, and steps. The prompt
+  lists each skill's name and when-to-use; a Star calls `use_skill` to read
+  the steps, `save_skill` when it works out something worth repeating, and
+  `update_skill` to improve one. The person can add, edit and delete them.
+  "Forget something" is built in (recall with ids, then `forget_memories`).
+- **Learning from corrections.** A declined approval, an approval with an
+  edited preview, a task the Star itself reports as failed, or a chat
+  message starting "no…/actually…/don't…" makes the Star ask a model (the
+  `smallProviderIds` chain if set, else its own) for one general lesson. It
+  becomes a shared memory, or a "- Lesson: …" line on the skill it's about,
+  and the Star says "Got it. I'll remember: …" in its chat with a `lessonId`
+  the UI can offer to undo. Nothing is saved when there's no general lesson.
+  With `learnFromCorrections: false`, an approval note is saved as written,
+  like before.
+- **Secrets.** The person stores values (API keys, codes) under a name. They
+  are encrypted with AES-256-GCM using `SKY_SECRET_KEY`, or a key file made
+  at `DATA_DIR/secret.key` (back it up, or the secrets can't be read). Stars
+  see only names and write `{{secret:NAME}}`; the value goes in just before
+  the tool runs, any value that comes back is replaced with `[secret:NAME]`,
+  and using a secret always asks first (high risk), whatever the autonomy.
+  Secrets only reach a task's tools that act outside Sky: chat, memory,
+  skills and Star-to-Star messages get an error instead. A secret can be
+  limited to some Stars (`starIds`).
+- **Push.** Web Push with the server's own VAPID keys (made on first use, kept
+  in the database), and ntfy (ntfy.sh or self-hosted) as a second free
+  channel: install the ntfy app and subscribe to the topic.
+
+Free-tier notes:
+
+- Web Push costs nothing and needs no account: browsers deliver it through
+  their own push services. On iPhone it works only once Sky is added to the
+  home screen (iOS 16.4 or later), so the UI needs a web app manifest and a
+  service worker.
+- ntfy.sh is free with no account; anyone who knows the topic can read it,
+  so the topic should be long and random. A self-hosted ntfy server is
+  supported through `ntfyServer`.
+- From the sandbox this was built in, outside hosts are blocked, so a real
+  delivery to Google, Mozilla or Apple push services and to ntfy.sh couldn't
+  be checked. The tests check the encrypted, VAPID-signed request web-push
+  builds for a real device key, and the ntfy request.
 
 ## Ideas
 
@@ -222,7 +274,8 @@ recent activity. Each title is offered once; dismissing it keeps it gone.
 - Content from emails, pages and documents is treated as information, never instructions.
 - Chat can't act on the world; only tasks can, and only through the policy.
 - Built-in rules can't be edited or deleted (403).
-- Tokens never leave the server.
+- Tokens never leave the server, and neither do secret values or push keys.
+- A secret is only filled into a task's outward tool, after the person approves.
 - Messages between Stars are treated like content: information, not instructions.
 - With `SKY_PASSWORD` unset the server listens only on localhost.
 
@@ -300,8 +353,9 @@ New live events:
 | `star.deleted` | `{ id }` |
 | `constellation.message` | `ConstellationMessage` |
 
-A Star's live activity comes through the existing `status` event (`starId`
-says whose); `star.updated` isn't sent for every step.
+A Star's live activity comes through `star.activity` (wave 1, below) and the
+existing `status` event (`starId` says whose); `star.updated` isn't sent for
+every step.
 
 ### Model providers (for the UI to build on)
 
@@ -354,6 +408,74 @@ Event: `browser.frame` (`BrowserSession`) whenever a new screenshot is ready.
 The connections list gains `browser` ("Browser"). It is connected by
 default, and turning it off or limiting a Star's `connectionIds` takes the
 browser tools away. The `web` connection is now called "Web search".
+
+### Wave 1 (for the UI to build on)
+
+```ts
+// Star gains:
+interface Star {
+  personality: string;            // up to 1000 characters; '' means none
+  replyStyle: string;             // up to 1000 characters
+  notify: { whenDone: boolean; whenNeedsYou: boolean };   // defaults false / true
+}
+interface Skill {
+  id: string; name: string; whenToUse: string; steps: string;
+  starId: string | null;          // null: every Star
+  source: 'you' | 'star' | 'builtIn';
+  uses: number; lastUsedAt: string | null; createdAt: string; updatedAt: string;
+}
+interface Lesson {
+  id: string; starId: string; lesson: string;
+  trigger: 'declined' | 'edited' | 'failed' | 'chat';
+  memoryId?: string; skillId?: string; taskId?: string;
+  undone: boolean; createdAt: string;
+}
+interface Secret {                // never includes the value
+  id: string; name: string; description: string;
+  starIds: string[] | null; lastUsedAt: string | null; createdAt: string; updatedAt: string;
+}
+interface PushSubscriptionInfo { id: string; label: string; createdAt: string; lastSentAt: string | null }
+// Message gains lessonId?: string ("Got it. I'll remember: …" messages; show an Undo).
+// Settings gains:
+//   learnFromCorrections: boolean (default true)
+//   smallProviderIds: string[] | null (model chain for lessons; null = the Star's own)
+//   ntfyTopic: string | null (letters, digits, - and _, up to 64)
+//   ntfyServer: string ('' = https://ntfy.sh)
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST / PATCH | `/stars`, `/stars/:id` | Also take `personality`, `replyStyle` and `notify` (a partial `notify` keeps the other switch) |
+| GET | `/skills?starId=` | `Skill[]`. With `starId`: the skills that Star can use (shared plus its own) |
+| POST | `/skills` | `{ name, whenToUse, steps, starId? }` → `Skill` (`source: 'you'`). `409` if the name is taken |
+| GET / PATCH / DELETE | `/skills/:id` | PATCH any of those fields. Built-in skills: `403` on PATCH and DELETE |
+| GET | `/lessons?starId=` | `Lesson[]`, newest first |
+| POST | `/lessons/:id/undo` | → `Lesson` with `undone: true`. Removes the memory, or the skill line it added (later edits stay) |
+| GET | `/secrets?starId=` | `{ keySource: 'env' \| 'file' \| 'memory', secrets: Secret[] }` |
+| POST | `/secrets` | `{ name, value, description?, starIds? }` → `Secret`. `400` for a bad name, `409` if taken |
+| PATCH | `/secrets/:name` | `{ value?, description?, starIds? }` (name or id) → `Secret` |
+| DELETE | `/secrets/:name` | `204` |
+| GET | `/push/key` | `{ publicKey }`: the `applicationServerKey` for `pushManager.subscribe` |
+| GET | `/push/subscriptions` | `PushSubscriptionInfo[]` (device keys stay on the server) |
+| POST | `/push/subscriptions` | `{ subscription: <PushSubscription.toJSON()>, label? }` → `PushSubscriptionInfo`. The same endpoint again replaces the old entry |
+| DELETE | `/push/subscriptions/:id` | `204` |
+| POST | `/push/test` | Sends a test → `{ delivered: string[], failed: string[] }`; `400` when there's nowhere to send |
+
+Push only goes to devices while `settings.channels.push` is on; ntfy goes
+whenever `ntfyTopic` is set. A device the push service says is gone (404/410)
+is removed. The push payload the service worker receives is JSON:
+`{ title, body, url, tag }`, where `url` is a hash route like `#/tasks/t_1`
+and `tag` groups notifications about the same task.
+
+Events:
+
+| Event | Data |
+| --- | --- |
+| `star.activity` | `{ starId, activity: string \| null, taskId: string \| null, at }` |
+| `skill.updated` | `Skill` (created or changed, including `uses`) |
+| `skill.deleted` | `{ id }` |
+| `lesson.learned` | `Lesson` |
+| `lesson.undone` | `Lesson` |
 
 ### Server-side additions
 
