@@ -72,6 +72,10 @@ export function createApp(config: Config, brain?: Brain): App {
   const templates = new Templates(store, providers);
   const server = createHttpServer(config, { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, workspaces, teach, voice, companion });
   companion.attach(server);
+  server.on('listening', () => {
+    const a = server.address();
+    if (a && typeof a === 'object') browser.ownPorts.add(a.port);
+  });
   return {
     config, store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, workspaces, teach, voice, companion, server,
     start() {

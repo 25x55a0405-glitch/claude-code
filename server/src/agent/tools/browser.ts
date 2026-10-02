@@ -1,4 +1,4 @@
-import { describeSnapshot, type ElementInfo } from '../../browser/browser.ts';
+import { activatesFocus, describeSnapshot, keyChar, type ElementInfo } from '../../browser/browser.ts';
 import { firstLine } from '../../util.ts';
 import { bool, schema, str, type ApprovalPreview, type Effect, type ToolContext, type ToolDef, type ToolEnv } from './types.ts';
 
@@ -125,11 +125,13 @@ export const browserPress: ToolDef<{ key: string }> = {
   name: 'browser_press',
   description: 'Press a key in your browser tab, like Enter, Escape, Tab or ArrowDown.',
   input_schema: schema({ key: str('Key name, as in Playwright: Enter, Escape, Tab, ArrowDown…') }, ['key']),
-  // Write by default so chat (which only reads) never presses Enter on a form.
+  // Write by default so chat (which only reads) never presses a key that types or submits. Only keys that
+  // move focus or scroll are reads; typing a character is a write; Enter, Space and keys with a modifier can
+  // submit a form or press the focused button, so they're sends.
   effect: 'write',
   connection: 'browser',
-  effectFor: (i) => (/^enter$/i.test(i.key) ? 'send' : 'read'),
-  approval: (i, env) => pagePreview(env, `Press ${i.key}`, `Press ${i.key}, which may submit what was typed.`),
+  effectFor: (i) => (activatesFocus(i.key) ? 'send' : keyChar(i.key) !== null || /^(backspace|delete)$/i.test(i.key) ? 'write' : 'read'),
+  approval: (i, env) => pagePreview(env, `Press ${i.key}`, `Press ${i.key}${activatesFocus(i.key) ? ', which may submit the form or press the button that has focus' : keyChar(i.key) !== null ? ', typing it into the field that has focus' : ''}.`),
   label: (i) => `Pressed ${i.key}`,
   async run(i, ctx) {
     return describeSnapshot(await tab(ctx).press(ctx.star.id, i.key));

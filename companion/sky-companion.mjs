@@ -74,6 +74,36 @@ function allowedPath(p, folders) {
   return real;
 }
 
+const INTERPRETERS = /^(python[\d.]*|node|nodejs|deno|bun|ruby|perl|php|lua|osascript|powershell|pwsh)(\.exe)?$/i;
+/** Programs that can read, write or run anything wherever they like, whatever their arguments. */
+const WIDE = /^(python[\d.]*|node|nodejs|deno|bun|ruby|perl|php|lua|git|npm|npx|pnpm|yarn|pip[\d.]*|make|cmake|cargo|go|find|awk|gawk|sed|tar|zip|unzip|rsync|curl|wget|ssh|scp|docker|podman|kubectl|vim|vi|nano|emacs|less|more|man|xargs|env|osascript)(\.exe)?$/i;
+
+/**
+ * The arguments of a program are checked like paths: one that points somewhere (absolute, starting with ~, with ..,
+ * or a --option=path) must resolve inside an allowed folder, so \`cat /somewhere/else\` or \`git -C ~\` doesn't reach
+ * past the allowlist. Inline code (python -c, node -e) is refused. This can't make an interpreter safe: a script
+ * the program runs can still reach anything. Allow only programs you'd trust with the folders you allowed.
+ */
+function checkArgs(program, args, cwd, folders) {
+  if (INTERPRETERS.test(program) && args.some((a) => /^(-c|-e|-p|-r|--eval|--print|--command|-Command|-EncodedCommand|-enc)$/i.test(a) || /^-[a-z]*[cep]$/i.test(a) && a.length <= 3)) {
+    throw new Error(`${program} can’t run code given on the command line here (-c, -e): put it in a file in an allowed folder.`);
+  }
+  for (const arg of args) {
+    const candidates = [arg, ...(arg.startsWith('-') && arg.includes('=') ? [arg.slice(arg.indexOf('=') + 1)] : [])];
+    for (const value of candidates) {
+      if (!value || /^[a-z][a-z0-9+.-]*:\/\//i.test(value)) continue;
+      const pathy = /^(~|\/|[A-Za-z]:[\\/]|\\\\)/.test(value) || value.split(/[\\/]/).includes('..') || /[\\/]/.test(value);
+      if (!pathy) continue;
+      const full = value.startsWith('~') ? expand(value) : resolve(cwd, value);
+      let real;
+      try { real = realpathSync(full); } catch { real = full; }
+      if (!inside(real, folders)) {
+        throw new Error(`The argument ${value} points outside the folders this computer allows. Allowed: ${folders.join(', ') || 'none'}.`);
+      }
+    }
+  }
+}
+
 /** Where a file may be written: its folder must exist and be allowed, and an existing file must be allowed too. */
 function allowedTarget(p, folders) {
   if (typeof p !== 'string' || !p) throw new Error('No path given.');
@@ -131,6 +161,8 @@ if (cmd && cmd !== 'run') {
       if (!name || /[\\/\s]/.test(name)) fail('Give a program name like git or python3 (no path, no arguments).');
       if (/^(sh|bash|zsh|fish|dash|ksh|cmd|powershell|pwsh|sudo|su|doas|env|xargs)(\.exe)?$/i.test(name)) {
         console.warn(`Warning: ${name} can run any other program, which makes the program allowlist meaningless.`);
+      } else if (WIDE.test(name)) {
+        console.warn(`Warning: ${name} can read and change files anywhere your account can, whatever folders you allowed: an argument is checked, but a script or setting it runs isn’t. Allow it only if you trust Stars with that.`);
       }
       if (!c.allow.commands.includes(name)) c.allow.commands.push(name);
       save(c);
@@ -403,6 +435,8 @@ function check(call, allow) {
       throw new Error(`${a.program} isn’t a program this computer allows. Allowed: ${allow.commands.join(', ') || 'none'}.`);
     }
     if (a.args !== undefined && (!Array.isArray(a.args) || a.args.some((x) => typeof x !== 'string'))) throw new Error('args must be a list of text.');
+    if (!allow.folders.length) throw new Error('No folder is allowed to run programs in.');
+    checkArgs(a.program, a.args ?? [], allowedPath(a.folder || allow.folders[0], allow.folders), allow.folders);
   } else if (!['list_files', 'read_file', 'write_file'].includes(call.action)) {
     throw new Error(`Unknown action ${call.action}.`);
   }
@@ -448,6 +482,7 @@ async function perform(call, allow) {
       if (!allow.folders.length) throw new Error('No folder is allowed to run programs in.');
       const cwd = allowedPath(a.folder || allow.folders[0], allow.folders);
       if (!statSync(cwd).isDirectory()) throw new Error(`${a.folder} isn’t a folder.`);
+      checkArgs(a.program, a.args ?? [], cwd, allow.folders);
       return new Promise((done) => {
         // No shell: the arguments go to the program as they are, so ; | && and $() mean nothing.
         execFile(a.program, a.args ?? [], { cwd, timeout: RUN_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, shell: false, windowsHide: true }, (err, stdout, stderr) => {

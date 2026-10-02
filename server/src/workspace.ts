@@ -8,6 +8,9 @@ import type { WorkspaceFile, WorkspaceStatus } from './types.ts';
 import { ApiError, badRequest, iso, notFound } from './util.ts';
 
 /** Largest file a Star or the person can write in one go. */
+/** What the sandbox gets of /etc: libraries, certificates, name lookup, users (names only, no passwords), time zone. */
+const ETC_ALLOWED = ['ld.so.cache', 'ld.so.conf', 'ld.so.conf.d', 'ssl', 'ca-certificates', 'alternatives', 'resolv.conf', 'hosts', 'nsswitch.conf', 'passwd', 'group', 'localtime', 'timezone', 'os-release', 'mime.types'];
+
 export const MAX_FILE = 10 * 1024 * 1024;
 /** What a command's output is cut to for the model and the timeline. */
 const OUTPUT_LIMIT = 8_000;
@@ -198,18 +201,25 @@ export class Workspaces {
     const system: string[] = [];
     for (const name of readdirSync('/')) {
       const p = `/${name}`;
-      if (skip.has(name) || data === p || data.startsWith(`${p}/`) && !['usr', 'opt', 'etc'].includes(name)) continue;
+      // /etc is bound entry by entry below, not whole: it holds service files with passwords (like the unit file the setup guide uses).
+      if (skip.has(name) || name === 'etc' || data === p || data.startsWith(`${p}/`) && !['usr', 'opt'].includes(name)) continue;
       const st = lstatSync(p);
       if (st.isSymbolicLink()) system.push('--symlink', readlinkSync(p), p);
       else if (st.isDirectory()) system.push('--ro-bind', p, p);
     }
-    const masks = ['/etc/shadow', '/etc/gshadow', '/etc/sudoers'].filter((p) => existsSync(p));
+    // Only what programs need from /etc to run and to look up names and certificates; nothing else is there.
+    const etc: string[] = [];
+    for (const name of ETC_ALLOWED) {
+      const p = `/etc/${name}`;
+      if (!existsSync(p)) continue;
+      // A link (resolv.conf often points into /run) is bound as the file it points to.
+      etc.push('--ro-bind', lstatSync(p).isSymbolicLink() ? realpathSync(p) : p, p);
+    }
     return [
       ...system,
-      ...masks.flatMap((p) => ['--ro-bind', '/dev/null', p]),
-      ...(existsSync('/etc/ssh') ? ['--tmpfs', '/etc/ssh'] : []),
-      // A data folder inside /usr, /opt or /etc stays hidden too.
-      ...(existsSync(data) && /^\/(usr|opt|etc)\//.test(data) ? ['--tmpfs', data] : []),
+      ...etc,
+      // A data folder inside /usr or /opt stays hidden too.
+      ...(existsSync(data) && /^\/(usr|opt)\//.test(data) ? ['--tmpfs', data] : []),
       '--bind', cwd, '/workspace',
       '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--dir', '/var/tmp',
       '--unshare-all', ...(network ? ['--share-net'] : []),

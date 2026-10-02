@@ -215,6 +215,7 @@ export class TaskRunner {
           const approval = store.createApproval({
             taskId: task.id, starId: star.id, action: p.action, target: p.target, reason: verdict.reason, preview: p.preview,
             ...(tool.connection ? { connectionId: tool.connection } : {}),
+            editable: Boolean(tool.applyEdit) && (tool.canEdit?.(use.input) ?? true),
             risk: verdict.risk, expiresAt: iso(Date.now() + 24 * 3_600_000),
           });
           store.addStep(task.id, { kind: 'approval', summary: firstLine(`Asked you before: ${p.action} to ${p.target}`, 160), ...(tool.connection ? { connectionId: tool.connection } : {}) });

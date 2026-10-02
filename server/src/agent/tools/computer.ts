@@ -1,9 +1,11 @@
 import type { CompanionAction } from '../../companion.ts';
 import type { CompanionDevice } from '../../types.ts';
-import { firstLine, truncate } from '../../util.ts';
+import { firstLine } from '../../util.ts';
 import { bool, schema, str, type ToolContext, type ToolDef, type ToolEnv } from './types.ts';
 
 const READ_LIMIT = 60_000;
+/** Content written on the person's computer has to fit in the approval, all of it. */
+const WRITE_LIMIT = 20_000;
 /** Every action on the person's computer is an approval, whatever the Star's autonomy. */
 const ALWAYS = 'It’s on your own computer, so Stars always ask first.';
 
@@ -45,6 +47,7 @@ export const computerOpen: ToolDef<{ url: string; computer?: string }> = {
   scope: 'task',
   mustAsk: () => ALWAYS,
   approval: (i, env) => ({ action: 'Open a page on your computer', target: where(env, i.computer), preview: i.url, risk: 'medium' }),
+  applyEdit: (i, edited) => ({ ...i, url: edited.trim() }),
   label: (i) => `Opened ${firstLine(i.url, 80)} on your computer`,
   async run(i, ctx) {
     if (!/^https?:\/\//i.test(i.url)) throw new Error('Only http and https pages can be opened.');
@@ -86,12 +89,13 @@ export const computerReadFile: ToolDef<{ path: string; computer?: string }> = {
 export const computerWriteFile: ToolDef<{ path: string; content: string; append?: boolean; computer?: string }> = {
   name: 'computer_write_file',
   description: 'Write a text file on the person’s computer, inside a folder they allowed, replacing it unless append is set. Needs the person’s OK.',
-  input_schema: schema({ path: str('The file, absolute or starting with ~'), content: str('What to write'), append: bool('Add to the end instead of replacing'), ...computer }, ['path', 'content']),
+  input_schema: schema({ path: str('The file, absolute or starting with ~'), content: str(`What to write, at most ${WRITE_LIMIT} characters (the person reads all of it before approving; use several files for more)`, { maxLength: WRITE_LIMIT }), append: bool('Add to the end instead of replacing'), ...computer }, ['path', 'content']),
   effect: 'write',
   connection: 'computer',
   scope: 'task',
   mustAsk: () => ALWAYS,
-  approval: (i, env) => ({ action: `${i.append ? 'Add to' : 'Write'} ${firstLine(i.path, 70)}`, target: where(env, i.computer), preview: truncate(i.content, 2000), risk: 'high' }),
+  approval: (i, env) => ({ action: `${i.append ? 'Add to' : 'Write'} ${firstLine(i.path, 70)}`, target: where(env, i.computer), preview: i.content, risk: 'high' }),
+  applyEdit: (i, edited) => ({ ...i, content: edited }),
   label: (i) => `${i.append ? 'Added to' : 'Wrote'} ${firstLine(i.path, 80)} on your computer`,
   async run(i, ctx) {
     return call(ctx, i.computer, 'write_file', { path: i.path, content: i.content, append: Boolean(i.append) }, folderCheck(i.path));

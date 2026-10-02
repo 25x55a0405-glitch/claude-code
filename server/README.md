@@ -126,7 +126,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=/home/ubuntu/sky/server
-Environment=SKY_PASSWORD=pick-a-long-password
+EnvironmentFile=/etc/sky/secrets.env
 Environment=SKY_PUBLIC_URL=https://sky.example.com
 Environment=SKY_DATA_DIR=/home/ubuntu/sky-data
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning src/main.ts
@@ -136,6 +136,19 @@ User=ubuntu
 [Install]
 WantedBy=multi-user.target
 ```
+
+Put the secrets in a file only root can read, not in the unit file, which any
+user on the machine can read:
+
+```
+sudo install -d -m 755 /etc/sky
+sudo install -m 600 /dev/null /etc/sky/secrets.env
+echo 'SKY_PASSWORD=pick-a-long-password' | sudo tee -a /etc/sky/secrets.env   # and SKY_SECRET_KEY, if you set one
+```
+
+(systemd reads it as root, so the service user doesn't need access. The
+command sandbox only gets a short list of files from `/etc` anyway, but a
+password in a world-readable file is still a bad place for it.)
 
 Then `sudo systemctl enable --now sky`. Keep port 8787 closed in the cloud
 firewall and reach Sky through a Cloudflare Tunnel (free;

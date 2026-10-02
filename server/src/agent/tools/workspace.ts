@@ -1,7 +1,8 @@
-import { firstLine, truncate } from '../../util.ts';
+import { firstLine } from '../../util.ts';
 import { bool, num, schema, str, type ToolContext, type ToolDef, type ToolEnv } from './types.ts';
 
 const READ_LIMIT = 60_000;
+const PREVIEW_LIMIT = 2000;
 
 function ws(ctx: ToolContext) {
   if (!ctx.workspaces) throw new Error('Workspaces aren’t available on this server.');
@@ -44,7 +45,13 @@ export const fileWrite: ToolDef<{ path: string; content: string; append?: boolea
   input_schema: schema({ path: str('The file, relative to the workspace'), content: str('What to write'), append: bool('Add to the end instead of replacing') }, ['path', 'content']),
   // Only the Star's own folder changes, so this is a write the person can undo, never a send.
   effect: 'write',
-  approval: (i) => ({ action: `Write ${firstLine(i.path, 60)}`, target: 'the workspace', preview: truncate(i.content, 2000) }),
+  approval: (i) => ({
+    action: `Write ${firstLine(i.path, 60)}`, target: 'the workspace',
+    preview: i.content.length > PREVIEW_LIMIT ? `${i.content.slice(0, PREVIEW_LIMIT)}\n…(the first ${PREVIEW_LIMIT} of ${i.content.length} characters; it only goes in the Star’s own folder)` : i.content,
+  }),
+  // The preview is edited as the whole file, so it can only be edited when it shows all of it.
+  applyEdit: (i, edited) => ({ ...i, content: edited }),
+  canEdit: (i) => i.content.length <= PREVIEW_LIMIT,
   label: (i) => `${i.append ? 'Added to' : 'Wrote'} ${firstLine(i.path, 80)}`,
   async run(i, ctx) {
     const w = ws(ctx);
@@ -84,6 +91,7 @@ export const runCommand: ToolDef<{ command: string; network?: boolean; timeout_s
   }, ['command']),
   effect: 'write',
   scope: 'task',
+  applyEdit: (i, edited) => ({ ...i, command: edited }),
   // Sandboxed and offline it only changes the Star's folder; online it reaches out, so it's a send.
   effectFor: (i, env) => (i.network || !sandboxed(env) ? 'send' : 'write'),
   mustAsk: (_i, env) => (sandboxed(env) ? null : 'There’s no sandbox on this server, so a command could change anything the server can.'),

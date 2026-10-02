@@ -1,5 +1,5 @@
 import type { Brain } from './agent/brain.ts';
-import type { BrowserManager } from './browser/browser.ts';
+import { maskCards, type BrowserManager } from './browser/browser.ts';
 import type { Store } from './store.ts';
 import type { CreateTaskInput, RecordedStep, Recording, Skill, Task } from './types.ts';
 import { ApiError, badRequest, firstLine, iso, notFound, truncate, uid } from './util.ts';
@@ -65,8 +65,10 @@ export class Teach {
     if (!r || r.status !== 'recording' || r.steps.length >= STEP_LIMIT) return;
     const last = r.steps.at(-1);
     // Typing arrives a few characters at a time, and scrolling in many small moves: keep one step for each.
-    if (last && step.kind === 'type' && last.kind === 'type' && last.target === step.target && last.url === step.url && step.value !== '[password]' && last.value !== '[password]') {
-      last.value = `${last.value ?? ''}${step.value ?? ''}`;
+    const hidden = (v?: string) => v === '[password]' || v === '[hidden]';
+    if (last && step.kind === 'type' && last.kind === 'type' && last.target === step.target && last.url === step.url && !hidden(step.value) && !hidden(last.value)) {
+      // Typed in pieces: a card number split across two pieces is checked whole.
+      last.value = this.browser.redact(maskCards(`${last.value ?? ''}${step.value ?? ''}`));
     } else if (last && step.kind === 'scroll' && last.kind === 'scroll' && last.value === step.value) {
       return;
     } else {
@@ -180,10 +182,12 @@ export function describeStep(s: RecordedStep): string {
       return 'the page';
     }
   })();
+  // Whatever was stored, a card number never goes into the skill text or the model prompt.
+  s = { ...s, value: s.value === undefined ? undefined : maskCards(s.value), ...(s.target !== undefined ? { target: maskCards(s.target) } : {}) };
   switch (s.kind) {
     case 'open': return `Opened ${s.value}`;
     case 'click': return `Clicked “${s.target ?? 'something'}” on ${where}`;
-    case 'type': return `Typed ${s.value === '[password]' ? 'a password' : `“${s.value}”`}${s.target ? ` into “${s.target}”` : ''} on ${where}`;
+    case 'type': return `Typed ${s.value === '[password]' ? 'a password' : s.value === '[hidden]' ? 'something private' : `“${s.value}”`}${s.target ? ` into “${s.target}”` : ''} on ${where}`;
     case 'key': return `Pressed ${s.value}`;
     case 'scroll': return `Scrolled ${s.value}`;
     case 'back': return 'Went back';

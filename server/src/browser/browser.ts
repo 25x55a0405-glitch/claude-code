@@ -46,6 +46,8 @@ interface Tab {
   waiting: string[];
   recordingId: string | null;
   checkout: CheckoutHandover | null;
+  /** Digits the Star pressed one key at a time since the page changed, so a card number can't be typed that way. */
+  digits: string;
 }
 
 /** Thrown when a Star tries to use its tab while the person has control. */
@@ -102,9 +104,33 @@ export class BrowserManager {
   /** Called for each thing the person does while recording. */
   onRecord?: (recordingId: string, step: RecordedStep) => void;
 
+  /** Ports Sky itself answers on (set when the server starts listening), which Stars' browsers never open. */
+  ownPorts = new Set<number>();
+
   constructor(store: Store, config: Config) {
     this.store = store;
     this.config = config;
+    this.ownPorts.add(config.port);
+  }
+
+  /**
+   * Why a Star's browser may not open this address, or null. Sky's own address is off limits (its API would
+   * hand a Star every memory, file and setting), and so are link-local and cloud metadata addresses.
+   * The person's own live view isn't limited.
+   */
+  blockedForStars(raw: string): string | null {
+    let u: URL;
+    try { u = new URL(raw); } catch { return null; }
+    if (!/^https?:$/.test(u.protocol)) return null;
+    const host = u.hostname.replace(/^\[|\]$/g, '').toLowerCase().replace(/\.$/, '');
+    if (/^169\.254\./.test(host) || /^fe[89ab][0-9a-f]:/.test(host) || host === 'fd00:ec2::254' || host === 'metadata.google.internal' || host === 'metadata' || host === 'instance-data') {
+      return 'That’s a link-local or cloud metadata address, which Stars’ browsers never open.';
+    }
+    const loopback = host === 'localhost' || host.endsWith('.localhost') || /^127\./.test(host) || host === '::1' || host === '0.0.0.0' || host === '::' || host === this.config.host.toLowerCase();
+    const port = Number(u.port || (u.protocol === 'https:' ? 443 : 80));
+    const own = [this.config.publicUrl, this.config.webUrl].some((o) => { try { return new URL(o).origin === u.origin; } catch { return false; } });
+    if (own || (loopback && this.ownPorts.has(port))) return 'That’s Sky’s own address. Stars’ browsers don’t open it: it holds everything Sky knows.';
+    return null;
   }
 
   /** Whether a browser can be used, and if not, why. */
@@ -153,6 +179,17 @@ export class BrowserManager {
             ...(proxy ? { proxy } : {}),
             args: ['--disable-blink-features=AutomationControlled'],
           });
+          // Pages a Star's tab reaches by a redirect or a link are held to the same limits as the addresses it opens.
+          await ctx.route('**/*', (route) => {
+            const req = route.request();
+            if (this.blockedForStars(req.url())) {
+              let page: Page | null = null;
+              try { page = req.frame().page(); } catch { /* a service worker's request */ }
+              const tab = [...this.tabs.values()].find((t) => t.page === page);
+              if (!tab || tab.control === 'star') return route.abort('blockedbyclient');
+            }
+            return route.fallback();
+          });
           ctx.on('close', () => {
             this.context = null;
             this.tabs.clear();
@@ -184,10 +221,11 @@ export class BrowserManager {
     const page = blank ?? await ctx.newPage();
     const tab: Tab = {
       page, elements: new Map(), frame: null, frameId: null, url: page.url(), title: '', updatedAt: iso(),
-      control: 'star', controlNote: null, implicit: false, lastPersonAt: 0, waiting: [], recordingId: null, checkout: null,
+      control: 'star', controlNote: null, implicit: false, lastPersonAt: 0, waiting: [], recordingId: null, checkout: null, digits: '',
     };
     // While recording, pages the person ends up on (by a link, a form or a redirect) are steps too.
     page.on('framenavigated', (f) => {
+      if (f === page.mainFrame()) tab.digits = '';
       if (f === page.mainFrame() && tab.recordingId) this.record(tab, { kind: 'open', value: f.url() });
     });
     this.tabs.set(starId, tab);
@@ -244,6 +282,8 @@ export class BrowserManager {
   open(starId: string, url: string) {
     const target = pageUrl(url);
     if (!target) throw new Error(`“${oneLine(url, 80)}” isn’t a web address Sky can open (only http and https pages)`);
+    const blocked = this.blockedForStars(target);
+    if (blocked) throw new Error(blocked);
     return this.act(starId, async (t) => { await t.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 45_000 }); });
   }
 
@@ -289,13 +329,39 @@ export class BrowserManager {
       if (el.password) throw new Error('Stars don’t type passwords. Ask the person to sign in through the browser view; the sign-in will stick.');
       if (el.payment || looksLikeCard(input.text)) throw new Error('Stars never enter card details. Fill in everything else, then call browser_checkout_handover so the person pays themselves.');
       const field = t.page.locator(`[data-sky-ref="${el.ref}"]`).first();
+      t.digits = '';
       await field.fill(input.text, { timeout: 10_000 });
       if (input.submit) await field.press('Enter');
     });
   }
 
+  /**
+   * A key press. The page's focused element decides what it can do, so the checks that guard browser_type and
+   * browser_click hold here too: no characters into a password or card field (found through frames and shadow
+   * DOM), no Enter or Space on a pay button, and no long number typed one key at a time.
+   */
   press(starId: string, key: string) {
-    return this.act(starId, async (t) => { await t.page.keyboard.press(key); });
+    return this.act(starId, async (t) => {
+      const focus = await deepFocus(t.page);
+      const ch = keyChar(key);
+      if (ch !== null && focus?.secret) {
+        throw new Error(focus.password
+          ? 'Stars don’t type passwords. Ask the person to sign in through the browser view; the sign-in will stick.'
+          : 'Stars never enter card details. Fill in everything else, then call browser_checkout_handover so the person pays themselves.');
+      }
+      if (activatesFocus(key) && focus?.pay) {
+        throw new Error(`“${focus.label}” looks like a pay button. Stars never pay: call browser_checkout_handover so the person does.`);
+      }
+      if (ch !== null && /\d/.test(ch)) {
+        t.digits = `${t.digits}${ch}`.slice(-40);
+        if (t.digits.length >= MAX_KEY_DIGITS) {
+          t.digits = '';
+          if (focus?.editable) await t.page.keyboard.press('Control+A').then(() => t.page.keyboard.press('Backspace')).catch(() => {});
+          throw new Error('Stars never enter card details, and a long number isn’t typed one key at a time: use browser_type for ordinary text.');
+        }
+      }
+      await t.page.keyboard.press(key);
+    });
   }
 
   scroll(starId: string, direction: 'up' | 'down') {
@@ -439,7 +505,9 @@ export class BrowserManager {
       if (!step.value || step.value === 'about:blank' || this.lastOpen.get(tab.recordingId) === step.value) return;
       this.lastOpen.set(tab.recordingId, step.value);
     }
-    this.onRecord(tab.recordingId, { at: iso(), url, ...step });
+    // What's kept (and later shown, replayed and sent to a model) never holds a card number or a vault secret.
+    const clean = (v: string | undefined) => (v === undefined ? v : this.redact(maskCards(v)));
+    this.onRecord(tab.recordingId, { at: iso(), url: this.redact(url), ...step, value: clean(step.value), ...(step.target !== undefined ? { target: clean(step.target) } : {}) });
   }
 
   /** What the person is about to click or type into, for the recording. */
@@ -495,10 +563,13 @@ export class BrowserManager {
     if (tab.control === 'star') await this.takeOver(starId, { implicit: true, note: null });
     tab.lastPersonAt = Date.now();
     if (tab.recordingId) {
-      const at = i.type === 'click' ? await this.describeAt(page, i.x, i.y) : i.type === 'type' ? await this.describeAt(page) : null;
+      const at = i.type === 'click' ? await this.describeAt(page, i.x, i.y) : null;
+      // What's being typed into, looking through frames and shadow DOM to the real focused element.
+      const focus = i.type === 'type' || i.type === 'key' ? await deepFocus(page) : null;
+      const hidden = focus?.password ? '[password]' : focus?.secret || (i.type === 'type' && looksLikeCard(i.text)) ? '[hidden]' : null;
       if (i.type === 'click') this.record(tab, { kind: 'click', target: at?.label || `the spot at ${Math.round(i.x)}, ${Math.round(i.y)}` });
-      else if (i.type === 'type') this.record(tab, { kind: 'type', ...(at?.label ? { target: at.label } : {}), value: at?.password ? '[password]' : i.text });
-      else if (i.type === 'key') this.record(tab, { kind: 'key', value: i.key });
+      else if (i.type === 'type') this.record(tab, { kind: 'type', ...(focus?.label ? { target: focus.label } : {}), value: hidden ?? i.text });
+      else if (i.type === 'key') this.record(tab, { kind: 'key', value: hidden && keyChar(i.key) !== null ? hidden : i.key });
       else if (i.type === 'scroll') this.record(tab, { kind: 'scroll', value: i.dy > 0 ? 'down' : 'up' });
       else if (i.type === 'back') this.record(tab, { kind: 'back' });
       else if (i.type === 'navigate') this.record(tab, { kind: 'open', value: target! });
@@ -625,6 +696,59 @@ const DESCRIBE_SCRIPT = `((at) => {
 // A real function, so Playwright passes the point to it.
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const describeFn = new Function(`return ${DESCRIBE_SCRIPT}`)() as (at: (number | undefined)[] | null) => unknown;
+
+/** Runs in a frame: the element that really has focus (through shadow roots), and whether it is secret or a pay button. */
+const FOCUS_SCRIPT = `(() => {
+  let el = document.activeElement;
+  while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+  if (!el || el === document.body || el === document.documentElement || /^(iframe|frame)$/i.test(el.tagName)) return null;
+  const tag = el.tagName.toLowerCase();
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const auto = (el.getAttribute('autocomplete') || '').toLowerCase();
+  const hints = [auto, el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label'), el.labels && el.labels[0] && el.labels[0].innerText].join(' ');
+  const password = type === 'password' || /password|passwd|passcode/.test(auto) || /\\b(password|passwd|pwd|passcode)\\b/i.test(hints);
+  const field = tag === 'input' || tag === 'textarea' || el.isContentEditable;
+  const payment = field && (/\\bcc-|card.?(number|num|no\\b)|cardnumber|\\bcvc|\\bcvv|\\bcsc\\b|security code|expir|exp.?(date|month|year)|cardholder|name on card/i.test(hints) || /one-time-code|\\botp\\b/i.test(hints));
+  const button = tag === 'button' || (tag === 'input' && ['submit', 'button', 'image'].includes(type)) || el.getAttribute('role') === 'button';
+  // A field's value is what the person typed, so it is never its label.
+  const label = (el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || (button ? el.innerText || el.value : '') || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+  const pay = button && /\\b(pay|pay now|payment|purchase|buy now|place (your )?order|order now|complete (order|purchase)|confirm (order|purchase|payment)|donate|subscribe)\\b/i.test(label);
+  return { tag, type, label, password, secret: password || payment, pay, editable: field };
+})`;
+
+// A real function, so it runs as written in each frame.
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const focusFn = new Function(`return ${FOCUS_SCRIPT}`)() as () => { tag: string; type: string; label: string; password: boolean; secret: boolean; pay: boolean; editable: boolean } | null;
+
+/** What has focus in the page, whichever frame it is in. */
+async function deepFocus(page: Page) {
+  for (const f of page.frames()) {
+    const r = await f.evaluate(focusFn).catch(() => null);
+    if (r) return r;
+  }
+  return null;
+}
+
+/** Long numbers pressed one key at a time are refused from this many digits (a card has 13 to 19). */
+const MAX_KEY_DIGITS = 13;
+
+/** The character a key press types, or null for keys like Tab and ArrowDown. */
+export function keyChar(key: string): string | null {
+  const num = /^(?:Digit|Numpad)(\d)$/.exec(key);
+  if (num) return num[1];
+  if (key === 'Space') return ' ';
+  return [...key].length === 1 ? key : null;
+}
+
+/** Keys that press the focused button or submit a form: Enter, Space and anything with a modifier (except Shift+Tab). */
+export function activatesFocus(key: string): boolean {
+  return /^(enter|numpadenter|space)$/i.test(key) || key === ' ' || (/^[^+]+\+./.test(key) && !/^shift\+tab$/i.test(key));
+}
+
+/** Replaces card numbers in text (13 to 19 digits that pass the Luhn check) with a marker. */
+export function maskCards(text: string): string {
+  return text.replace(/(?:\d[ -]?){13,19}/g, (m) => (looksLikeCard(m) ? `[card number]${/[ -]+$/.exec(m)?.[0] ?? ''}` : m));
+}
 
 /** Runs in the page: marks the sign-in fields with data-sky-fill and says what it found. */
 const LOGIN_SCRIPT = `(() => {

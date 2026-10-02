@@ -104,6 +104,8 @@ export interface ToolDef<I = any> extends ClientToolSpec {
   approval?(input: I, env?: ToolEnv): ApprovalPreview;
   /** Applies "approve with my edits": the edited preview back onto the input. */
   applyEdit?(input: I, editedPreview: string): I;
+  /** When an edit can be applied to this input (the preview shows all of what's edited); default always. */
+  canEdit?(input: I): boolean;
   run(input: I, ctx: ToolContext): Promise<ToolResult | string>;
 }
 
@@ -115,7 +117,7 @@ export function validateInput(tool: ClientToolSpec, input: unknown): string | nu
     if (obj[key] === undefined || obj[key] === null || obj[key] === '') return `missing required field "${key}"`;
   }
   for (const [key, value] of Object.entries(obj)) {
-    const prop = (tool.input_schema.properties ?? {})[key] as { type?: unknown; enum?: unknown[] } | undefined;
+    const prop = (tool.input_schema.properties ?? {})[key] as { type?: unknown; enum?: unknown[]; maxLength?: unknown } | undefined;
     if (!prop || value === undefined || value === null) continue;
     const t = prop.type;
     // Schemas from MCP servers can be richer ("type": ["string", "null"]); those are left to the server.
@@ -123,6 +125,9 @@ export function validateInput(tool: ClientToolSpec, input: unknown): string | nu
     const ok = t === 'array' ? Array.isArray(value) : t === 'integer' ? Number.isInteger(value) : !t || typeof value === t;
     if (!ok) return `"${key}" must be ${t}`;
     if (prop.enum && !prop.enum.includes(value)) return `"${key}" must be one of ${prop.enum.join(', ')}`;
+    if (typeof value === 'string' && typeof prop.maxLength === 'number' && value.length > prop.maxLength) {
+      return `"${key}" is ${value.length} characters; at most ${prop.maxLength} (the person has to be able to read all of it before approving)`;
+    }
   }
   return null;
 }

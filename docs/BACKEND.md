@@ -564,6 +564,47 @@ Free, with its current limits.
   - **Declined.** The Star keeps the browser, and nothing is learned from
     the decline.
 
+Round 5 fixes (testing thread, bugs 28 to 34):
+
+- **Key presses (28).** `browser_press` is judged by the key: Tab, arrows and
+  Escape are reads; a character is a write; Enter, Space and anything with a
+  modifier (except Shift+Tab) is a send. And whatever the policy says, the
+  browser looks at what has focus (through frames and shadow DOM): no
+  characters into a password, one-time-code or card field, no Enter or Space
+  on a button that says Pay, Buy now, Place order and the like, and 13 digits
+  pressed one key at a time are refused (the field is cleared).
+- **Edits (29).** An approval says whether it can be edited:
+  `Approval.editable`. An edit for one that can't be gets `400 not_editable`
+  and the approval stays pending. File writes (`file_write`,
+  `computer_write_file`), `run_command` (the command text) and
+  `computer_open` (the address) can now be edited. `file_write` can't be
+  once its content is over 2,000 characters, since the preview is cut.
+- **Long writes (30).** The approval for `computer_write_file` shows the
+  whole content, and content over 20,000 characters is refused before anyone
+  is asked, so there's never a hidden part. (Tool inputs can carry
+  `maxLength` in their schema, which `validateInput` enforces.)
+- **Sandbox (31).** The command sandbox gets a short list from `/etc` (library
+  and certificate setup, name lookup, users and groups without passwords, time
+  zone), not the whole of it, so service files with passwords aren't there.
+  The setup guide now keeps `SKY_PASSWORD` in a root-only environment file.
+- **Sky's own address (32).** A Star's browser refuses Sky's own address (the
+  ports the server listens on, `SKY_PUBLIC_URL`, `SKY_WEB_URL`) and
+  link-local and cloud metadata addresses (169.254.x.x, fe80::, the metadata
+  host names), for the address it opens and for redirects and links it
+  follows. The person's live view isn't limited, and other local pages are
+  still allowed.
+- **Recordings (33).** What the person types is looked at in whichever frame or
+  shadow root has focus. A password, one-time-code or card field, or text that
+  is a card number, is stored as `[hidden]` (or `[password]`); card numbers
+  typed in pieces are masked once the pieces are put together; vault secrets
+  are redacted; and the skill text and the model prompt are masked again.
+- **Programs on the computer (34).** The companion checks a program's
+  arguments like paths: one that is absolute, starts with `~`, contains `..`,
+  or is `--option=path` must resolve inside an allowed folder. Inline code
+  (`python -c`, `node -e`) is refused. `allow-command` warns that programs like
+  `git` and `python3` can still reach anything through their own scripts and
+  settings.
+
 Free-tier notes for wave 4:
 
 - **Voice costs nothing** with the browser's own speech. Groq's free
@@ -1067,6 +1108,11 @@ Your computer:
   on the computer: `node sky-companion.mjs allow-folder <path>`".
 - Events: `companion.updated` (`CompanionDevice`), `companion.deleted` (`{ id }`).
 - Approvals for computer actions name the computer in `target`.
+
+Round 5 additions for the UI: `Approval.editable?: boolean`. Show Edit only
+when it's true (an edit for anything else is `400 not_editable`). A step typed
+in a recording can have the value `[hidden]` (a card or secret field); show it as
+"something private". Everything else is unchanged.
 
 ### Server-side additions
 

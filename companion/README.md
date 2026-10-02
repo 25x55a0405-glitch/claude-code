@@ -33,6 +33,14 @@ file, and run a program. Nothing is allowed until you add it:
 Don't allow a shell (`bash`, `cmd`, `powershell`) or `sudo`: they can run
 anything, so the allowlist stops meaning anything. The program warns you.
 
+A program's arguments are checked too: one that points to a path (absolute,
+starting with `~`, with `..`, or `--option=path`) must be inside an allowed
+folder, and inline code like `python3 -c` or `node -e` is refused. That doesn't
+make every program safe. `git`, `python3`, `node`, `npm`, `make`, `find`, `curl`
+and similar can still read or change files anywhere your account can, through a
+script or a setting they run, whatever folders you allowed. The program warns
+you when you allow one; allow only what you'd trust a Star with.
+
 ## Four limits
 
 1. The allowlist above. Only you can change it, here.

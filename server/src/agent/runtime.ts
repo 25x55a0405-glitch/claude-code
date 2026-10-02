@@ -309,6 +309,8 @@ export class Runtime implements RuntimeHooks {
     if (current.status !== 'pending') throw new ApiError(409, 'conflict', `This was already ${current.status}`);
     if (decision.decision !== 'approve' && decision.decision !== 'reject') throw badRequest('decision must be approve or reject');
     const edited = decision.decision === 'approve' && decision.editedPreview?.trim() ? decision.editedPreview : undefined;
+    // An edit that couldn't be applied would run the original while the Star is told the edit was used.
+    if (edited && !current.editable) throw new ApiError(400, 'not_editable', 'This can’t be edited before approving. Approve it as it is, or decline and tell the Star what to change.');
     const a = this.store.setApprovalStatus(id, decision.decision === 'approve' ? 'approved' : 'rejected', edited);
     this.store.log('approval_resolved', `${a.status === 'approved' ? 'Approved' : 'Declined'}: ${a.action} to ${a.target}`, a.taskId);
     const note = decision.note?.trim();
