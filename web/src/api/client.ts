@@ -37,6 +37,15 @@ import type {
   SecretList,
   Skill,
   SkillInput,
+  McpInput,
+  McpServer,
+  MessagingApp,
+  MessagingStatus,
+  StarTemplate,
+  TemplateEntry,
+  TriggerEvent,
+  TriggerInput,
+  TriggerSetup,
 } from './types';
 
 /**
@@ -103,6 +112,35 @@ export interface SkyApi {
   addPushSubscription(subscription: PushSubscriptionJSON, label?: string): Promise<PushSubscriptionInfo>;
   deletePushSubscription(id: string): Promise<void>;
   testPush(): Promise<PushTestResult>;
+
+  /** Rejects with a 404 when the task has no trigger. */
+  getTrigger(taskId: string): Promise<TriggerSetup>;
+  /** null removes it. */
+  setTrigger(taskId: string, trigger: TriggerInput | null): Promise<TriggerSetup | null>;
+  rotateTrigger(taskId: string): Promise<TriggerSetup>;
+  listTriggerEvents(taskId: string): Promise<TriggerEvent[]>;
+  checkMail(): Promise<void>;
+
+  listMessaging(): Promise<MessagingStatus[]>;
+  connectTelegram(botToken: string): Promise<MessagingStatus>;
+  connectSlack(botToken: string, appToken: string): Promise<MessagingStatus>;
+  disconnectMessaging(app: MessagingApp): Promise<MessagingStatus>;
+  /** The Slack app manifest, as text to paste. */
+  slackManifest(): Promise<string>;
+
+  listMcp(): Promise<McpServer[]>;
+  createMcp(input: McpInput): Promise<McpServer>;
+  updateMcp(id: string, patch: Partial<McpInput>): Promise<McpServer>;
+  deleteMcp(id: string): Promise<void>;
+  reconnectMcp(id: string): Promise<McpServer>;
+
+  /** A group chat with two or more Stars. */
+  createGroupChat(starIds: string[], title?: string): Promise<Conversation>;
+  updateConversation(id: string, patch: { title?: string; starIds?: string[] }): Promise<Conversation>;
+
+  listTemplates(): Promise<{ templates: TemplateEntry[]; galleryError: string | null }>;
+  starTemplate(starId: string): Promise<StarTemplate>;
+  importTemplate(from: { template: StarTemplate } | { id: string } | { url: string }): Promise<{ star: StarView; skipped: string[] }>;
 
   listTasks(filter?: { status?: TaskStatus[]; starId?: string }): Promise<Task[]>;
   getTask(id: string): Promise<TaskDetail>;

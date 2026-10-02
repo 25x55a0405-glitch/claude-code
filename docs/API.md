@@ -215,6 +215,13 @@ events in [BACKEND.md](BACKEND.md). Secret values only go up, never come back.
 `url`; `manifest.webmanifest` and the icons let iPhone add Sky to the Home
 Screen, which iOS needs for web push. `#/tasks/:id` links open the goal.
 
+## Wave 2
+
+Triggers, chat apps, Star addresses, MCP, group chats and templates use the
+Wave 2 endpoints and events in [BACKEND.md](BACKEND.md). Every write sends
+`Content-Type: application/json`, so the server's JSON-only and same-origin
+checks pass; a UI served from another address must be in `SKY_WEB_ORIGIN`.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

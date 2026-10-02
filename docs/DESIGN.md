@@ -80,6 +80,12 @@ decorative animation beyond the character.
 | **Lessons** | When a Star learns from a correction, its chat shows a "Got it. I'll remember: …" card with Undo. Memory lists recent lessons with Undo and a switch to turn learning off |
 | **Secrets** | In Permissions: a vault of names only. Adding or replacing takes a value in a password field; it is never shown again. Each secret can be limited to some Stars |
 | **Notifications** | In Settings: push on this browser or phone, the list of devices, ntfy with a random topic, and a test. On iPhone a dismissible hint explains adding Sky to the Home Screen first |
+| **Triggers** | A repeating goal can start when something happens: a webhook, a GitHub event, a Slack or Telegram message, or a Gmail search. Its page shows the URL and secret to paste (with copy, show and "make a new URL"), how often it has fired, and the events waiting to run (up to 20, 30 an hour). New goal offers "When something happens" |
+| **Chat apps** | In Settings: connect a Telegram bot (token from @BotFather) or a Slack app (manifest from the server, then two tokens), pair by sending the 6-digit code, and see how to reach each Star there ("Scout: …" or "@Scout"). Messages that came from there say "via Telegram" |
+| **A Star's address** | Its own Gmail plus-address, with copy, on its page and profile |
+| **Tools** | MCP servers, local or hosted. Variables and headers are write-only and can come from the vault. Choose which Stars get each server and what each tool counts as (look only, changes, sends, deletes, spends), which decides when it asks |
+| **Group chats** | In the sidebar. Pick two or more Stars; tap a face above the composer to @mention it. Each reply is labelled with the Star's name, and up to two reply per message |
+| **Templates** | `#/stars/templates`: built-in and gallery templates, import from a file or link, the gallery source, and download any Star as a template (no memory, chats or secrets). "Share as template" is also on a Star's page |
 | **Goals** | Everything the Stars have taken on, filterable by Star, with progress and schedule, plus a goal's step-by-step history and who asked for it |
 | **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |

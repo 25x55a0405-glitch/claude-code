@@ -6,6 +6,7 @@ import { useResource } from '../lib/hooks';
 import { href } from '../lib/router';
 import { BrowserPip, BrowserWindow, useBrowserTab } from './BrowserView';
 import { Icon } from './Icon';
+import { StarAddress } from './StarAddress';
 import { Bar, Segmented, StarFace, StatusChip, useToast } from './ui';
 
 type Tab = 'now' | 'upcoming' | 'done';
@@ -51,6 +52,7 @@ export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () =>
             <h1 style={{ fontSize: 26, marginTop: 10 }}>{name}</h1>
             <span className="handle">@{name.toLowerCase().replace(/\s+/g, '')} · {star.main ? `${settings?.userName ?? 'your'}’s main Star` : 'a Star'}</span>
             {star.role && <p className="t2" style={{ marginTop: 6, maxWidth: '34ch' }}>{star.role}</p>}
+            {star.email && <div style={{ marginTop: 10, width: '100%', maxWidth: 340 }}><StarAddress star={star} compact /></div>}
             <span className="now-doing">
               <Icon name={allPaused || star.status.state === 'paused' ? 'pause' : 'sparkle'} size={14} />
               <span className={star.status.state === 'working' && !allPaused ? 'shimmer' : 't2'}>{starLine(star.status, status)}</span>

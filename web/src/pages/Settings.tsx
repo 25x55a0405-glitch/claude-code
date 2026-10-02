@@ -1,6 +1,7 @@
 import { api, type AvatarCharacter, type AvatarColor, type Settings as S, type Tone } from '../api';
 import { Avatar } from '../components/Avatar';
 import { Icon } from '../components/Icon';
+import { MessagingSetup } from '../components/MessagingSetup';
 import { PushSetup } from '../components/PushSetup';
 import { PageHead, Segmented, Skeleton, Switch } from '../components/ui';
 import { useAgent } from '../lib/agent';
@@ -116,6 +117,8 @@ export function Settings() {
       </section>
 
       <PushSetup />
+
+      <MessagingSetup />
 
       <section>
         <div className="section-title">Appearance</div>

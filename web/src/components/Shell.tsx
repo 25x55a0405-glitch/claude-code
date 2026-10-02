@@ -7,6 +7,7 @@ import { Icon, type IconName } from './Icon';
 import { StarFace } from './ui';
 import { ProfileSheet } from './ProfileSheet';
 import { HomeScreenHint } from './PushSetup';
+import { GroupForm } from './GroupChat';
 import { isIos, isStandalone } from '../lib/push';
 
 const NAV: { id: string; label: string; icon: IconName }[] = [
@@ -16,6 +17,7 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: 'stars', label: 'Constellation', icon: 'sparkle' },
   { id: 'memory', label: 'Memory', icon: 'brain' },
   { id: 'skills', label: 'Skills', icon: 'note' },
+  { id: 'tools', label: 'Tools', icon: 'plug' },
   { id: 'models', label: 'Models', icon: 'bolt' },
   { id: 'permissions', label: 'Permissions', icon: 'lock' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
@@ -45,7 +47,12 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
     (chatConv?.starId && stars?.find((s) => s.id === chatConv.starId)) ||
     (chatId && stars?.find((s) => s.conversationId === chatId)) ||
     main;
-  const side = (convs.data ?? []).filter((c) => !c.main && !homes.has(c.id) && (c.starId ?? main?.id) === current?.id);
+  const isGroup = (c: { starIds?: string[] }) => (c.starIds?.length ?? 0) > 1;
+  const groupConv = chatConv && isGroup(chatConv) ? chatConv : null;
+  const groupStars = groupConv ? (stars ?? []).filter((s) => groupConv.starIds!.includes(s.id)) : [];
+  const groupChats = (convs.data ?? []).filter(isGroup);
+  const side = (convs.data ?? []).filter((c) => !c.main && !isGroup(c) && !homes.has(c.id) && (c.starId ?? main?.id) === current?.id);
+  const [newGroup, setNewGroup] = useState(false);
   const onHome = (s: StarView) => section === 'chat' && (s.main ? !chatId : chatId === s.conversationId);
   const name = current?.name ?? settings?.agentName ?? 'Sky';
 
@@ -90,6 +97,17 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
             {n.id === 'approvals' && pending > 0 && <span className="count">{pending}</span>}
           </a>
         ))}
+        {stars && stars.length > 1 && (
+          <>
+            <div className="sb-label sb-label-row">Group chats<button className="icon-btn sm" onClick={() => setNewGroup(true)} aria-label="New group chat" title="New group chat"><Icon name="plus" size={14} /></button></div>
+            {groupChats.map((c) => (
+              <a key={c.id} href={href('chat', c.id)} className={`sb-item sb-chat sb-group ${chatId === c.id ? 'on' : ''}`}>
+                <span className="mini-faces">{(stars ?? []).filter((s) => c.starIds!.includes(s.id)).slice(0, 3).map((s) => <StarFace key={s.id} star={s} size={16} still />)}</span>
+                <span className="t">{c.title}</span>
+              </a>
+            ))}
+          </>
+        )}
         {side.length > 0 && <div className="sb-label">Side chats{current && stars && stars.length > 1 ? ` with ${current.name}` : ''}</div>}
         {side.map((c) => (
           <a key={c.id} href={href('chat', c.id)} className={`sb-item sb-chat ${chatId === c.id ? 'on' : ''}`}>
@@ -108,6 +126,15 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
       <div className="main">
         <header className="topbar">
           <button className="icon-btn only-mobile" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
+          {groupConv ? (
+            <div className="who group">
+              <span className="mini-faces">{groupStars.slice(0, 3).map((s) => <StarFace key={s.id} star={s} size={26} still />)}</span>
+              <span className="txt">
+                <span className="name">{groupConv.title}</span>
+                <span className="doing">{groupStars.map((s) => s.name).join(', ')}</span>
+              </span>
+            </div>
+          ) : (
           <button className="who" onClick={() => setSheet(true)} aria-label={`Open ${name}’s profile`}>
             {current ? <StarFace star={current} size={34} /> : <span style={{ width: 34 }} />}
             <span className="txt">
@@ -115,6 +142,7 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
               <span className={`doing ${current?.status.state === 'working' && status?.state !== 'paused' ? 'shimmer' : ''}`}>{starLine(current?.status, status)}</span>
             </span>
           </button>
+          )}
           <span className="grow" />
           {stars && stars.length > 1 && (
             <a className="orbit" href={href('stars')} aria-label="Your constellation" title="Your constellation">
@@ -130,6 +158,7 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
         {children}
       </div>
 
+      {newGroup && <GroupForm onClose={() => { setNewGroup(false); convs.reload(); }} />}
       {sheet && current && <ProfileSheet star={current} onClose={() => setSheet(false)} />}
     </div>
   );

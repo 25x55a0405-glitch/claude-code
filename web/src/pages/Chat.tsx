@@ -4,6 +4,7 @@ import { ApprovalCard } from '../components/ApprovalCard';
 import { BrowserPip, BrowserWindow, useBrowserTab } from '../components/BrowserView';
 import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/Composer';
+import { GroupForm, MentionBar } from '../components/GroupChat';
 import { TaskInline } from '../components/TaskInline';
 import { LessonCard } from '../components/LessonCard';
 import { Rich, StarNote } from '../components/StarNote';
@@ -13,6 +14,8 @@ import { clockTime, dayLabel } from '../lib/format';
 import { href } from '../lib/router';
 import { useLiveEvents, useResource } from '../lib/hooks';
 
+const listNames = (n: string[]) => (n.length < 2 ? n.join('') : `${n.slice(0, -1).join(', ')} and ${n[n.length - 1]}`);
+
 export function Chat({ conversationId }: { conversationId?: string }) {
   const { settings, stars } = useAgent();
   const convs = useResource(() => api.listConversations(), []);
@@ -21,10 +24,13 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const main = mainStar(stars);
   const star = (conv?.starId && stars?.find((s) => s.id === conv.starId)) || (activeId && stars?.find((s) => s.conversationId === activeId)) || main;
   // A Star's own chat also shows what it says to the other Stars; side chats don't.
-  const home = !!star && !!activeId && (star.conversationId === activeId || (star.main && !!conv?.main));
+  // A group chat has two or more Stars; nobody in particular "owns" it.
+  const group = conv?.starIds && conv.starIds.length > 1 ? (stars ?? []).filter((x) => conv.starIds!.includes(x.id)) : null;
+  const [members, setMembers] = useState(false);
+  const home = !group && !!star && !!activeId && (star.conversationId === activeId || (star.main && !!conv?.main));
   const notesFor = home && star?.id && (stars?.length ?? 0) > 1 ? star.id : null;
   const [notes, setNotes] = useState<ConstellationMessage[]>([]);
-  const browser = useBrowserTab(star?.id || undefined);
+  const browser = useBrowserTab(group ? undefined : star?.id || undefined);
   const [watching, setWatching] = useState(false);
   const tasks = useResource(() => api.listTasks(), [], ['task.updated']);
   const approvals = useResource(() => api.listApprovals(), [], ['approval.created', 'approval.updated']);
@@ -111,14 +117,31 @@ export function Chat({ conversationId }: { conversationId?: string }) {
       const day = dayLabel(m.createdAt);
       const newDay = !prev || dayLabel(prev.createdAt) !== day;
       const gap = (a: Message, b: Message) => Math.abs(new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()) > 5 * 60_000;
-      const first = newDay || prev.role !== m.role || gap(prev, m);
-      const last = !next || next.role !== m.role || dayLabel(next.createdAt) !== day || gap(m, next);
+      const who = (x: Message) => x.role + (x.starId ?? '');
+      const first = newDay || who(prev) !== who(m) || gap(prev, m);
+      const last = !next || who(next) !== who(m) || dayLabel(next.createdAt) !== day || gap(m, next);
       out.push({ day: newDay ? day : undefined, m, first, last, reached: !!m.proactive && (first || !prev.proactive) });
     });
     return out;
   }, [messages]);
 
   const name = star?.name ?? settings?.agentName ?? 'Sky';
+  const mention = (n: string) => {
+    setDraft((d) => `${d.trim() ? d.replace(/\s*$/, ' ') : ''}@${n} `);
+    // Back to the box with the caret at the end, so typing carries on.
+    requestAnimationFrame(() => {
+      const box = document.getElementById('composer') as HTMLTextAreaElement | null;
+      if (!box) return;
+      box.focus();
+      box.setSelectionRange(box.value.length, box.value.length);
+    });
+  };
+  const groupBits = group && conv ? (
+    <>
+      <MentionBar members={group} onMention={mention} onEdit={() => setMembers(true)} />
+      {members && <GroupForm conv={conv} onClose={() => setMembers(false)} onSaved={() => convs.reload()} />}
+    </>
+  ) : null;
   const faceOf = (m: Message) => (m.starId && stars?.find((s) => s.id === m.starId)) || star;
 
   if (gone || (conversationId && convs.data && !conv)) {
@@ -138,6 +161,20 @@ export function Chat({ conversationId }: { conversationId?: string }) {
 
   if (messages && messages.length === 0 && notes.length === 0) {
     const sideChat = conv && !conv.main && !home;
+    if (group) {
+      return (
+        <div className="scroll">
+          <div className="hero">
+            <div className="group-faces">{group.map((g, i) => <StarFace key={g.id} star={g} size={i === 0 ? 84 : 72} track />)}</div>
+            <h1>{conv!.title}</h1>
+            <p className="t2" style={{ marginTop: -10 }}>{listNames(group.map((g) => g.name))} are here. Mention one with @ to pick who answers.</p>
+            <div className="hero-pip">{groupBits}</div>
+            <Composer onSend={send} placeholder="Message the group" autoFocus value={draft} onChange={setDraft} />
+            {sendError && <p className="send-error" role="alert">{sendError}</p>}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="scroll">
         <div className="hero">
@@ -191,6 +228,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
                   )}
                   <div className="body">
                     {reached && <span className="reached">{name} reached out</span>}
+                    {group && m.role === 'agent' && first && <span className="who-said">{faceOf(m)?.name}</span>}
                     {m.lessonId ? (
                       <LessonCard text={m.content} lesson={lessons.data?.find((l) => l.id === m.lessonId)} onUndone={lessons.reload} />
                     ) : m.content && (
@@ -207,7 +245,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
                       const a = approvalById(c.approvalId);
                       return a ? <ApprovalCard key={a.id + a.status} approval={a} compact onDecided={() => approvals.reload()} /> : null;
                     })}
-                    {last && m.status !== 'streaming' && <span className="stamp">{clockTime(m.createdAt)}</span>}
+                    {(last || m.via) && m.status !== 'streaming' && <span className="stamp">{clockTime(m.createdAt)}{m.via ? ` · via ${m.via === 'telegram' ? 'Telegram' : 'Slack'}` : ''}</span>}
                   </div>
                 </div>
               </Fragment>
@@ -226,8 +264,9 @@ export function Chat({ conversationId }: { conversationId?: string }) {
       <div className="dock">
         {star && browser.tab && <BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} />}
         {sendError && <p className="send-error" role="alert">{sendError}</p>}
-        <Composer onSend={send} placeholder={conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} />
-        <div className="hint">{name} keeps working after you close this tab, and asks before anything it can’t undo.</div>
+        {groupBits && <div className="dock-group">{groupBits}</div>}
+        <Composer onSend={send} placeholder={group ? 'Message the group. @Name picks who answers' : conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} />
+        <div className="hint">{group ? 'Up to two Stars reply to each message. They still ask before anything they can’t undo.' : `${name} keeps working after you close this tab, and asks before anything it can’t undo.`}</div>
       </div>
       {watching && star && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
     </>

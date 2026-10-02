@@ -6,7 +6,9 @@ import { PageHead, Segmented, Skeleton, Switch, useToast } from '../components/u
 import { starChat, useAgent } from '../lib/agent';
 import { useResource } from '../lib/hooks';
 import { href, navigate } from '../lib/router';
+import { StarAddress } from '../components/StarAddress';
 import { HealthChip } from './Models';
+import { downloadTemplate } from './Templates';
 import { LOGO } from './Permissions';
 
 const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
@@ -158,6 +160,7 @@ export function StarEditor({ id }: { id: string }) {
                 {t.label}
               </button>
             ))}
+            <a className="idea-pill" href={href('stars', 'templates')}>More templates, or import one <Icon name="chevron" size={13} /></a>
           </div>
         </section>
       )}
@@ -201,6 +204,12 @@ export function StarEditor({ id }: { id: string }) {
             <label className="label" htmlFor="star-instructions">Instructions</label>
             <textarea id="star-instructions" className="field" rows={4} value={draft.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="Standing orders. How it should work, what to always or never do." />
           </div>
+          {star && star.email !== undefined && (
+            <div>
+              <span className="label">Its email address</span>
+              <StarAddress star={star} />
+            </div>
+          )}
         </div>
       </section>
 
@@ -369,6 +378,7 @@ export function StarEditor({ id }: { id: string }) {
                 <Icon name={star?.paused ? 'play' : 'pause'} size={15} />{star?.paused ? `Wake ${star.name}` : `Pause ${star?.name}`}
               </button>
             )}
+            {star && <button className="btn quiet lg" onClick={() => downloadTemplate(star).then(() => toast('Template saved. It has no memory, chats or secrets.'), (e) => toast((e as Error).message))} title="Download as a template to share">Share as template</button>}
             <span className="grow" />
             {!star?.main && <button className="btn quiet danger lg" onClick={() => setConfirm(true)}><Icon name="trash" size={15} /> Remove</button>}
           </>

@@ -91,6 +91,7 @@ export function Constellation() {
             <Icon name={allPaused ? 'play' : 'pause'} size={15} />
             {allPaused ? 'Wake every Star' : 'Pause every Star'}
           </button>
+          <a className="btn" href={href('stars', 'templates')}>Templates</a>
           <a className="btn ink" href={href('stars', 'new')}><Icon name="plus" size={15} /> New Star</a>
         </div>
       </PageHead>

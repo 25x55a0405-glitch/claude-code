@@ -13,6 +13,8 @@ import { Settings } from './pages/Settings';
 import { Skills } from './pages/Skills';
 import { StarEditor } from './pages/StarEditor';
 import { TaskDetailPage } from './pages/TaskDetail';
+import { Tools } from './pages/Tools';
+import { Templates } from './pages/Templates';
 
 export function App() {
   const [route = 'chat', id] = useRoute();
@@ -27,13 +29,14 @@ export function App() {
     case 'memory': page = <Memory />; break;
     case 'models': page = <Models />; break;
     case 'skills': page = <Skills />; break;
+    case 'tools': page = <Tools />; break;
     case 'permissions': page = <Permissions />; break;
     case 'activity': page = <Activity />; break;
     case 'settings': page = <Settings />; break;
-    case 'stars': page = id ? <StarEditor key={id} id={id} /> : <Constellation />; break;
+    case 'stars': page = id === 'templates' ? <Templates /> : id ? <StarEditor key={id} id={id} /> : <Constellation />; break;
     default: page = <Chat key={id ?? 'main'} conversationId={id} />; scrolls = false;
   }
-  const current = ['goals', 'ideas', 'approvals', 'memory', 'permissions', 'activity', 'settings', 'stars', 'models', 'skills'].includes(section) ? section : 'chat';
+  const current = ['goals', 'ideas', 'approvals', 'memory', 'permissions', 'activity', 'settings', 'stars', 'models', 'skills', 'tools'].includes(section) ? section : 'chat';
   return (
     <Shell section={current} chatId={current === 'chat' ? id : undefined} starId={current === 'stars' ? id : undefined}>
       {scrolls ? <div className="scroll" key={section + (id ?? '')}>{page}</div> : page}

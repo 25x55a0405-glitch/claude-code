@@ -13,7 +13,7 @@ import type {
   StarView,
 } from './types';
 import * as seed from './mockData';
-import type { BrowserSession, Lesson, ModelProvider, PushSubscriptionInfo, Secret, Skill } from './types';
+import type { BrowserSession, Lesson, McpServer, MessagingStatus, ModelProvider, PushSubscriptionInfo, Secret, Skill, TriggerInput, TriggerSetup } from './types';
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -72,6 +72,10 @@ export function createMockApi(): SkyApi {
     lessons: clone(seed.seedLessons),
     secrets: clone(seed.seedSecrets),
     pushSubs: clone(seed.seedPushSubs),
+    triggerEvents: clone(seed.seedTriggerEvents),
+    hookTokens: {} as Record<string, string>,
+    messaging: clone(seed.seedMessaging),
+    mcp: clone(seed.seedMcp),
     clicks: {} as Record<string, { x: number; y: number }[]>,
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
@@ -94,8 +98,10 @@ export function createMockApi(): SkyApi {
     const task = db.activityTask ? db.tasks.find((t) => t.id === db.activityTask) : undefined;
     const busy = !!db.activity_line && (task?.starId ?? MAIN) === star.id;
     const held = db.paused || star.paused;
+    const gmail = db.connections.some((c) => c.id === 'gmail' && c.status === 'connected');
     return {
       ...clone(star),
+      email: gmail ? (star.main ? 'd@gmail.com' : `d+${star.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@gmail.com`) : null,
       status: {
         state: held ? 'paused' : busy ? 'working' : pending ? 'waiting' : 'idle',
         activity: held || !busy ? null : db.activity_line,
@@ -214,9 +220,35 @@ export function createMockApi(): SkyApi {
     setTimeout(() => { emit({ type: 'message.done', data: clone(m) }); emit({ type: 'lesson.learned', data: clone(lesson) }); }, 500);
   };
 
-  const replyTo = (conversationId: string, text: string) => {
+
+  const triggerSetup = (taskId: string): TriggerSetup => {
+    const t = findTask(taskId);
+    if (!t.trigger) throw new Error('This goal has no trigger');
+    const token = (db.hookTokens[taskId] ??= Math.random().toString(36).slice(2, 14));
+    const hook = t.trigger.kind === 'webhook' || t.trigger.kind === 'github';
+    return { ...clone(t.trigger), url: hook ? `${location.origin}/api/v1/hooks/${token}` : null, secret: t.trigger.kind === 'github' ? `ghs_${token}${token.slice(0, 6)}` : null };
+  };
+  const setMessaging = (m: MessagingStatus) => {
+    db.messaging = db.messaging.map((x) => (x.app === m.app ? m : x));
+    emit({ type: 'messaging.updated', data: clone(m) });
+    return clone(m);
+  };
+  const toolsFor = (name: string): McpServer['tools'] => [
+    { name: 'search', toolName: `mcp_${name}_search`, description: 'Search', effect: 'read' },
+    { name: 'create_item', toolName: `mcp_${name}_create_item`, description: 'Create something', effect: 'write' },
+  ];
+
+  const replyTo = (conversationId: string, text: string, as?: string) => {
+    const group = db.conversations.find((c) => c.id === conversationId)?.starIds;
+    if (group && group.length > 1 && !as) {
+      // Named Stars answer in order, at most two; otherwise the first member does.
+      const named = group.map((id) => findStar(id)).filter((st) => new RegExp(`(^|\\s)@?${st.name}\\b`, 'i').test(text)).slice(0, 2);
+      const who = named.length ? named : [findStar(group[0])];
+      who.forEach((st, i) => setTimeout(() => replyTo(conversationId, text, st.id), i * 2200));
+      return;
+    }
     const lower = text.toLowerCase();
-    const me = findStar(starOfConv(conversationId));
+    const me = findStar(as ?? starOfConv(conversationId));
     let reply = 'Got it. I’ll take care of that and let you know when it’s done.';
     let cards: Message['cards'];
     const other = db.stars.find((s) => s.id !== me.id && new RegExp(`\\b${s.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(lower));
@@ -284,7 +316,7 @@ export function createMockApi(): SkyApi {
     }, 45);
   };
 
-  return {
+  const api: SkyApi = {
     async getSession() { return { signedIn: true, authRequired: false }; },
     async signIn() {},
     async signOut() {},
@@ -447,6 +479,125 @@ export function createMockApi(): SkyApi {
       return { delivered, failed: [] };
     },
 
+    async getTrigger(id) { await wait(); return triggerSetup(id); },
+    async setTrigger(id, trigger: TriggerInput | null) {
+      await wait();
+      const t = findTask(id);
+      if (t.kind === 'one_off') throw new Error('Only repeating goals can have a trigger');
+      t.trigger = trigger ? { ...trigger, fired: t.trigger?.fired ?? 0, lastFiredAt: t.trigger?.lastFiredAt ?? null } : undefined;
+      t.updatedAt = iso();
+      emit({ type: 'task.updated', data: summary(t) });
+      return trigger ? triggerSetup(id) : null;
+    },
+    async rotateTrigger(id) { await wait(); delete db.hookTokens[id]; return triggerSetup(id); },
+    async listTriggerEvents(id) { await wait(); return clone(db.triggerEvents.filter((e) => e.taskId === id)); },
+    async checkMail() { await wait(600); },
+
+    async listMessaging() { await wait(); return clone(db.messaging); },
+    async connectTelegram(botToken) {
+      await wait(500);
+      if (!/^\d+:[\w-]{20,}$/.test(botToken.trim())) throw new Error('Telegram didn’t accept that token. Copy it again from @BotFather.');
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const m = setMessaging({ app: 'telegram', state: 'pairing', pairCode: code, pairLink: `https://t.me/my_sky_bot?start=${code}`, botName: 'my_sky_bot', error: null });
+      setTimeout(() => setMessaging({ ...m, state: 'on', pairCode: null, pairLink: null }), 15000);
+      return m;
+    },
+    async connectSlack(botToken, appToken) {
+      await wait(500);
+      if (!botToken.startsWith('xoxb-') || !appToken.startsWith('xapp-')) throw new Error('The bot token starts with xoxb- and the app token with xapp-.');
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      const m = setMessaging({ app: 'slack', state: 'pairing', pairCode: code, pairLink: null, botName: 'Acme workspace', error: null });
+      setTimeout(() => setMessaging({ ...m, state: 'on', pairCode: null }), 15000);
+      return m;
+    },
+    async disconnectMessaging(app) { await wait(); return setMessaging({ app, state: 'off', pairCode: null, pairLink: null, botName: null, error: null }); },
+    async slackManifest() {
+      await wait();
+      return JSON.stringify({ display_information: { name: db.settings.agentName }, features: { bot_user: { display_name: db.settings.agentName, always_online: true } }, oauth_config: { scopes: { bot: ['chat:write', 'im:history', 'im:read', 'im:write', 'channels:history', 'groups:history', 'users:read'] } }, settings: { event_subscriptions: { bot_events: ['message.im', 'message.channels', 'message.groups'] }, interactivity: { is_enabled: true }, socket_mode_enabled: true } }, null, 2);
+    },
+
+    async listMcp() { await wait(); return clone(db.mcp); },
+    async createMcp(input) {
+      await wait();
+      const m: McpServer = {
+        id: uid('mcp'), name: input.name.trim(), transport: input.transport, command: input.command ?? null, args: input.args ?? [], url: input.url ?? null,
+        envKeys: Object.keys(input.env ?? {}), headerKeys: Object.keys(input.headers ?? {}), enabled: input.enabled ?? true, toolEffects: input.toolEffects ?? {},
+        status: 'connecting', error: null, tools: [], createdAt: iso(), updatedAt: iso(),
+      };
+      db.mcp.push(m);
+      setTimeout(() => { Object.assign(m, { status: 'ready', tools: toolsFor(m.name) }); emit({ type: 'mcp.updated', data: clone(m) }); }, 1500);
+      return clone(m);
+    },
+    async updateMcp(id, patch) {
+      await wait();
+      const m = db.mcp.find((x) => x.id === id);
+      if (!m) throw new Error('That server is gone');
+      const { env, headers, ...rest } = patch;
+      Object.assign(m, rest, { updatedAt: iso() });
+      if (env) m.envKeys = Object.keys(env);
+      if (headers) m.headerKeys = Object.keys(headers);
+      emit({ type: 'mcp.updated', data: clone(m) });
+      return clone(m);
+    },
+    async deleteMcp(id) {
+      await wait();
+      db.mcp = db.mcp.filter((x) => x.id !== id);
+      db.stars.forEach((st) => { if (st.mcpServerIds) st.mcpServerIds = st.mcpServerIds.filter((x) => x !== id); });
+      emit({ type: 'mcp.deleted', data: { id } });
+    },
+    async reconnectMcp(id) {
+      await wait(400);
+      const m = db.mcp.find((x) => x.id === id)!;
+      Object.assign(m, { status: 'connecting', error: null });
+      setTimeout(() => { Object.assign(m, m.headerKeys.length && m.status !== 'ready' && m.name === 'linear' ? { status: 'error', error: '401 Unauthorized: check the Authorization header' } : { status: 'ready', tools: m.tools.length ? m.tools : toolsFor(m.name) }); emit({ type: 'mcp.updated', data: clone(m) }); }, 1200);
+      return clone(m);
+    },
+
+    async createGroupChat(starIds, title) {
+      await wait();
+      if (starIds.length < 2) throw new Error('Pick at least two Stars');
+      const c = { id: uid('c'), main: false, title: title?.trim() || starIds.map((id) => findStar(id).name).join(', '), updatedAt: iso(), preview: '', starIds };
+      db.conversations.unshift(c);
+      return clone(c);
+    },
+    async updateConversation(id, patch) {
+      await wait();
+      const c = db.conversations.find((x) => x.id === id);
+      if (!c) throw new Error('That chat is gone');
+      if (patch.starIds && patch.starIds.length < 2) throw new Error('A group needs at least two Stars');
+      Object.assign(c, patch, { updatedAt: iso() });
+      return clone(c);
+    },
+
+    async listTemplates() { await wait(); return { templates: clone(seed.seedTemplates.filter((t) => t.source === 'builtIn' || db.settings.templateGallery !== '')), galleryError: null }; },
+    async starTemplate(id) {
+      await wait();
+      const st = findStar(id);
+      return {
+        format: 'sky.star', version: 1, name: st.name, role: st.role, instructions: st.instructions, personality: st.personality ?? '', replyStyle: st.replyStyle ?? '',
+        avatar: clone(st.avatar), autonomy: st.autonomy, apps: st.connectionIds ? [...st.connectionIds] : null,
+        skills: db.skills.filter((k) => k.starId === id).map(({ name, whenToUse, steps }) => ({ name, whenToUse, steps })),
+        rules: db.rules.filter((r) => r.starId === id).map((r) => r.text),
+      };
+    },
+    async importTemplate(from) {
+      await wait(500);
+      let template;
+      if ('template' in from) template = from.template;
+      else if ('id' in from) template = seed.seedTemplates.find((t) => t.id === from.id)?.template;
+      else throw new Error('The preview can’t fetch links. Try a file instead.');
+      if (!template || template.format !== 'sky.star') throw new Error('That isn’t a Sky Star template');
+      let name = template.name;
+      for (let n = 2; db.stars.some((x) => x.name.toLowerCase() === name.toLowerCase()); n++) name = `${template.name} ${n}`;
+      const apps = template.apps;
+      const known = apps?.filter((a) => db.connections.some((c) => c.id === a)) ?? null;
+      const skipped = apps?.filter((a) => !db.connections.some((c) => c.id === a)) ?? [];
+      const star = await api.createStar({ name, role: template.role, instructions: template.instructions, avatar: template.avatar, autonomy: template.autonomy, connectionIds: known, personality: template.personality, replyStyle: template.replyStyle });
+      template.skills.forEach((k) => db.skills.push({ id: uid('sk'), ...k, starId: star.id, source: 'you', uses: 0, lastUsedAt: null, createdAt: iso(), updatedAt: iso() }));
+      template.rules.forEach((text) => db.rules.push({ id: uid('r'), text, enabled: true, builtIn: false, starId: star.id, createdAt: iso() }));
+      return { star, skipped };
+    },
+
     async listProviders() { await wait(); return clone(db.providers); },
     async listProviderPresets() { await wait(); return clone(seed.seedPresets); },
     async createProvider(input) {
@@ -539,7 +690,7 @@ export function createMockApi(): SkyApi {
     async createTask(input) {
       await wait();
       const t: TaskDetail = {
-        id: uid('t'), ...input, status: input.kind === 'one_off' ? 'active' : 'scheduled',
+        id: uid('t'), ...input, trigger: input.trigger ? { ...input.trigger, fired: 0, lastFiredAt: null } : undefined, status: input.kind === 'one_off' ? 'active' : 'scheduled',
         createdAt: iso(), updatedAt: iso(), connectionIds: [], starId: input.starId ?? MAIN,
         steps: [{ id: uid('s'), at: iso(), kind: 'plan', summary: 'Task created. Planning first steps.' }],
       };
@@ -681,4 +832,5 @@ export function createMockApi(): SkyApi {
       return () => handlers.delete(h);
     },
   };
+  return api;
 }

@@ -24,6 +24,9 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'skill.deleted',
   'lesson.learned',
   'lesson.undone',
+  'mcp.updated',
+  'mcp.deleted',
+  'messaging.updated',
 ];
 
 export class HttpError extends Error {
@@ -137,6 +140,34 @@ export function createHttpApi(baseUrl: string): SkyApi {
     addPushSubscription: (subscription, label) => call('POST', '/push/subscriptions', { subscription, label }),
     deletePushSubscription: (id) => call('DELETE', `/push/subscriptions/${id}`),
     testPush: () => call('POST', '/push/test'),
+
+    getTrigger: (id) => call('GET', `/tasks/${id}/trigger`),
+    setTrigger: (id, trigger) => call('PUT', `/tasks/${id}/trigger`, { trigger }),
+    rotateTrigger: (id) => call('POST', `/tasks/${id}/trigger/rotate`),
+    listTriggerEvents: (id) => call('GET', `/tasks/${id}/events`),
+    checkMail: () => call('POST', '/triggers/check-mail'),
+
+    listMessaging: () => call('GET', '/messaging'),
+    connectTelegram: (botToken) => call('POST', '/messaging/telegram', { botToken }),
+    connectSlack: (botToken, appToken) => call('POST', '/messaging/slack', { botToken, appToken }),
+    disconnectMessaging: (app) => call('DELETE', `/messaging/${app}`),
+    slackManifest: async () => {
+      const m = await call<unknown>('GET', '/messaging/slack/manifest');
+      return typeof m === 'string' ? m : JSON.stringify(m, null, 2);
+    },
+
+    listMcp: () => call('GET', '/mcp'),
+    createMcp: (input) => call('POST', '/mcp', input),
+    updateMcp: (id, patch) => call('PATCH', `/mcp/${id}`, patch),
+    deleteMcp: (id) => call('DELETE', `/mcp/${id}`),
+    reconnectMcp: (id) => call('POST', `/mcp/${id}/reconnect`),
+
+    createGroupChat: (starIds, title) => call('POST', '/conversations', { starIds, title }),
+    updateConversation: (id, patch) => call('PATCH', `/conversations/${id}`, patch),
+
+    listTemplates: () => call('GET', '/templates'),
+    starTemplate: (id) => call('GET', `/stars/${id}/template`),
+    importTemplate: (from) => call('POST', '/templates/import', from),
 
     listTasks: (filter) => call('GET', '/tasks' + qs({ status: filter?.status?.join(','), starId: filter?.starId })),
     getTask: (id) => call('GET', `/tasks/${id}`),

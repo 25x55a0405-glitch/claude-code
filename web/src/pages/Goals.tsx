@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { api, type TaskKind, type TaskStatus } from '../api';
+import { api, type TaskKind, type TaskStatus, type TriggerInput } from '../api';
+import { TriggerFields, blankTrigger, triggerLine } from '../components/Triggers';
 import { Icon } from '../components/Icon';
 import { Bar, Empty, ErrorNote, PageHead, Segmented, Skeleton, StarFace, StatusChip, kindMeta, useToast } from '../components/ui';
 import { mainStar, useAgent } from '../lib/agent';
@@ -58,7 +59,7 @@ export function Goals() {
                   <div className="meta">
                     {many && starOf(t.starId) && <><StarFace star={starOf(t.starId)!} size={16} still /><span>{starOf(t.starId)!.name}{t.requestedBy ? `, for ${starOf(t.requestedBy.starId)?.name ?? 'another Star'}` : ''}</span><span>·</span></>}
                     <Icon name={kind.icon} size={13} />
-                    <span>{t.schedule ?? kind.label}</span>
+                    <span>{t.trigger && !t.schedule ? triggerLine(t.trigger) : t.schedule ?? kind.label}</span>
                     <span>·</span>
                     <span>{t.nextRunAt && t.status !== 'done' ? `Next ${relTime(t.nextRunAt)}` : `Updated ${relTime(t.updatedAt)}`}</span>
                   </div>
@@ -79,12 +80,15 @@ function NewGoal({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<TaskKind>('one_off');
   const [schedule, setSchedule] = useState('');
+  const [when, setWhen] = useState<'schedule' | 'event'>('schedule');
+  const [trigger, setTrigger] = useState<TriggerInput>(blankTrigger());
   const { stars } = useAgent();
   const [starId, setStarId] = useState<string | undefined>(undefined);
   const owner = (starId && stars?.find((s) => s.id === starId)) || mainStar(stars);
 
   const submit = async () => {
-    const t = await api.createTask({ title: title.trim(), description, kind, schedule: kind === 'one_off' ? undefined : schedule || undefined, ...(starId ? { starId } : {}) });
+    const onEvent = kind === 'recurring' && when === 'event';
+    const t = await api.createTask({ title: title.trim(), description, kind, schedule: kind === 'one_off' || onEvent ? undefined : schedule || undefined, ...(starId ? { starId } : {}), ...(onEvent ? { trigger } : {}) });
     toast('Goal started');
     onClose();
     navigate('goals', t.id);
@@ -117,9 +121,13 @@ function NewGoal({ onClose }: { onClose: () => void }) {
         )}
         <div>
           <span className="label">How often</span>
-          <Segmented label="How often" value={kind} onChange={setKind} options={[{ value: 'one_off', label: 'Once' }, { value: 'recurring', label: 'On a schedule' }, { value: 'watch', label: 'Keep watching' }]} />
+          <Segmented label="How often" value={kind} onChange={setKind} options={[{ value: 'one_off', label: 'Once' }, { value: 'recurring', label: 'Again and again' }, { value: 'watch', label: 'Keep watching' }]} />
         </div>
-        {kind !== 'one_off' && (
+        {kind === 'recurring' && (
+          <Segmented label="Runs" value={when} onChange={setWhen} options={[{ value: 'schedule', label: 'At set times' }, { value: 'event', label: 'When something happens' }]} />
+        )}
+        {kind === 'recurring' && when === 'event' && <TriggerFields value={trigger} onChange={setTrigger} />}
+        {kind !== 'one_off' && !(kind === 'recurring' && when === 'event') && (
           <div>
             <label className="label" htmlFor="ng-sched">{kind === 'watch' ? 'Check how often' : 'When'}</label>
             <input id="ng-sched" className="field" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder={kind === 'watch' ? 'Every 3 hours' : 'Weekdays at 9:00'} />
@@ -127,7 +135,7 @@ function NewGoal({ onClose }: { onClose: () => void }) {
         )}
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn quiet" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn ink" disabled={!title.trim()}>Start</button>
+          <button type="submit" className="btn ink" disabled={!title.trim() || (kind === 'recurring' && when === 'event' && trigger.kind === 'email' && !trigger.query?.trim())}>Start</button>
         </div>
       </form>
     </div>

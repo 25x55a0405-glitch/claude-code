@@ -85,6 +85,8 @@ export interface Task {
   nextRunAt?: string;
   lastRunAt?: string;
   connectionIds: string[];
+  /** What starts a run besides (or instead of) the schedule. */
+  trigger?: TaskTrigger;
   /** Short line summarising the latest outcome, shown on cards. */
   lastOutcome?: string;
   /** The Star that owns the task. */
@@ -103,6 +105,44 @@ export interface CreateTaskInput {
   kind: TaskKind;
   schedule?: string;
   starId?: string;
+  /** Recurring tasks only. */
+  trigger?: TriggerInput;
+}
+
+export type TriggerKind = 'webhook' | 'github' | 'message' | 'email';
+
+export interface TaskTrigger {
+  kind: TriggerKind;
+  /** github: e.g. ['push', 'issues']; empty means every event. */
+  events?: string[];
+  /** message: where it listens. */
+  source?: 'slack' | 'telegram' | 'any';
+  /** message: must contain this (case-insensitive). */
+  match?: string;
+  /** message: Slack channel id or #name, Telegram chat id. */
+  channel?: string;
+  /** email: a Gmail search. */
+  query?: string;
+  fired: number;
+  lastFiredAt: string | null;
+}
+
+export type TriggerInput = Omit<TaskTrigger, 'fired' | 'lastFiredAt'>;
+
+/** A trigger with the URL and secret to paste elsewhere. */
+export interface TriggerSetup extends TaskTrigger {
+  url: string | null;
+  secret: string | null;
+}
+
+/** An event waiting for its run. */
+export interface TriggerEvent {
+  id: string;
+  taskId: string;
+  source: string;
+  summary: string;
+  content: string;
+  at: string;
 }
 
 export type TaskCommand = 'pause' | 'resume' | 'run_now' | 'cancel';
@@ -151,6 +191,8 @@ export interface Conversation {
   updatedAt: string;
   preview: string;
   starId?: string;
+  /** Two or more Stars: a group chat. */
+  starIds?: string[];
 }
 
 export interface Message {
@@ -166,6 +208,8 @@ export interface Message {
   cards?: MessageCard[];
   /** The Star that wrote an agent message. */
   starId?: string;
+  /** Came in from a messaging app. */
+  via?: 'telegram' | 'slack';
   /** Set on "Got it. I'll remember: …" messages, so the UI can offer Undo. */
   lessonId?: string;
 }
@@ -265,6 +309,10 @@ export interface Settings {
   ntfyTopic?: string | null;
   /** '' means https://ntfy.sh. */
   ntfyServer?: string;
+  /** How often email triggers check Gmail, 2 to 60. */
+  mailPollMinutes?: number;
+  /** '' | 'owner/repo' | an https URL to index.json. */
+  templateGallery?: string;
 }
 
 // ---- Ideas -------------------------------------------------------------
@@ -306,6 +354,8 @@ export interface Star {
   paused: boolean;
   /** Model providers this Star uses, in order; null means the global order. Absent on older servers. */
   providerIds?: string[] | null;
+  /** MCP servers this Star gets; null means all. Absent on older servers. */
+  mcpServerIds?: string[] | null;
   /** Its character, in its own words. '' means none. Absent on older servers. */
   personality?: string;
   /** How its replies look: length, format, emoji. */
@@ -329,9 +379,11 @@ export interface StarStatus {
 /** What the API returns for a Star: the record plus its live status. */
 export interface StarView extends Star {
   status: StarStatus;
+  /** Its own address (plus-addressing on your Gmail), once Gmail is connected. */
+  email?: string | null;
 }
 
-export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle'>> & { notify?: Partial<NonNullable<Star['notify']>> };
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle' | 'mcpServerIds'>> & { notify?: Partial<NonNullable<Star['notify']>> };
 
 export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
 
@@ -513,6 +565,78 @@ export interface PushTestResult {
   failed: string[];
 }
 
+// ---- Messaging apps, MCP, templates -----------------------------------
+
+export type MessagingApp = 'telegram' | 'slack';
+
+export interface MessagingStatus {
+  app: MessagingApp;
+  state: 'off' | 'pairing' | 'on' | 'error';
+  /** Show while pairing: "Send 482913 to your bot". */
+  pairCode: string | null;
+  /** telegram: https://t.me/<bot>?start=<code> */
+  pairLink: string | null;
+  /** Telegram bot username, or the Slack workspace. */
+  botName: string | null;
+  error: string | null;
+}
+
+export type ToolEffect = 'read' | 'write' | 'send' | 'delete' | 'spend';
+
+export interface McpServer {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  command: string | null;
+  args: string[];
+  url: string | null;
+  /** Names only; values stay on the server. */
+  envKeys: string[];
+  headerKeys: string[];
+  enabled: boolean;
+  toolEffects: Record<string, ToolEffect>;
+  status: 'off' | 'connecting' | 'ready' | 'error';
+  error: string | null;
+  tools: { name: string; toolName: string; description: string; effect: string }[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface McpInput {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  toolEffects?: Record<string, ToolEffect>;
+}
+
+export interface StarTemplate {
+  format: 'sky.star';
+  version: 1;
+  name: string;
+  role: string;
+  description?: string;
+  instructions: string;
+  personality: string;
+  replyStyle: string;
+  avatar: { character: AvatarCharacter; color: AvatarColor };
+  autonomy: Autonomy | null;
+  apps: string[] | null;
+  skills: { name: string; whenToUse: string; steps: string }[];
+  rules: string[];
+}
+
+export interface TemplateEntry {
+  id: string;
+  source: 'builtIn' | 'gallery';
+  template: StarTemplate;
+  url?: string;
+}
+
 // ---- Pagination --------------------------------------------------------
 
 export interface Page<T> {
@@ -545,7 +669,10 @@ export type LiveEvent =
   | { type: 'skill.updated'; data: Skill }
   | { type: 'skill.deleted'; data: { id: string } }
   | { type: 'lesson.learned'; data: Lesson }
-  | { type: 'lesson.undone'; data: Lesson };
+  | { type: 'lesson.undone'; data: Lesson }
+  | { type: 'mcp.updated'; data: McpServer }
+  | { type: 'mcp.deleted'; data: { id: string } }
+  | { type: 'messaging.updated'; data: MessagingStatus };
 
 export type LiveEventType = LiveEvent['type'];
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api, type StepKind, type TaskCommand, type TaskStep } from '../api';
 import { ApprovalCard } from '../components/ApprovalCard';
 import { Icon, type IconName } from '../components/Icon';
+import { TriggerPanel, triggerLine } from '../components/Triggers';
 import { Bar, ErrorNote, Skeleton, StarFace, StatusChip, kindMeta, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { clockTime, dayLabel, relTime } from '../lib/format';
@@ -69,7 +70,8 @@ export function TaskDetailPage({ id }: { id: string }) {
               </>
             );
           })()}
-          <span className="chip"><Icon name={kind.icon} size={12} /> {t.schedule ?? kind.label}</span>
+          {(t.schedule || !t.trigger) && <span className="chip"><Icon name={kind.icon} size={12} /> {t.schedule ?? kind.label}</span>}
+          {t.trigger && <span className="chip"><Icon name="bolt" size={12} /> {triggerLine(t.trigger)}</span>}
           {t.connectionIds.map((c) => <span key={c} className="chip">{conn(c) ?? c}</span>)}
         </div>
         <h1>{t.title}</h1>
@@ -99,6 +101,8 @@ export function TaskDetailPage({ id }: { id: string }) {
       )}
 
       {approvals.data?.map((a) => <ApprovalCard key={a.id} approval={a} onDecided={() => approvals.reload()} />)}
+
+      {!finished && <TriggerPanel task={t} onChanged={task.reload} />}
 
       <section>
         <div className="section-title">What Sky did</div>

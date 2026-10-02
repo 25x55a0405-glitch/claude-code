@@ -19,6 +19,10 @@ import type {
   PushSubscriptionInfo,
   Secret,
   Skill,
+  McpServer,
+  MessagingStatus,
+  TemplateEntry,
+  TriggerEvent,
 } from './types';
 
 const now = Date.now();
@@ -55,6 +59,36 @@ export const seedConnections: Connection[] = [
 ];
 
 export const seedTasks: TaskDetail[] = [
+  {
+    id: 't_bank',
+    starId: 'star_post',
+    title: 'File bank statements',
+    description: 'When a statement email from my bank arrives, save the PDF to Drive and tell me the balance.',
+    status: 'scheduled',
+    kind: 'recurring',
+    createdAt: ago(60 * 24 * 4),
+    updatedAt: ago(60 * 26),
+    lastRunAt: ago(60 * 26),
+    connectionIds: ['gmail', 'drive'],
+    lastOutcome: 'Saved the September statement to Drive',
+    trigger: { kind: 'email', query: 'from:statements@mybank.com has:attachment', fired: 3, lastFiredAt: ago(60 * 26) },
+    steps: [{ id: 'bk1', at: ago(60 * 26), kind: 'result', summary: 'Triggered: statement email. Saved the PDF to Drive/Finance' }],
+  },
+  {
+    id: 't_ship',
+    starId: 'star_sky',
+    title: 'Summarise each push to main',
+    description: 'When something is pushed to main on GitHub, tell me what changed in two lines.',
+    status: 'scheduled',
+    kind: 'recurring',
+    createdAt: ago(60 * 24 * 2),
+    updatedAt: ago(40),
+    lastRunAt: ago(40),
+    connectionIds: ['github'],
+    lastOutcome: 'Push by d: new Models screen and live browser',
+    trigger: { kind: 'github', events: ['push'], fired: 7, lastFiredAt: ago(40) },
+    steps: [{ id: 'sh1', at: ago(40), kind: 'result', summary: 'Triggered: push to main. Summarised 2 commits' }],
+  },
   {
     id: 't_inbox',
     starId: 'star_post',
@@ -248,6 +282,7 @@ export const seedConversations: Conversation[] = [
   { id: 'c_scout', main: false, title: 'Scout', updatedAt: ago(60 * 2), preview: 'Lisbon fares dropped 4%.', starId: 'star_scout' },
   { id: 'c_post', main: false, title: 'Post', updatedAt: ago(2), preview: 'I drafted a reply to Maya.', starId: 'star_post' },
   { id: 'c_trip', main: false, title: 'Lisbon trip', updatedAt: ago(60 * 30), preview: 'I’ll watch fares and ping you under $600.', starId: 'star_sky' },
+  { id: 'c_group', main: false, title: 'Lisbon planning', updatedAt: ago(20), preview: 'Scout: Alfama is quieter at night.', starIds: ['star_sky', 'star_scout', 'star_post'] },
   { id: 'c_gift', main: false, title: 'Gift for Sam', updatedAt: ago(60 * 24 * 3), preview: 'The pour-over kit arrives Thursday.', starId: 'star_sky' },
 ];
 
@@ -265,6 +300,10 @@ export const seedMessages: Message[] = [
   { id: 'msg11', conversationId: 'c_scout', role: 'agent', starId: 'star_scout', proactive: true, content: 'Fares dropped 4%. The best is **$642 on TAP**, still above your $600 limit. I told Sky and I’ll keep watching.', createdAt: ago(60 * 2), status: 'done' },
   { id: 'msg12', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Inbox is at zero again. I archived 14, drafted 2 replies, and asked Sky about Maya’s request to move Friday.', createdAt: ago(9), status: 'done', cards: [{ kind: 'task', taskId: 't_inbox' }] },
   { id: 'msg13', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Maya wants to move Friday’s review. Sky checked and you’re free Thursday at 3, so I drafted a reply:', createdAt: ago(2), status: 'done', cards: [{ kind: 'approval', approvalId: 'a_maya' }, { kind: 'approval', approvalId: 'a_cal' }] },
+  { id: 'msg_g1', conversationId: 'c_group', role: 'user', content: '@Scout where should we stay in Lisbon? @Post can you check if Maya replied about dates?', createdAt: ago(22), status: 'done' },
+  { id: 'msg_g2', conversationId: 'c_group', role: 'agent', starId: 'star_scout', content: 'Alfama is quieter at night and close to the river. Príncipe Real has better cafés. I’d pick **Alfama** for a week.', createdAt: ago(21), status: 'done' },
+  { id: 'msg_g3', conversationId: 'c_group', role: 'agent', starId: 'star_post', content: 'Maya hasn’t replied yet. I’ll tell you as soon as she does.', createdAt: ago(20), status: 'done' },
+  { id: 'msg_tg', conversationId: 'c_scout', role: 'user', via: 'telegram', content: 'Any cheaper flights today?', createdAt: ago(50), status: 'done' },
   { id: 'msg14', conversationId: 'c_post', role: 'user', content: 'Actually, sign my emails just “d”, not “Best, d”.', createdAt: ago(1.5), status: 'done' },
   { id: 'msg15', conversationId: 'c_post', role: 'agent', starId: 'star_post', content: 'Got it. I’ll remember: sign emails with just “d”.', createdAt: ago(1.4), status: 'done', lessonId: 'l_sign' },
 ];
@@ -360,4 +399,44 @@ export const seedSecrets: Secret[] = [
 
 export const seedPushSubs: PushSubscriptionInfo[] = [
   { id: 'ps_1', label: 'Safari on iPhone', createdAt: ago(60 * 24 * 3), lastSentAt: ago(2) },
+];
+
+export const seedTriggerEvents: TriggerEvent[] = [
+  { id: 'ev1', taskId: 't_ship', source: 'github', summary: 'push to main by d (1 commit)', content: '{"ref":"refs/heads/main"}', at: ago(1) },
+];
+
+export const seedMessaging: MessagingStatus[] = [
+  { app: 'telegram', state: 'on', pairCode: null, pairLink: null, botName: 'my_sky_bot', error: null },
+  { app: 'slack', state: 'off', pairCode: null, pairLink: null, botName: null, error: null },
+];
+
+export const seedMcp: McpServer[] = [
+  {
+    id: 'mcp_fs', name: 'files', transport: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '/home/d/notes'], url: null,
+    envKeys: [], headerKeys: [], enabled: true, toolEffects: {}, status: 'ready', error: null,
+    tools: [
+      { name: 'read_file', toolName: 'mcp_files_read_file', description: 'Read a file', effect: 'read' },
+      { name: 'list_directory', toolName: 'mcp_files_list_directory', description: 'List a folder', effect: 'read' },
+      { name: 'write_file', toolName: 'mcp_files_write_file', description: 'Create or overwrite a file', effect: 'write' },
+    ],
+    createdAt: ago(60 * 24 * 3), updatedAt: ago(60 * 24 * 3),
+  },
+  {
+    id: 'mcp_linear', name: 'linear', transport: 'http', command: null, args: [], url: 'https://mcp.linear.app/mcp',
+    envKeys: [], headerKeys: ['Authorization'], enabled: true, toolEffects: { create_issue: 'send' }, status: 'error', error: '401 Unauthorized: check the Authorization header',
+    tools: [],
+    createdAt: ago(60 * 24), updatedAt: ago(60),
+  },
+];
+
+const tpl = (name: string, role: string, description: string, character: 'cloud' | 'dot' | 'drop', color: 'sky' | 'peach' | 'mint' | 'lilac' | 'sun', apps: string[] | null, skills: { name: string; whenToUse: string; steps: string }[], rules: string[]) => ({
+  format: 'sky.star' as const, version: 1 as const, name, role, description, instructions: '', personality: '', replyStyle: '', avatar: { character, color }, autonomy: null, apps, skills, rules,
+});
+
+export const seedTemplates: TemplateEntry[] = [
+  { id: 'builtin:scout', source: 'builtIn', template: tpl('Scout', 'Researches trips, prices and places', 'Compares at least three sources and brings you options.', 'dot', 'mint', ['web', 'browser'], [{ name: 'Compare prices', whenToUse: 'Finding the best price', steps: '1. Check three sites.\n2. Report the best three.' }], ['Never book or pay']) },
+  { id: 'builtin:inbox', source: 'builtIn', template: tpl('Inbox', 'Looks after your inbox and replies', 'Archives the noise and drafts replies in your voice.', 'drop', 'peach', ['gmail'], [], ['Ask before sending anything']) },
+  { id: 'builtin:builder', source: 'builtIn', template: tpl('Builder', 'Watches your repos, reviews and builds', 'Tells you when a review or a failing build needs you.', 'dot', 'sun', ['github'], [{ name: 'Summarise a PR', whenToUse: 'A pull request needs a quick read', steps: '1. Read the diff.\n2. Two lines on what changed and any risk.' }], []) },
+  { id: 'gallery:chef', source: 'gallery', url: 'https://raw.githubusercontent.com/sky-stars/gallery/main/chef.json', template: tpl('Chef', 'Plans meals and makes the shopping list', 'Plans a week of dinners around what you like.', 'cloud', 'sun', null, [], []) },
+  { id: 'gallery:coach', source: 'gallery', url: 'https://raw.githubusercontent.com/sky-stars/gallery/main/coach.json', template: tpl('Coach', 'Keeps you on track with workouts', 'Gentle nudges and a weekly check-in.', 'drop', 'lilac', ['calendar'], [], []) },
 ];
