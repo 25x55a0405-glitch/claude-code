@@ -89,7 +89,7 @@ export function TaskDetailPage({ id }: { id: string }) {
       {approvals.data?.map((a) => <ApprovalCard key={a.id} approval={a} onDecided={() => approvals.reload()} />)}
 
       <section>
-        <div className="section-title">What Skys did</div>
+        <div className="section-title">What Sky did</div>
         <div className="panel pad col-lg">
           {groups.map(([label, items]) => (
             <div key={label} className="col">

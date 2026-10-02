@@ -24,7 +24,7 @@ export function ProfileSheet({ onClose }: { onClose: () => void }) {
   const list = (tasks.data ?? []).filter((t) =>
     tab === 'now' ? ['active', 'waiting_approval', 'blocked'].includes(t.status) : tab === 'upcoming' ? ['scheduled', 'paused'].includes(t.status) : ['done', 'failed'].includes(t.status),
   );
-  const name = settings?.agentName ?? 'Skys';
+  const name = settings?.agentName ?? 'Sky';
 
   return (
     <>

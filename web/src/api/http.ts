@@ -1,4 +1,4 @@
-import type { SkysApi } from './client';
+import type { SkyApi } from './client';
 import type { LiveEvent, LiveEventType } from './types';
 
 const LIVE_EVENT_TYPES: LiveEventType[] = [
@@ -26,10 +26,10 @@ export class HttpError extends Error {
 }
 
 /** Fired on window whenever the server says the session is missing or expired. */
-export const UNAUTHORIZED_EVENT = 'skys:unauthorized';
+export const UNAUTHORIZED_EVENT = 'sky:unauthorized';
 
-/** Talks to the Skys back end over the contract in docs/API.md. */
-export function createHttpApi(baseUrl: string): SkysApi {
+/** Talks to the Sky back end over the contract in docs/API.md. */
+export function createHttpApi(baseUrl: string): SkyApi {
   const root = baseUrl.replace(/\/$/, '') + '/api/v1';
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {

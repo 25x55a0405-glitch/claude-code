@@ -39,7 +39,7 @@ export function Shell({ section, chatId, children }: { section: string; chatId?:
       {drawer && <div className="drawer-scrim" onClick={() => setDrawer(false)} />}
       <aside className={`sidebar ${drawer ? 'open' : ''}`} aria-label="Navigation">
         <div className="sb-top">
-          <a className="wordmark" href={href('chat')}>{settings?.agentName ?? 'Skys'}</a>
+          <a className="wordmark" href={href('chat')}>{settings?.agentName ?? 'Sky'}</a>
           <button className="icon-btn" onClick={newChat} aria-label="New side chat" title="New side chat"><Icon name="compose" /></button>
         </div>
         {NAV.map((n) => (
@@ -67,10 +67,10 @@ export function Shell({ section, chatId, children }: { section: string; chatId?:
       <div className="main">
         <header className="topbar">
           <button className="icon-btn only-mobile" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
-          <button className="who" onClick={() => setSheet(true)} aria-label={`Open ${settings?.agentName ?? 'Skys'}’s profile`}>
+          <button className="who" onClick={() => setSheet(true)} aria-label={`Open ${settings?.agentName ?? 'Sky'}’s profile`}>
             <Me size={34} />
             <span className="txt">
-              <span className="name">{settings?.agentName ?? 'Skys'}</span>
+              <span className="name">{settings?.agentName ?? 'Sky'}</span>
               <span className={`doing ${working ? 'shimmer' : ''}`}>{doingLine(status)}</span>
             </span>
           </button>

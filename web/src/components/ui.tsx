@@ -4,7 +4,7 @@ import { useAgent } from '../lib/agent';
 import { Avatar } from './Avatar';
 import { Icon, type IconName } from './Icon';
 
-/** The user's own Skys, in its current state. */
+/** The user's own Sky, in its current state. */
 export function Me({ size = 32, track = false, state }: { size?: number; track?: boolean; state?: 'idle' }) {
   const { status, settings } = useAgent();
   return (

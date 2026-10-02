@@ -17,7 +17,7 @@ export function Approvals() {
 
   return (
     <div className="page">
-      <PageHead title="Approvals" sub="Skys stops and asks before anything that sends, spends, or can’t be undone.">
+      <PageHead title="Approvals" sub="Sky stops and asks before anything that sends, spends, or can’t be undone.">
         <Segmented label="Show" value={tab} onChange={setTab} options={[{ value: 'pending', label: 'Waiting' }, { value: 'history', label: 'History' }]} />
       </PageHead>
       {list.error ? (
@@ -26,7 +26,7 @@ export function Approvals() {
         <Skeleton h={200} n={2} />
       ) : list.data.length === 0 ? (
         <Empty title={tab === 'pending' ? 'You’re all caught up' : 'No decisions yet'}>
-          {tab === 'pending' ? 'When Skys needs a yes from you, it shows up here and in chat.' : 'Things you approve or decline are kept here.'}
+          {tab === 'pending' ? 'When Sky needs a yes from you, it shows up here and in chat.' : 'Things you approve or decline are kept here.'}
         </Empty>
       ) : (
         <div className="col">{list.data.map((a) => <ApprovalCard key={a.id + a.status} approval={a} onDecided={() => list.reload()} />)}</div>

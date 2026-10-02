@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 export type ThemePref = 'system' | 'light' | 'dark';
-const KEY = 'skys.theme';
+const KEY = 'sky.theme';
 
 function read(): ThemePref {
   try {

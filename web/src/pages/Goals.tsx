@@ -20,7 +20,7 @@ export function Goals() {
 
   return (
     <div className="page">
-      <PageHead title="Goals" sub="Everything Skys has taken on for you. It keeps going between conversations.">
+      <PageHead title="Goals" sub="Everything Sky has taken on for you. It keeps going between conversations.">
         <button className="btn ink" onClick={() => setCreating(true)}><Icon name="plus" size={16} /> New goal</button>
       </PageHead>
       <Segmented label="Show" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
@@ -29,7 +29,7 @@ export function Goals() {
       ) : !tasks.data ? (
         <Skeleton h={92} n={4} />
       ) : tasks.data.length === 0 ? (
-        <Empty title={tab === 'done' ? 'Nothing finished yet' : 'Nothing here yet'}>Tell Skys what you want handled, in chat or with New goal.</Empty>
+        <Empty title={tab === 'done' ? 'Nothing finished yet' : 'Nothing here yet'}>Tell Sky what you want handled, in chat or with New goal.</Empty>
       ) : (
         <div className="panel">
           <div className="rows">
@@ -79,7 +79,7 @@ function NewGoal({ onClose }: { onClose: () => void }) {
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close"><Icon name="x" /></button>
         </div>
         <div>
-          <label className="label" htmlFor="ng-title">What should Skys take care of?</label>
+          <label className="label" htmlFor="ng-title">What should Sky take care of?</label>
           <input id="ng-title" className="field" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Find a birthday gift for Sam" />
         </div>
         <div>

@@ -6,7 +6,7 @@ import { Icon } from './Icon';
 import { ApprovalChip, useToast } from './ui';
 
 /**
- * A structured yes/no for anything Skys can't undo. Shows exactly what will
+ * A structured yes/no for anything Sky can't undo. Shows exactly what will
  * happen and lets you edit it first.
  */
 export function ApprovalCard({ approval, onDecided, compact = false }: { approval: Approval; onDecided?: (a: Approval) => void; compact?: boolean }) {

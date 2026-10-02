@@ -25,7 +25,7 @@ export function Settings() {
 
   return (
     <div className="page">
-      <PageHead title={`Your ${d.agentName}`} sub="Give it a name and a look. It’s yours." />
+      <PageHead title={`Your ${d.agentName}`} sub="Every agent in Sky is a Star. Give yours a name and a look." />
 
       <section className="panel studio">
         <div className="studio-stage"><Avatar size={120} track state={status?.state ?? 'idle'} character={d.avatar.character} color={d.avatar.color} /></div>
