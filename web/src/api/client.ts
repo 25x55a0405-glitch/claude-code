@@ -26,7 +26,17 @@ import type {
  * the REST + SSE contract in docs/API.md; MockApi implements it in memory
  * so the UI can be developed and demoed without a server.
  */
+export interface Session {
+  signedIn: boolean;
+  authRequired: boolean;
+}
+
 export interface SkysApi {
+  getSession(): Promise<Session>;
+  /** Rejects with the server's message when the password is wrong. */
+  signIn(password: string): Promise<void>;
+  signOut(): Promise<void>;
+
   getStatus(): Promise<AgentStatus>;
   setPaused(paused: boolean): Promise<AgentStatus>;
   getBriefing(): Promise<Briefing>;
@@ -69,6 +79,6 @@ export interface SkysApi {
   getSettings(): Promise<Settings>;
   updateSettings(patch: Partial<Settings>): Promise<Settings>;
 
-  /** Subscribe to live events. Returns an unsubscribe function. */
+  /** Subscribe to live events. All subscribers share one connection. Returns an unsubscribe function. */
   subscribe(handler: (event: LiveEvent) => void): () => void;
 }

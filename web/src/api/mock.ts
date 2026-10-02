@@ -152,6 +152,9 @@ export function createMockApi(): SkysApi {
   };
 
   return {
+    async getSession() { return { signedIn: true, authRequired: false }; },
+    async signIn() {},
+    async signOut() {},
     async getStatus() { await wait(); return status(); },
     async setPaused(paused) {
       await wait();
