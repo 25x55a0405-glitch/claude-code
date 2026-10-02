@@ -802,3 +802,47 @@ input[type='time'].field { width: 132px !important; font-variant-numeric: tabula
 .dock .browser-pip { max-width: calc(var(--read-w) - 40px); margin-left: auto; margin-right: auto; display: flex; }
 .hero-pip { width: 100%; max-width: 680px; text-align: left; }
 .hero-pip .browser-pip { margin: 0; }
+
+/* ---- Wave 1 ------------------------------------------------------------ */
+
+.sb-star .t { display: flex; flex-direction: column; line-height: 1.25; }
+.sb-doing { display: block; font-size: 11.5px; font-weight: 450; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; animation: fade 400ms ease; }
+.typing-what { font-size: 12.5px; color: var(--text-3); margin-top: 6px; display: block; animation: fade 400ms ease; }
+.idea-pill.sm { min-height: 30px; padding: 4px 12px; font-size: 13px; }
+.skill-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 640px) { .skill-grid { grid-template-columns: 1fr; } }
+.skill-card {
+  display: flex; flex-direction: column; gap: 8px; padding: 16px; text-align: left; cursor: pointer; min-width: 0;
+  animation: enter var(--calm) var(--spring) both; transition: border-color var(--quick), transform var(--quick) var(--spring);
+}
+.skill-card:hover { border-color: var(--line-strong); }
+.skill-card:active { transform: scale(0.99); }
+textarea.field.steps { font-family: var(--font-mono); font-size: 13px; line-height: 1.6; }
+.steps-view { margin: 0; padding: 14px 16px; border-radius: var(--r-md); background: var(--raised); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; white-space: pre-wrap; }
+.lesson-card {
+  display: flex; align-items: center; gap: 12px; max-width: 520px; padding: 12px 10px 12px 14px;
+  border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--surface);
+  animation: enter var(--calm) var(--spring) both;
+}
+.lesson-card .ico { width: 30px; height: 30px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--raised); color: var(--text-2); }
+.lesson-card .txt { font-size: 14.5px; }
+.lesson-card .meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.lesson-card .meta a { text-decoration: underline; }
+.lesson-card.gone .txt { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+button.r.secret-row { width: 100%; border-left: 0; border-right: 0; border-bottom: 0; background: transparent; text-align: left; cursor: pointer; transition: background var(--quick); }
+.rows > button.r.secret-row:first-child { border-top: 0; }
+.panel button.r.secret-row:hover { background: var(--hover); }
+.secret-row .dots { color: var(--text-3); letter-spacing: 2px; font-size: 13px; }
+.ios-hint {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 10px 12px 14px; margin-bottom: 12px;
+  border-radius: var(--r-lg); background: var(--raised); font-size: 14px; color: var(--text-2);
+  animation: enter var(--calm) var(--spring);
+}
+.ios-hint strong { color: var(--text); font-weight: 600; }
+.ios-hint .ico { width: 28px; height: 28px; flex: none; border-radius: 8px; display: grid; place-items: center; background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.ios-hint .icon-btn { width: 30px; height: 30px; margin: -4px 0; }
+.ios-hint-bar { flex: none; padding: 8px 16px 0; }
+.ios-hint-bar .ios-hint { margin: 0 auto; max-width: calc(var(--read-w) - 40px); }
+.link-btn { border: 0; background: none; padding: 0; cursor: pointer; text-decoration: underline; align-self: flex-start; }
+select.field.select { width: auto; max-width: 52%; min-width: 180px; height: 40px; padding: 0 12px; cursor: pointer; }
+@media (max-width: 640px) { .ios-hint-bar .ios-hint { font-size: 13px; padding: 10px 8px 10px 12px; } }

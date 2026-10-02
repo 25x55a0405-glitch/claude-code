@@ -13,7 +13,7 @@ import type {
   StarView,
 } from './types';
 import * as seed from './mockData';
-import type { BrowserSession, ModelProvider } from './types';
+import type { BrowserSession, Lesson, ModelProvider, PushSubscriptionInfo, Secret, Skill } from './types';
 
 const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
@@ -68,6 +68,10 @@ export function createMockApi(): SkyApi {
     constellation: clone(seed.seedConstellation),
     providers: clone(seed.seedProviders),
     browser: clone(seed.seedBrowser),
+    skills: clone(seed.seedSkills),
+    lessons: clone(seed.seedLessons),
+    secrets: clone(seed.seedSecrets),
+    pushSubs: clone(seed.seedPushSubs),
     clicks: {} as Record<string, { x: number; y: number }[]>,
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
@@ -193,8 +197,22 @@ export function createMockApi(): SkyApi {
       if (t.id === 't_flights') { const b = db.browser.find((x) => x.starId === 'star_scout'); if (b) frame(b); }
     }
     emit({ type: 'status', data: status() });
+    const who = next.task ? findTask(next.task).starId ?? MAIN : null;
+    db.stars.forEach((st) => emit({ type: 'star.activity', data: { starId: st.id, activity: st.id === who ? next.line : null, taskId: st.id === who ? next.task : null, at: iso() } }));
     emitStars();
   }, 9000);
+
+  /** A correction in chat becomes a lesson and a "Got it" message, like the server. */
+  const learn = (starId: string, conversationId: string, text: string) => {
+    const lessonText = text.trim().replace(/^(no[,.]?\s*|actually[,.]?\s*)/i, '').replace(/^./, (c) => c.toUpperCase());
+    const memoryId = uid('m');
+    db.memory.unshift({ id: memoryId, category: 'preference', content: lessonText, source: 'Learned from a correction', createdAt: iso(), pinned: false });
+    const lesson: Lesson = { id: uid('l'), starId, lesson: lessonText, trigger: 'chat', memoryId, undone: false, createdAt: iso() };
+    db.lessons.unshift(lesson);
+    const m: Message = { id: uid('msg'), conversationId, role: 'agent', starId, content: `Got it. I’ll remember: ${lessonText.charAt(0).toLowerCase() + lessonText.slice(1)}`, createdAt: iso(), status: 'done', lessonId: lesson.id };
+    db.messages.push(m);
+    setTimeout(() => { emit({ type: 'message.done', data: clone(m) }); emit({ type: 'lesson.learned', data: clone(lesson) }); }, 500);
+  };
 
   const replyTo = (conversationId: string, text: string) => {
     const lower = text.toLowerCase();
@@ -243,6 +261,7 @@ export function createMockApi(): SkyApi {
       reply = db.activity_line ? `Right now I’m ${db.activity_line.toLowerCase()}. ${status().counts.activeTasks} tasks are active.` : 'Nothing urgent at the moment. I’m idle and watching for changes.';
     }
 
+    emit({ type: 'star.activity', data: { starId: me.id, activity: 'Writing', taskId: null, at: iso() } });
     const msg: Message = { id: uid('msg'), conversationId, role: 'agent', content: '', createdAt: iso(), status: 'streaming', cards, starId: me.id };
     db.messages.push(msg);
     const words = reply.split(/(\s+)/);
@@ -254,6 +273,8 @@ export function createMockApi(): SkyApi {
         const conv = db.conversations.find((c) => c.id === conversationId);
         if (conv) { conv.updatedAt = iso(); conv.preview = reply.replace(/\*\*/g, ''); }
         emit({ type: 'message.done', data: clone(msg) });
+        emit({ type: 'star.activity', data: { starId: me.id, activity: null, taskId: null, at: iso() } });
+        if (/^(no\b|actually|don[’']?t)/i.test(text.trim())) learn(me.id, conversationId, text);
         return;
       }
       const delta = words.slice(i, i + 2).join('');
@@ -292,6 +313,7 @@ export function createMockApi(): SkyApi {
         avatar: input.avatar ?? { character: 'dot', color: colors[db.stars.length % colors.length] },
         main: false, autonomy: input.autonomy ?? null, connectionIds: input.connectionIds ?? null, paused: false,
         providerIds: input.providerIds ?? null,
+        personality: input.personality ?? '', replyStyle: input.replyStyle ?? '', notify: { whenDone: false, whenNeedsYou: true, ...input.notify },
         conversationId: conv.id, createdAt: iso(), updatedAt: iso(),
       };
       db.stars.push(star);
@@ -309,6 +331,7 @@ export function createMockApi(): SkyApi {
         const conv = db.conversations.find((c) => c.id === star.conversationId);
         if (conv && !conv.main) conv.title = name;
       }
+      if (patch.notify) patch = { ...patch, notify: { whenDone: false, whenNeedsYou: true, ...star.notify, ...patch.notify } };
       Object.assign(star, patch, { updatedAt: iso() });
       if (star.main && (patch.name !== undefined || patch.avatar)) {
         db.settings.agentName = star.name;
@@ -349,6 +372,80 @@ export function createMockApi(): SkyApi {
       return clone(db.constellation.filter((m) => !starId || m.fromStarId === starId || m.toStarId === starId).slice(-100));
     },
     async getBriefing() { await wait(); return clone(db.briefing); },
+
+    async listSkills(starId) { await wait(); return clone(db.skills.filter((k) => !starId || k.starId === null || k.starId === starId)); },
+    async createSkill(input) {
+      await wait();
+      if (db.skills.some((k) => k.name.toLowerCase() === input.name.trim().toLowerCase())) throw new Error(`There’s already a skill called ${input.name.trim()}`);
+      const k: Skill = { id: uid('sk'), name: input.name.trim(), whenToUse: input.whenToUse, steps: input.steps, starId: input.starId ?? null, source: 'you', uses: 0, lastUsedAt: null, createdAt: iso(), updatedAt: iso() };
+      db.skills.unshift(k);
+      emit({ type: 'skill.updated', data: clone(k) });
+      return clone(k);
+    },
+    async updateSkill(id, patch) {
+      await wait();
+      const k = db.skills.find((x) => x.id === id);
+      if (!k) throw new Error('That skill is gone');
+      if (k.source === 'builtIn') throw new Error('Built-in skills can’t be changed');
+      Object.assign(k, patch, { updatedAt: iso() });
+      emit({ type: 'skill.updated', data: clone(k) });
+      return clone(k);
+    },
+    async deleteSkill(id) {
+      await wait();
+      const k = db.skills.find((x) => x.id === id);
+      if (k?.source === 'builtIn') throw new Error('Built-in skills can’t be removed');
+      db.skills = db.skills.filter((x) => x.id !== id);
+      emit({ type: 'skill.deleted', data: { id } });
+    },
+    async listLessons(starId) { await wait(); return clone(db.lessons.filter((l) => !starId || l.starId === starId)); },
+    async undoLesson(id) {
+      await wait();
+      const l = db.lessons.find((x) => x.id === id);
+      if (!l) throw new Error('That lesson is gone');
+      l.undone = true;
+      if (l.memoryId) db.memory = db.memory.filter((m) => m.id !== l.memoryId);
+      if (l.skillId) { const k = db.skills.find((x) => x.id === l.skillId); if (k) { k.steps = k.steps.split('\n').filter((line) => line !== `- Lesson: ${l.lesson}`).join('\n'); emit({ type: 'skill.updated', data: clone(k) }); } }
+      emit({ type: 'lesson.undone', data: clone(l) });
+      return clone(l);
+    },
+
+    async listSecrets(starId) { await wait(); return { keySource: 'file', secrets: clone(db.secrets.filter((x) => !starId || x.starIds === null || x.starIds.includes(starId))) }; },
+    async createSecret(input) {
+      await wait();
+      const name = input.name.trim();
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name)) throw new Error('Use letters, digits and _ for the name, starting with a letter');
+      if (db.secrets.some((x) => x.name === name)) throw new Error(`There’s already a secret called ${name}`);
+      const sec: Secret = { id: uid('sec'), name, description: input.description ?? '', starIds: input.starIds ?? null, lastUsedAt: null, createdAt: iso(), updatedAt: iso() };
+      db.secrets.push(sec);
+      return clone(sec);
+    },
+    async updateSecret(name, patch) {
+      await wait();
+      const sec = db.secrets.find((x) => x.name === name || x.id === name);
+      if (!sec) throw new Error('That secret is gone');
+      const { value: _value, ...rest } = patch;
+      Object.assign(sec, rest, { updatedAt: iso() });
+      return clone(sec);
+    },
+    async deleteSecret(name) { await wait(); db.secrets = db.secrets.filter((x) => x.name !== name && x.id !== name); },
+
+    async getPushKey() { await wait(); return { publicKey: 'BMockPublicKeyForThePreviewOnly0000000000000000000000000000000000000000000000000000000' }; },
+    async listPushSubscriptions() { await wait(); return clone(db.pushSubs); },
+    async addPushSubscription(_sub, label) {
+      await wait();
+      const p: PushSubscriptionInfo = { id: uid('ps'), label: label ?? 'This browser', createdAt: iso(), lastSentAt: null };
+      db.pushSubs.push(p);
+      return clone(p);
+    },
+    async deletePushSubscription(id) { await wait(); db.pushSubs = db.pushSubs.filter((p) => p.id !== id); },
+    async testPush() {
+      await wait(500);
+      const delivered = [...(db.settings.channels.push ? db.pushSubs.map((p) => p.label) : []), ...(db.settings.ntfyTopic ? [`ntfy: ${db.settings.ntfyTopic}`] : [])];
+      if (!delivered.length) throw new Error('There’s nowhere to send yet. Turn on push here or add an ntfy topic.');
+      db.pushSubs.forEach((p) => (p.lastSentAt = iso()));
+      return { delivered, failed: [] };
+    },
 
     async listProviders() { await wait(); return clone(db.providers); },
     async listProviderPresets() { await wait(); return clone(seed.seedPresets); },

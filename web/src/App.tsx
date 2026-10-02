@@ -10,11 +10,14 @@ import { Memory } from './pages/Memory';
 import { Models } from './pages/Models';
 import { Permissions } from './pages/Permissions';
 import { Settings } from './pages/Settings';
+import { Skills } from './pages/Skills';
 import { StarEditor } from './pages/StarEditor';
 import { TaskDetailPage } from './pages/TaskDetail';
 
 export function App() {
-  const [section = 'chat', id] = useRoute();
+  const [route = 'chat', id] = useRoute();
+  // Notifications link to #/tasks/:id; that's a goal here.
+  const section = route === 'tasks' ? 'goals' : route;
   let page;
   let scrolls = true;
   switch (section) {
@@ -23,13 +26,14 @@ export function App() {
     case 'approvals': page = <Approvals />; break;
     case 'memory': page = <Memory />; break;
     case 'models': page = <Models />; break;
+    case 'skills': page = <Skills />; break;
     case 'permissions': page = <Permissions />; break;
     case 'activity': page = <Activity />; break;
     case 'settings': page = <Settings />; break;
     case 'stars': page = id ? <StarEditor key={id} id={id} /> : <Constellation />; break;
     default: page = <Chat key={id ?? 'main'} conversationId={id} />; scrolls = false;
   }
-  const current = ['goals', 'ideas', 'approvals', 'memory', 'permissions', 'activity', 'settings', 'stars', 'models'].includes(section) ? section : 'chat';
+  const current = ['goals', 'ideas', 'approvals', 'memory', 'permissions', 'activity', 'settings', 'stars', 'models', 'skills'].includes(section) ? section : 'chat';
   return (
     <Shell section={current} chatId={current === 'chat' ? id : undefined} starId={current === 'stars' ? id : undefined}>
       {scrolls ? <div className="scroll" key={section + (id ?? '')}>{page}</div> : page}

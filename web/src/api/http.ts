@@ -19,6 +19,11 @@ const LIVE_EVENT_TYPES: LiveEventType[] = [
   'star.updated',
   'star.deleted',
   'constellation.message',
+  'star.activity',
+  'skill.updated',
+  'skill.deleted',
+  'lesson.learned',
+  'lesson.undone',
 ];
 
 export class HttpError extends Error {
@@ -114,6 +119,24 @@ export function createHttpApi(baseUrl: string): SkyApi {
     browserFrameUrl: (starId, frameId) => `${root}/browser/${encodeURIComponent(starId)}/screenshot${frameId ? `?f=${encodeURIComponent(frameId)}` : ''}`,
     browserInput: (starId, input) => call('POST', `/browser/${encodeURIComponent(starId)}/input`, input),
     closeBrowserTab: (starId) => call('POST', `/browser/${encodeURIComponent(starId)}/close`),
+
+    listSkills: (starId) => call('GET', '/skills' + qs({ starId })),
+    createSkill: (input) => call('POST', '/skills', input),
+    updateSkill: (id, patch) => call('PATCH', `/skills/${id}`, patch),
+    deleteSkill: (id) => call('DELETE', `/skills/${id}`),
+    listLessons: (starId) => call('GET', '/lessons' + qs({ starId })),
+    undoLesson: (id) => call('POST', `/lessons/${id}/undo`),
+
+    listSecrets: (starId) => call('GET', '/secrets' + qs({ starId })),
+    createSecret: (input) => call('POST', '/secrets', input),
+    updateSecret: (name, patch) => call('PATCH', `/secrets/${encodeURIComponent(name)}`, patch),
+    deleteSecret: (name) => call('DELETE', `/secrets/${encodeURIComponent(name)}`),
+
+    getPushKey: () => call('GET', '/push/key'),
+    listPushSubscriptions: () => call('GET', '/push/subscriptions'),
+    addPushSubscription: (subscription, label) => call('POST', '/push/subscriptions', { subscription, label }),
+    deletePushSubscription: (id) => call('DELETE', `/push/subscriptions/${id}`),
+    testPush: () => call('POST', '/push/test'),
 
     listTasks: (filter) => call('GET', '/tasks' + qs({ status: filter?.status?.join(','), starId: filter?.starId })),
     getTask: (id) => call('GET', `/tasks/${id}`),

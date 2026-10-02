@@ -5,6 +5,7 @@ import { BrowserPip, BrowserWindow, useBrowserTab } from '../components/BrowserV
 import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/Composer';
 import { TaskInline } from '../components/TaskInline';
+import { LessonCard } from '../components/LessonCard';
 import { Rich, StarNote } from '../components/StarNote';
 import { Skeleton, StarFace } from '../components/ui';
 import { mainStar, useAgent } from '../lib/agent';
@@ -28,6 +29,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const tasks = useResource(() => api.listTasks(), [], ['task.updated']);
   const approvals = useResource(() => api.listApprovals(), [], ['approval.created', 'approval.updated']);
   const ideas = useResource(() => api.listIdeas(), []);
+  const lessons = useResource(() => api.listLessons(star?.id || undefined).catch(() => []), [star?.id], ['lesson.learned', 'lesson.undone']);
   const [messages, setMessages] = useState<Message[] | null>(null);
   const [thinking, setThinking] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -189,7 +191,9 @@ export function Chat({ conversationId }: { conversationId?: string }) {
                   )}
                   <div className="body">
                     {reached && <span className="reached">{name} reached out</span>}
-                    {m.content && (
+                    {m.lessonId ? (
+                      <LessonCard text={m.content} lesson={lessons.data?.find((l) => l.id === m.lessonId)} onUndone={lessons.reload} />
+                    ) : m.content && (
                       <div className="bubble">
                         <Rich text={m.content} />
                         {m.status === 'streaming' && <span className="stream-dot" />}
@@ -214,7 +218,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
           {thinking && (
             <div className="m agent first last">
               <div className="gutter"><Avatar size={28} state="working" character={star?.avatar.character} color={star?.avatar.color} label={name} /></div>
-              <div className="body"><div className="bubble typing" aria-label={`${name} is thinking`}><i /><i /><i /></div></div>
+              <div className="body"><div className="bubble typing" aria-label={`${name} is thinking`}><i /><i /><i /></div>{star?.status.activity && <span className="typing-what shimmer">{star.status.activity}</span>}</div>
             </div>
           )}
         </div>

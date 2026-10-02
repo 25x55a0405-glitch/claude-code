@@ -207,6 +207,14 @@ connection open per tab), and sends what the person does to
 `POST /browser/:starId/input` in the 1280×800 page's coordinates. Taking over
 pauses the Star with `POST /stars/:id/pause`; handing back resumes it.
 
+## Wave 1
+
+Personality, skills, lessons, secrets and push use the Wave 1 endpoints and
+events in [BACKEND.md](BACKEND.md). Secret values only go up, never come back.
+`web/public/sw.js` shows push messages (`{ title, body, url, tag }`) and opens
+`url`; `manifest.webmanifest` and the icons let iPhone add Sky to the Home
+Screen, which iOS needs for web push. `#/tasks/:id` links open the goal.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

@@ -15,6 +15,10 @@ import type {
   BrowserSession,
   ModelProvider,
   ProviderPreset,
+  Lesson,
+  PushSubscriptionInfo,
+  Secret,
+  Skill,
 } from './types';
 
 const now = Date.now();
@@ -26,6 +30,10 @@ export const seedSettings: Settings = {
   agentName: 'Sky',
   avatar: { character: 'cloud', color: 'sky' },
   tone: 'warm',
+  learnFromCorrections: true,
+  smallProviderIds: null,
+  ntfyTopic: null,
+  ntfyServer: '',
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
   autonomy: 'balanced',
   briefingTime: '08:00',
@@ -197,6 +205,7 @@ export const seedBriefing: Briefing = {
 };
 
 export const seedMemory: MemoryItem[] = [
+  { id: 'm_sign', category: 'style', content: 'Sign emails with just “d”.', source: 'Learned from a correction', createdAt: ago(1.4), pinned: false },
   { id: 'm1', category: 'preference', content: 'Prefers morning flights and aisle seats', source: 'Chat on Sep 28', createdAt: ago(60 * 24 * 4), pinned: true },
   { id: 'm2', category: 'style', content: 'Writes short emails, signs off with just “d”', source: 'Learned from Gmail', createdAt: ago(60 * 24 * 6), pinned: false },
   { id: 'm3', category: 'person', content: 'Maya is the design lead at Studio. Reviews are usually Fridays.', source: 'Learned from Gmail', createdAt: ago(60 * 24 * 5), pinned: false },
@@ -256,6 +265,8 @@ export const seedMessages: Message[] = [
   { id: 'msg11', conversationId: 'c_scout', role: 'agent', starId: 'star_scout', proactive: true, content: 'Fares dropped 4%. The best is **$642 on TAP**, still above your $600 limit. I told Sky and I’ll keep watching.', createdAt: ago(60 * 2), status: 'done' },
   { id: 'msg12', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Inbox is at zero again. I archived 14, drafted 2 replies, and asked Sky about Maya’s request to move Friday.', createdAt: ago(9), status: 'done', cards: [{ kind: 'task', taskId: 't_inbox' }] },
   { id: 'msg13', conversationId: 'c_post', role: 'agent', starId: 'star_post', proactive: true, content: 'Maya wants to move Friday’s review. Sky checked and you’re free Thursday at 3, so I drafted a reply:', createdAt: ago(2), status: 'done', cards: [{ kind: 'approval', approvalId: 'a_maya' }, { kind: 'approval', approvalId: 'a_cal' }] },
+  { id: 'msg14', conversationId: 'c_post', role: 'user', content: 'Actually, sign my emails just “d”, not “Best, d”.', createdAt: ago(1.5), status: 'done' },
+  { id: 'msg15', conversationId: 'c_post', role: 'agent', starId: 'star_post', content: 'Got it. I’ll remember: sign emails with just “d”.', createdAt: ago(1.4), status: 'done', lessonId: 'l_sign' },
 ];
 
 export const seedStars: Star[] = [
@@ -263,18 +274,21 @@ export const seedStars: Star[] = [
     id: 'star_sky', name: 'Sky', role: 'Your main Star. Talks with you and keeps everything moving',
     instructions: 'Be my first point of contact. Pass work to the Star best suited for it and keep me posted.',
     avatar: { character: 'cloud', color: 'sky' }, main: true, autonomy: null, connectionIds: null, paused: false,
+    personality: 'Calm, warm and a little dry. Notices the small things.', replyStyle: 'Short. Lead with the answer, then one line of why. No emoji.', notify: { whenDone: false, whenNeedsYou: true },
     conversationId: 'c_main', createdAt: ago(60 * 24 * 7), updatedAt: ago(60 * 24 * 7),
   },
   {
     id: 'star_scout', name: 'Scout', role: 'Researches trips, prices and places',
     instructions: 'Compare at least three sources. Never book or pay; bring me the options.',
     avatar: { character: 'dot', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'browser', 'calendar'], paused: false, providerIds: ['p_groq', 'p_openrouter'],
+    personality: 'Curious and thorough. Loves a good deal.', replyStyle: 'Bullet points with prices and links. Best option first.', notify: { whenDone: true, whenNeedsYou: true },
     conversationId: 'c_scout', createdAt: ago(60 * 24 * 2), updatedAt: ago(60 * 24 * 2),
   },
   {
     id: 'star_post', name: 'Post', role: 'Looks after your inbox and replies',
     instructions: 'Keep my inbox at zero. Draft replies in my voice and ask before sending anything.',
     avatar: { character: 'drop', color: 'peach' }, main: false, autonomy: null, connectionIds: ['gmail'], paused: false,
+    personality: '', replyStyle: 'Write like d: friendly, brief, no exclamation marks.', notify: { whenDone: false, whenNeedsYou: true },
     conversationId: 'c_post', createdAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 6),
   },
 ];
@@ -325,4 +339,25 @@ export const seedPresets: ProviderPreset[] = [
 
 export const seedBrowser: BrowserSession[] = [
   { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1) },
+];
+
+export const seedSkills: Skill[] = [
+  { id: 'sk_forget', name: 'Forget something', whenToUse: 'When you ask a Star to forget something it knows about you', steps: '1. Recall the memories that match, with their ids.\n2. Show you what will go.\n3. Call forget_memories with those ids.', starId: null, source: 'builtIn', uses: 2, lastUsedAt: ago(60 * 24 * 2), createdAt: ago(60 * 24 * 7), updatedAt: ago(60 * 24 * 7) },
+  { id: 'sk_fares', name: 'Compare flight prices', whenToUse: 'Any request to find or watch flights', steps: '1. Search Kayak and Skyscanner with the same dates.\n2. Check the airline’s own site for the cheapest two.\n3. Report the best three with stops, times and price.\n- Lesson: d prefers morning departures, so list those first.', starId: 'star_scout', source: 'star', uses: 14, lastUsedAt: ago(9), createdAt: ago(60 * 30), updatedAt: ago(60 * 4) },
+  { id: 'sk_reply', name: 'Draft a reply in d’s voice', whenToUse: 'Writing any email reply for d', steps: '1. Read the whole thread.\n2. Answer the question in the first line.\n3. Keep it under five lines and sign it “d”.', starId: 'star_post', source: 'you', uses: 6, lastUsedAt: ago(2), createdAt: ago(60 * 24 * 5), updatedAt: ago(60 * 24) },
+  { id: 'sk_weekly', name: 'Weekly review', whenToUse: 'Sunday evening, or when d asks how the week went', steps: '1. List what got done and what slipped.\n2. Name the three things that matter next week.\n3. Ask one question if anything is unclear.', starId: null, source: 'you', uses: 1, lastUsedAt: ago(60 * 24 * 4), createdAt: ago(60 * 24 * 6), updatedAt: ago(60 * 24 * 6) },
+];
+
+export const seedLessons: Lesson[] = [
+  { id: 'l_sign', starId: 'star_post', lesson: 'Sign emails with just “d”.', trigger: 'chat', memoryId: 'm_sign', undone: false, createdAt: ago(1.4) },
+  { id: 'l_morning', starId: 'star_scout', lesson: 'd prefers morning departures, so list those first.', trigger: 'declined', skillId: 'sk_fares', taskId: 't_flights', undone: false, createdAt: ago(60 * 4) },
+];
+
+export const seedSecrets: Secret[] = [
+  { id: 'sec_1', name: 'AIRLINE_LOYALTY', description: 'TAP Miles&Go number', starIds: ['star_scout'], lastUsedAt: ago(60 * 3), createdAt: ago(60 * 24 * 2), updatedAt: ago(60 * 24 * 2) },
+  { id: 'sec_2', name: 'NOTION_TOKEN', description: 'For the reading list', starIds: null, lastUsedAt: null, createdAt: ago(60 * 24 * 5), updatedAt: ago(60 * 24 * 5) },
+];
+
+export const seedPushSubs: PushSubscriptionInfo[] = [
+  { id: 'ps_1', label: 'Safari on iPhone', createdAt: ago(60 * 24 * 3), lastSentAt: ago(2) },
 ];

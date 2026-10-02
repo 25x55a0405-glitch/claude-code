@@ -11,6 +11,12 @@ import { LOGO } from './Permissions';
 
 const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
 const COLORS: AvatarColor[] = ['sky', 'peach', 'mint', 'lilac', 'sun'];
+const STYLES = [
+  { label: 'Short and direct', text: 'Short. Lead with the answer, then one line of why. No emoji.' },
+  { label: 'Bullet points', text: 'Use bullet points. Best option first, with prices and links.' },
+  { label: 'Warm and chatty', text: 'Friendly and conversational, a couple of short paragraphs.' },
+  { label: 'Just the facts', text: 'Facts only, no small talk. Numbers and dates up front.' },
+];
 
 const AUTONOMY: { value: Autonomy | null; title: string; body: string }[] = [
   { value: null, title: 'Same as you set', body: 'Follows the independence level in Permissions.' },
@@ -35,9 +41,12 @@ interface Draft {
   autonomy: Autonomy | null;
   connectionIds: string[] | null;
   providerIds: string[] | null;
+  personality: string;
+  replyStyle: string;
+  notify: { whenDone: boolean; whenNeedsYou: boolean };
 }
 
-const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds, providerIds: s.providerIds ?? null });
+const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds, providerIds: s.providerIds ?? null, personality: s.personality ?? '', replyStyle: s.replyStyle ?? '', notify: { whenDone: s.notify?.whenDone ?? false, whenNeedsYou: s.notify?.whenNeedsYou ?? true } });
 
 export function StarEditor({ id }: { id: string }) {
   const isNew = id === 'new';
@@ -47,7 +56,7 @@ export function StarEditor({ id }: { id: string }) {
   const conns = useResource(() => api.listConnections(), []);
   const models = useResource(() => api.listProviders(), [], ['provider.updated', 'provider.deleted']);
   const rules = useResource(() => (isNew ? Promise.resolve([] as Rule[]) : api.listRules(id)), [id]);
-  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null } : null);
+  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null, personality: '', replyStyle: '', notify: { whenDone: false, whenNeedsYou: true } } : null);
   const [newRules, setNewRules] = useState<string[]>([]);
   const [ruleText, setRuleText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +89,7 @@ export function StarEditor({ id }: { id: string }) {
   const save = async () => {
     setBusy(true);
     setError(null);
-    const body = { ...draft, name: draft.name.trim(), role: draft.role.trim(), instructions: draft.instructions.trim() };
+    const body = { ...draft, name: draft.name.trim(), role: draft.role.trim(), instructions: draft.instructions.trim(), personality: draft.personality.trim(), replyStyle: draft.replyStyle.trim() };
     try {
       if (isNew) {
         const s = await api.createStar(body);
@@ -191,6 +200,38 @@ export function StarEditor({ id }: { id: string }) {
           <div>
             <label className="label" htmlFor="star-instructions">Instructions</label>
             <textarea id="star-instructions" className="field" rows={4} value={draft.instructions} onChange={(e) => set({ instructions: e.target.value })} placeholder="Standing orders. How it should work, what to always or never do." />
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="section-title">Personality</div>
+        <div className="panel pad col">
+          <div>
+            <div className="between"><label className="label" htmlFor="star-personality">Its character</label><span className="t3 xs">{draft.personality.length}/1000</span></div>
+            <textarea id="star-personality" className="field" rows={2} maxLength={1000} value={draft.personality} onChange={(e) => set({ personality: e.target.value })} placeholder="Calm and a little dry. Curious. Never pushy." />
+          </div>
+          <div>
+            <div className="between"><label className="label" htmlFor="star-style">How it replies</label><span className="t3 xs">{draft.replyStyle.length}/1000</span></div>
+            <textarea id="star-style" className="field" rows={2} maxLength={1000} value={draft.replyStyle} onChange={(e) => set({ replyStyle: e.target.value })} placeholder="Length, format, emoji or not." />
+            <div className="row wrap" style={{ gap: 6, marginTop: 10 }}>
+              {STYLES.map((st) => (
+                <button key={st.label} type="button" className={`idea-pill sm ${draft.replyStyle === st.text ? 'on' : ''}`} onClick={() => set({ replyStyle: st.text })}>{st.label}</button>
+              ))}
+            </div>
+          </div>
+          <p className="t3 xs">You can also just tell {draft.name || 'it'} in chat, like “be more brief”, and it updates this itself.</p>
+        </div>
+        <div className="panel" style={{ marginTop: 12 }}>
+          <div className="rows">
+            <div className="r">
+              <div className="grow"><h3>Ping me when it finishes something</h3><p className="t3 xs">On your phone or this browser, if you’ve set them up in Settings.</p></div>
+              <Switch label="Ping me when it finishes something" checked={draft.notify.whenDone} onChange={(v) => set({ notify: { ...draft.notify, whenDone: v } })} />
+            </div>
+            <div className="r">
+              <div className="grow"><h3>Ping me when it needs me</h3><p className="t3 xs">Approvals, questions and anything it’s stuck on.</p></div>
+              <Switch label="Ping me when it needs me" checked={draft.notify.whenNeedsYou} onChange={(v) => set({ notify: { ...draft.notify, whenNeedsYou: v } })} />
+            </div>
           </div>
         </div>
       </section>

@@ -29,7 +29,7 @@ export function HealthChip({ p }: { p: ModelProvider }) {
 
 export function Models() {
   const toast = useToast();
-  const { stars } = useAgent();
+  const { stars, settings, setSettings } = useAgent();
   const list = useResource(() => api.listProviders(), [], ['provider.updated', 'provider.deleted']);
   const [editing, setEditing] = useState<ModelProvider | 'new' | null>(null);
   const [tests, setTests] = useState<Record<string, ProviderTest | 'running'>>({});
@@ -137,6 +137,31 @@ export function Models() {
             })}
           </ol>
           <p className="t3 xs" style={{ marginTop: 8 }}>Drag to reorder, or use the arrows. A model that hits a rate limit rests for a few minutes; one with a bad key rests until you fix it.</p>
+        </section>
+      )}
+
+      {settings && settings.smallProviderIds !== undefined && providers.length > 0 && (
+        <section>
+          <div className="section-title">For small jobs</div>
+          <div className="panel">
+            <div className="rows">
+              <div className="r">
+                <div className="grow">
+                  <h3>Writing lessons from your corrections</h3>
+                  <p className="t3 xs">A small, fast model is plenty for this, and saves your bigger ones.</p>
+                </div>
+                <select
+                  className="field select"
+                  aria-label="Model for lessons"
+                  value={settings.smallProviderIds?.[0] ?? ''}
+                  onChange={async (e) => { try { setSettings(await api.updateSettings({ smallProviderIds: e.target.value ? [e.target.value] : null })); } catch (err) { toast((err as Error).message); } }}
+                >
+                  <option value="">The Star’s own models</option>
+                  {providers.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
         </section>
       )}
 

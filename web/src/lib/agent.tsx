@@ -49,6 +49,14 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       if (e.type === 'approval.created' || e.type === 'approval.updated') { api.getStatus().then(setStatus).catch(() => {}); soon(); }
       if (e.type === 'task.updated') soon();
       if (e.type === 'star.updated') upsertStar(e.data);
+      if (e.type === 'star.activity') {
+        const { starId, activity, taskId } = e.data;
+        setStars((all) => all && all.map((s) => {
+          if (s.id !== starId || s.status.state === 'paused') return s;
+          const state = activity ? 'working' : s.status.pendingApprovals ? 'waiting' : s.status.state === 'working' ? 'idle' : s.status.state;
+          return { ...s, status: { ...s.status, activity, taskId, state } };
+        }));
+      }
       if (e.type === 'star.deleted') setStars((all) => all && all.filter((s) => s.id !== e.data.id));
     });
     return () => { off(); window.clearTimeout(timer.current); };

@@ -6,6 +6,8 @@ import { href, navigate } from '../lib/router';
 import { Icon, type IconName } from './Icon';
 import { StarFace } from './ui';
 import { ProfileSheet } from './ProfileSheet';
+import { HomeScreenHint } from './PushSetup';
+import { isIos, isStandalone } from '../lib/push';
 
 const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: 'goals', label: 'Goals', icon: 'target' },
@@ -13,6 +15,7 @@ const NAV: { id: string; label: string; icon: IconName }[] = [
   { id: 'approvals', label: 'Approvals', icon: 'approve' },
   { id: 'stars', label: 'Constellation', icon: 'sparkle' },
   { id: 'memory', label: 'Memory', icon: 'brain' },
+  { id: 'skills', label: 'Skills', icon: 'note' },
   { id: 'models', label: 'Models', icon: 'bolt' },
   { id: 'permissions', label: 'Permissions', icon: 'lock' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
@@ -26,6 +29,10 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
   const { status, settings, stars } = useAgent();
   const [drawer, setDrawer] = useState(false);
   const [sheet, setSheet] = useState(false);
+  const [iosHint, setIosHint] = useState(() => {
+    try { return isIos() && !isStandalone() && localStorage.getItem('sky.iosHint') !== 'no'; } catch { return false; }
+  });
+  const hideIosHint = () => { setIosHint(false); try { localStorage.setItem('sky.iosHint', 'no'); } catch { /* private mode */ } };
   const convs = useResource(() => api.listConversations(), [], ['message.done', 'star.updated', 'star.deleted']);
   const pending = status?.counts.pendingApprovals ?? 0;
 
@@ -63,7 +70,10 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
         {stars?.map((s) => (
           <a key={s.id} href={starChat(s)} className={`sb-item sb-star ${onHome(s) ? 'on' : ''}`} aria-label={`${s.name}’s chat`}>
             <StarFace star={s} size={24} />
-            <span className="t">{s.name}</span>
+            <span className="t">
+              {s.name}
+              {s.status.activity && status?.state !== 'paused' && !s.paused && <span className="sb-doing shimmer">{s.status.activity}</span>}
+            </span>
             {s.status.pendingApprovals > 0 ? <span className="count">{s.status.pendingApprovals}</span> : s.status.state === 'working' && status?.state !== 'paused' ? <span className="live-dot" title="Working" /> : s.paused ? <Icon name="pause" size={13} /> : null}
           </a>
         ))}
@@ -116,6 +126,7 @@ export function Shell({ section, chatId, starId, children }: { section: string; 
             {pending > 0 && <span className="count">{pending}</span>}
           </a>
         </header>
+        {iosHint && section === 'chat' && <div className="ios-hint-bar"><HomeScreenHint onDismiss={hideIosHint} /></div>}
         {children}
       </div>
 

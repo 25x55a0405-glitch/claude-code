@@ -29,6 +29,14 @@ import type {
   ProviderInput,
   ProviderPreset,
   ProviderTest,
+  Lesson,
+  PushSubscriptionInfo,
+  PushTestResult,
+  Secret,
+  SecretInput,
+  SecretList,
+  Skill,
+  SkillInput,
 } from './types';
 
 /**
@@ -74,6 +82,27 @@ export interface SkyApi {
   browserFrameUrl(starId: string, frameId: string | null): string;
   browserInput(starId: string, input: BrowserInput): Promise<BrowserSession>;
   closeBrowserTab(starId: string): Promise<void>;
+
+  /** With starId: the skills that Star can use (shared plus its own). */
+  listSkills(starId?: string): Promise<Skill[]>;
+  createSkill(input: SkillInput): Promise<Skill>;
+  updateSkill(id: string, patch: Partial<SkillInput>): Promise<Skill>;
+  deleteSkill(id: string): Promise<void>;
+  /** Newest first. */
+  listLessons(starId?: string): Promise<Lesson[]>;
+  undoLesson(id: string): Promise<Lesson>;
+
+  listSecrets(starId?: string): Promise<SecretList>;
+  createSecret(input: SecretInput): Promise<Secret>;
+  /** By name or id. */
+  updateSecret(name: string, patch: Partial<Omit<SecretInput, 'name'>>): Promise<Secret>;
+  deleteSecret(name: string): Promise<void>;
+
+  getPushKey(): Promise<{ publicKey: string }>;
+  listPushSubscriptions(): Promise<PushSubscriptionInfo[]>;
+  addPushSubscription(subscription: PushSubscriptionJSON, label?: string): Promise<PushSubscriptionInfo>;
+  deletePushSubscription(id: string): Promise<void>;
+  testPush(): Promise<PushTestResult>;
 
   listTasks(filter?: { status?: TaskStatus[]; starId?: string }): Promise<Task[]>;
   getTask(id: string): Promise<TaskDetail>;

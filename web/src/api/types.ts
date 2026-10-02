@@ -166,6 +166,8 @@ export interface Message {
   cards?: MessageCard[];
   /** The Star that wrote an agent message. */
   starId?: string;
+  /** Set on "Got it. I'll remember: …" messages, so the UI can offer Undo. */
+  lessonId?: string;
 }
 
 /** A task or approval shown inline in the chat, like Muse's approval cards. */
@@ -255,6 +257,14 @@ export interface Settings {
   quietHours: { enabled: boolean; start: string; end: string };
   proactiveResearch: boolean;
   channels: { web: boolean; email: boolean; push: boolean; slack: boolean; telegram: boolean };
+  /** Stars turn corrections into lessons. Absent on older servers. */
+  learnFromCorrections?: boolean;
+  /** The model chain used to write lessons; null means the Star's own. */
+  smallProviderIds?: string[] | null;
+  /** ntfy topic for phone notifications, or null when off. */
+  ntfyTopic?: string | null;
+  /** '' means https://ntfy.sh. */
+  ntfyServer?: string;
 }
 
 // ---- Ideas -------------------------------------------------------------
@@ -296,6 +306,12 @@ export interface Star {
   paused: boolean;
   /** Model providers this Star uses, in order; null means the global order. Absent on older servers. */
   providerIds?: string[] | null;
+  /** Its character, in its own words. '' means none. Absent on older servers. */
+  personality?: string;
+  /** How its replies look: length, format, emoji. */
+  replyStyle?: string;
+  /** When it pings you on your devices. Defaults: whenDone off, whenNeedsYou on. */
+  notify?: { whenDone: boolean; whenNeedsYou: boolean };
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -315,7 +331,7 @@ export interface StarView extends Star {
   status: StarStatus;
 }
 
-export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds'>>;
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds' | 'personality' | 'replyStyle'>> & { notify?: Partial<NonNullable<Star['notify']>> };
 
 export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
 
@@ -426,6 +442,77 @@ export type BrowserInput =
   | { type: 'navigate'; url: string }
   | { type: 'back' };
 
+// ---- Skills, lessons, secrets, push -----------------------------------
+
+export type SkillSource = 'you' | 'star' | 'builtIn';
+
+/** A saved recipe a Star can follow. */
+export interface Skill {
+  id: string;
+  name: string;
+  whenToUse: string;
+  steps: string;
+  /** null: every Star can use it. */
+  starId: string | null;
+  source: SkillSource;
+  uses: number;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SkillInput = Pick<Skill, 'name' | 'whenToUse' | 'steps'> & { starId?: string | null };
+
+/** Something a Star took away from a correction. */
+export interface Lesson {
+  id: string;
+  starId: string;
+  lesson: string;
+  trigger: 'declined' | 'edited' | 'failed' | 'chat';
+  memoryId?: string;
+  skillId?: string;
+  taskId?: string;
+  undone: boolean;
+  createdAt: string;
+}
+
+/** A stored secret. The value never comes back. */
+export interface Secret {
+  id: string;
+  name: string;
+  description: string;
+  /** null: every Star. */
+  starIds: string[] | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SecretList {
+  /** Where the encryption key lives. memory: it's lost when the server restarts. */
+  keySource: 'env' | 'file' | 'memory';
+  secrets: Secret[];
+}
+
+export interface SecretInput {
+  name: string;
+  value: string;
+  description?: string;
+  starIds?: string[] | null;
+}
+
+export interface PushSubscriptionInfo {
+  id: string;
+  label: string;
+  createdAt: string;
+  lastSentAt: string | null;
+}
+
+export interface PushTestResult {
+  delivered: string[];
+  failed: string[];
+}
+
 // ---- Pagination --------------------------------------------------------
 
 export interface Page<T> {
@@ -453,7 +540,12 @@ export type LiveEvent =
   | { type: 'browser.frame'; data: BrowserSession }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
-  | { type: 'constellation.message'; data: ConstellationMessage };
+  | { type: 'constellation.message'; data: ConstellationMessage }
+  | { type: 'star.activity'; data: { starId: string; activity: string | null; taskId: string | null; at: string } }
+  | { type: 'skill.updated'; data: Skill }
+  | { type: 'skill.deleted'; data: { id: string } }
+  | { type: 'lesson.learned'; data: Lesson }
+  | { type: 'lesson.undone'; data: Lesson };
 
 export type LiveEventType = LiveEvent['type'];
 

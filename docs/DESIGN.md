@@ -74,6 +74,12 @@ decorative animation beyond the character.
 | **Models** | The fallback order of model providers, any OpenAI-compatible or Anthropic-compatible one. Each row shows its health: working with latency, resting until a rate limit clears, needs fixing, or off. Drag or use the arrows to reorder, test, turn off, or edit. Adding one starts from a preset (Groq, OpenRouter, Ollama and so on). Keys are write-only: after saving, only "a key is saved, ending in 1234" shows, with Replace and Remove |
 | **A Star's models** | On a Star's page: "Same as everyone" or "Its own order", picking and ordering the models that Star uses |
 | **Live browser** | When a Star has a tab open, a small live thumbnail sits above the composer in its chat and in its profile. Opening it shows the page, live. "Take over" pauses that Star and lets you click, type, paste, scroll, go back or enter an address on the page, for example to sign in; "Hand back" wakes it again (unless it was already paused). Anything it wants to submit still comes as an approval card |
+| **A Star's personality** | On a Star's page: its character and how it replies (with quick picks), plus two switches: ping me when it finishes something, and when it needs me |
+| **Live status** | Each Star's current action ("Reading your inbox", "Writing") shows under its name in the sidebar, in the top bar and under the typing dots |
+| **Skills** | Cards for each saved recipe: when to use it, who wrote it (you, a Star, or built in), how often it's used. Filter by Star; add, edit or remove in a sheet. Built-in ones are read-only |
+| **Lessons** | When a Star learns from a correction, its chat shows a "Got it. I'll remember: …" card with Undo. Memory lists recent lessons with Undo and a switch to turn learning off |
+| **Secrets** | In Permissions: a vault of names only. Adding or replacing takes a value in a password field; it is never shown again. Each secret can be limited to some Stars |
+| **Notifications** | In Settings: push on this browser or phone, the list of devices, ntfy with a random topic, and a test. On iPhone a dismissible hint explains adding Sky to the Home Screen first |
 | **Goals** | Everything the Stars have taken on, filterable by Star, with progress and schedule, plus a goal's step-by-step history and who asked for it |
 | **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |

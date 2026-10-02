@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api, type Autonomy, type Connection } from '../api';
 import { Icon } from '../components/Icon';
+import { SecretsVault } from '../components/SecretsVault';
 import { ConnectionChip, ErrorNote, PageHead, Segmented, Skeleton, Switch, useToast } from '../components/ui';
 import { useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
@@ -103,6 +104,8 @@ export function Permissions() {
           </div>
         </div>
       </section>
+
+      <SecretsVault />
     </div>
   );
 }
