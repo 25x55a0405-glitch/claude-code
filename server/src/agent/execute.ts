@@ -26,7 +26,7 @@ export async function executeTool(deps: AgentDeps, tool: ToolDef, input: any, ct
     // Only tools that reach outside Sky, inside a task (where the policy asks first), get a secret:
     // anywhere else it would end up in memory, a message or a chat the model can read.
     const refs = deps.vault?.refs(input) ?? [];
-    if (refs.length && (!task || (tool.effectFor?.(input, { starId: ctx.star.id, browser: ctx.browser }) ?? tool.effect) === 'internal')) {
+    if (refs.length && (!task || (tool.effectFor?.(input, { starId: ctx.star.id, browser: ctx.browser, workspaces: ctx.workspaces, vault: ctx.vault }) ?? tool.effect) === 'internal')) {
       throw new Error(`Secrets (${refs.join(', ')}) can only be used by a task's tools that act outside Sky, like sending or browsing, never in chat, memory, skills or messages.`);
     }
     const filled = refs.length ? deps.vault!.fill(input, ctx.star.id) : input;
@@ -35,7 +35,7 @@ export async function executeTool(deps: AgentDeps, tool: ToolDef, input: any, ct
     const res = { ...raw, content: redact(raw.content), ...(raw.summary ? { summary: redact(raw.summary) } : {}) };
     if (task && !QUIET_STEPS.has(tool.name)) {
       const summary = res.summary ?? tool.label(input);
-      const kind = tool.name === 'update_progress' ? 'note' : STEP_KIND[tool.effectFor?.(input, { starId: ctx.star.id, browser: ctx.browser }) ?? tool.effect];
+      const kind = tool.name === 'update_progress' ? 'note' : STEP_KIND[tool.effectFor?.(input, { starId: ctx.star.id, browser: ctx.browser, workspaces: ctx.workspaces, vault: ctx.vault }) ?? tool.effect];
       const detail = res.content.length > 0 && res.content !== 'Noted.' && res.content !== summary ? truncate(res.content, 4000) : undefined;
       deps.store.addStep(task.id, { kind, summary: firstLine(summary, 160), ...(detail ? { detail } : {}), ...(tool.connection ? { connectionId: tool.connection } : {}) });
       deps.store.setActivity(firstLine(summary, 80), task.id);
@@ -57,6 +57,8 @@ const DOING: Record<string, string> = {
   list_stars: 'Checking the constellation', ask_star: 'Asking another Star', hand_off: 'Handing work over', message_star: 'Messaging a Star',
   browser_open: 'Browsing', browser_search: 'Searching the web', browser_snapshot: 'Reading the page', browser_click: 'Clicking',
   browser_type: 'Typing', browser_press: 'Pressing a key', browser_scroll: 'Scrolling', browser_back: 'Going back',
+  browser_fill_login: 'Signing in', browser_ask_person: 'Waiting for you', files_list: 'Looking at my files', file_read: 'Reading a file',
+  file_write: 'Writing a file', file_delete: 'Tidying my files', run_command: 'Running a command',
   search_email: 'Reading your inbox', read_email: 'Reading an email', draft_email: 'Drafting an email', send_email: 'Sending an email',
   archive_email: 'Tidying your inbox', list_events: 'Checking your calendar', create_event: 'Adding to your calendar',
   search_drive: 'Searching Drive', read_drive_file: 'Reading a document', github_search: 'Searching GitHub', github_read: 'Reading GitHub',

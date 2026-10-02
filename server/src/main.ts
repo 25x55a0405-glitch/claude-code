@@ -17,6 +17,8 @@ import { McpManager } from './mcp.ts';
 import { Messaging } from './messaging.ts';
 import { Templates } from './templates.ts';
 import { StarMail } from './mail.ts';
+import { Workspaces } from './workspace.ts';
+import { Teach } from './teach.ts';
 
 export interface App {
   config: Config;
@@ -32,6 +34,8 @@ export interface App {
   messaging: Messaging;
   templates: Templates;
   mail: StarMail;
+  workspaces: Workspaces;
+  teach: Teach;
   /** Starts the clock, the messaging bridges, MCP servers and mail checks. */
   start(): void;
   server: ReturnType<typeof createHttpServer>;
@@ -51,15 +55,18 @@ export function createApp(config: Config, brain?: Brain): App {
   const push = new Push(store, config, () => providers.fetch);
   const triggers = new Triggers(store, config, providers);
   const mcp = new McpManager(store, vault);
-  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser, { vault, push, triggers, mcp });
+  const workspaces = new Workspaces(store, config);
+  const runtime = new Runtime(store, config, brain ?? (config.brain === 'scripted' ? new ScriptedBrain() : models), providers, browser, { vault, push, triggers, mcp, workspaces });
+  const teach = new Teach(store, browser, () => runtime.brain);
+  teach.createTask = (input, origin) => runtime.createTask(input, origin);
   const messaging = new Messaging(store, config, providers, runtime, triggers);
   runtime.messaging = messaging;
   const mail = new StarMail(store, providers, runtime);
   triggers.onStarMail = () => mail.check();
   const templates = new Templates(store, providers);
-  const server = createHttpServer(config, { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail });
+  const server = createHttpServer(config, { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, workspaces, teach });
   return {
-    config, store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, server,
+    config, store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, mail, workspaces, teach, server,
     start() {
       runtime.start();
       messaging.start();
@@ -72,6 +79,7 @@ export function createApp(config: Config, brain?: Brain): App {
       await triggers.stop();
       await mcp.stop();
       await runtime.stop();
+      teach.stopAll();
       await browser.close();
       server.closeAllConnections();
       await new Promise<void>((r) => server.close(() => r()));

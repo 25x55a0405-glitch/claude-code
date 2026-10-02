@@ -15,6 +15,8 @@ export const defaultSettings = (userName: string): Settings => ({
   smallProviderIds: null,
   ntfyTopic: null,
   ntfyServer: '',
+  guard: 'model',
+  passwordFill: false,
 });
 
 /** Built-in safety rules. The ids are stable; the policy engine keys off them. */

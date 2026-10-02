@@ -34,6 +34,8 @@ export class ScriptedBrain implements Brain {
   async complete(_system: string, prompt: string): Promise<string> {
     if (prompt.startsWith('Rules the person set')) return this.ruleCheck(prompt);
     if (prompt.startsWith('A correction')) return this.lesson(prompt);
+    // The guard: offline there's no model to judge, so it only has its quick checks.
+    if (prompt.startsWith('Guard check')) return 'ok';
     // The group chat router: the first Star whose role shares a word with the message, else the first listed.
     if (prompt.startsWith('Pick who answers')) {
       const stars = [...prompt.matchAll(/^- ([^:]+): (.*)$/gm)].map((m) => ({ name: m[1], role: m[2].toLowerCase() }));

@@ -8,7 +8,8 @@ import { contextMemory } from './memory.ts';
 import { contextNote, systemPrompt, takeInbox, taskBrief } from './prompt.ts';
 import { MAX_ASK_DEPTH, targetStar } from './tools/constellation.ts';
 import { availableTools, findTool, toSpec } from './tools/index.ts';
-import { validateInput, type ToolContext } from './tools/types.ts';
+import { validateInput, type ToolContext, type ToolDef, type ToolEnv } from './tools/types.ts';
+import type { Verdict } from './policy.ts';
 
 /**
  * A tool call waiting on someone: the person (an approval) or another Star
@@ -20,9 +21,12 @@ interface PendingCall {
   childTaskId?: string;
   name: string;
   input: unknown;
+  /** Waiting for the person to hand the browser back (they took over, or the Star asked them to). */
+  handover?: boolean;
   decision?:
     | { outcome: 'approved' | 'rejected' | 'expired'; editedPreview?: string; note?: string }
-    | { outcome: 'answered'; answer: string; failed: boolean };
+    | { outcome: 'answered'; answer: string; failed: boolean }
+    | { outcome: 'handed_back'; note: string | null };
 }
 
 /**
@@ -89,8 +93,10 @@ export class TaskRunner {
     store.setActivity(`Working on ${firstLine(task.title, 60)}`, task.id);
 
     const ctx: ToolContext = {
-      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
+      store, config, providers, runtime: this.deps.hooks, star, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault,
+      task, source: `Task: ${firstLine(task.title, 40)}`, touchedTasks: new Set(),
     };
+    const env = { starId: star.id, browser: this.deps.browser, workspaces: this.deps.workspaces, vault: this.deps.vault };
 
     // Carry out whatever the person decided, or read the other Star's answer, while the task was waiting.
     if (state.pending.length) {
@@ -188,12 +194,18 @@ export class TaskRunner {
           else state.pending.push(asked);
           continue;
         }
-        const verdict = await this.deps.policy.check(tool, use.input, firstLine(why, 300), star);
+        // The person has the browser: browser calls wait for the hand-back. The Star can also ask for it.
+        const browser = this.deps.browser;
+        if (browser && (tool.name === 'browser_ask_person' || (tool.connection === 'browser' && browser.controller(star.id) === 'person'))) {
+          state.pending.push(await this.handover(task, star, tool.name, use.id, use.input as { reason?: string }));
+          continue;
+        }
+        const verdict = await this.verdict(tool, use.input, firstLine(why, 300), star, task, env);
         if (verdict.kind === 'forbid') {
           store.addStep(task.id, { kind: 'note', summary: firstLine(`Didn’t ${tool.label(use.input).toLowerCase()}: ${verdict.reason}`, 160) });
           state.results.push(errorResult(use.id, `Not allowed: ${verdict.reason}`));
         } else if (verdict.kind === 'ask') {
-          const p = tool.approval?.(use.input, { starId: star.id, browser: this.deps.browser }) ?? { action: tool.label(use.input), target: tool.connection ?? star.name, preview: JSON.stringify(use.input, null, 2) };
+          const p = tool.approval?.(use.input, env) ?? { action: tool.label(use.input), target: tool.connection ?? star.name, preview: JSON.stringify(use.input, null, 2) };
           const approval = store.createApproval({
             taskId: task.id, starId: star.id, action: p.action, target: p.target, reason: verdict.reason, preview: p.preview,
             ...(tool.connection ? { connectionId: tool.connection } : {}),
@@ -235,6 +247,8 @@ export class TaskRunner {
     const open = state.pending.filter((p) => !p.decision);
     if (open.some((p) => p.approvalId)) {
       store.patchTask(task.id, { status: 'waiting_approval', lastOutcome: 'Waiting for your OK' });
+    } else if (open.some((p) => p.handover)) {
+      store.patchTask(task.id, { status: 'blocked', lastOutcome: 'Waiting for you to hand the browser back' });
     } else {
       const names = [...new Set(open.map((p) => store.findTask(p.childTaskId!)).map((t) => (t && store.findStar(store.starIdOf(t))?.name) ?? 'another Star'))];
       store.patchTask(task.id, { status: 'blocked', lastOutcome: `Waiting on ${names.join(' and ')}` });
@@ -260,6 +274,51 @@ export class TaskRunner {
     store.sendTeamMessage({ fromStarId: ctx.star.id, toStarId: target.id, kind: 'request', content: input.request, taskId: child.id });
     store.addStep(task.id, { kind: 'note', summary: firstLine(`Asked ${target.name}: ${input.request}`, 160) });
     return { toolUseId, childTaskId: child.id, name: 'ask_star', input };
+  }
+
+  /**
+   * The guard looks first (see guard.ts), then the policy. The guard can only
+   * make things stricter: its "block" stops the call, and its "ask" turns an
+   * action the policy would allow into an approval.
+   */
+  private async verdict(tool: ToolDef, input: unknown, why: string, star: Star, task: Task, env: ToolEnv): Promise<Verdict> {
+    const { guard, policy, store } = this.deps;
+    const effect = tool.effectFor?.(input, env) ?? tool.effect;
+    const preview = tool.approval?.(input, env) ?? { action: tool.label(input), target: tool.connection ?? star.name, preview: JSON.stringify(input, null, 2) };
+    const g = guard ? await guard.check(tool, input, effect, preview, star, task) : null;
+    if (g?.verdict === 'block') return { kind: 'forbid', reason: `The guard stopped this: ${g.reason}` };
+    const v = await policy.check(tool, input, why, star);
+    if (g?.verdict !== 'ask' || v.kind === 'forbid') return v;
+    if (g.verdict === 'ask') store.addStep(task.id, { kind: 'note', summary: firstLine(`The guard wants your OK: ${g.reason}`, 160) });
+    return { kind: 'ask', reason: `The guard wants your OK: ${g.reason}${v.kind === 'ask' ? ` (${v.reason})` : ''}`, risk: 'high' };
+  }
+
+  /** The task waits for the person to hand the browser back. */
+  private async handover(task: Task, star: Star, name: string, toolUseId: string, input: { reason?: string }): Promise<PendingCall> {
+    const { store, hooks } = this.deps;
+    const browser = this.deps.browser!;
+    if (name === 'browser_ask_person') {
+      const reason = firstLine(input.reason || 'I need your help in the browser', 200);
+      await browser.takeOver(star.id, { note: reason, waitingTaskId: task.id });
+      store.addStep(task.id, { kind: 'approval', summary: firstLine(`Asked you to take over the browser: ${reason}`, 160), connectionId: 'browser' });
+      await hooks.notify(`I need you in the browser: ${reason}. Open my live browser, do it there, then hand it back.`, {
+        taskId: task.id, starId: star.id, kind: 'needs_you', cards: [{ kind: 'task', taskId: task.id }],
+      });
+    } else {
+      browser.waitForHandBack(star.id, task.id);
+      store.addStep(task.id, { kind: 'note', summary: 'Waiting: you have the browser', connectionId: 'browser' });
+    }
+    return { toolUseId, handover: true, name, input };
+  }
+
+  /** The person handed the browser back. Returns true once every pending call in the run is answered. */
+  recordHandBack(taskId: string, note: string | null): boolean {
+    const state = this.load(taskId);
+    const open = state?.pending.filter((p) => p.handover && !p.decision) ?? [];
+    if (!state || !open.length) return false;
+    for (const p of open) p.decision = { outcome: 'handed_back', note };
+    this.save(state);
+    return state.pending.every((x) => x.decision);
   }
 
   /** Records another Star's answer. Returns null if nothing was waiting on it, else whether every pending call is now answered. */
@@ -312,6 +371,11 @@ export class TaskRunner {
     const { store } = this.deps;
     const found = findTool(p.name) ?? this.deps.mcp?.find(p.name);
     const d = p.decision!;
+    if (d.outcome === 'handed_back') {
+      if (ctx.task) store.addStep(ctx.task.id, { kind: 'result', summary: firstLine(`You handed the browser back${d.note ? `: ${d.note}` : ''}`, 160), connectionId: 'browser' });
+      const asked = p.name === 'browser_ask_person' ? 'The person did what you asked and handed the browser back.' : `The person had taken over the browser, so ${p.name} wasn’t run. They’ve handed it back.`;
+      return { type: 'tool_result', tool_use_id: p.toolUseId, content: `${asked}${d.note ? ` Their note: “${d.note}”` : ''} Take a fresh snapshot before carrying on.` };
+    }
     if (d.outcome === 'answered') {
       const child = store.findTask(p.childTaskId!);
       const who = (child && store.findStar(store.starIdOf(child))?.name) ?? 'The other Star';

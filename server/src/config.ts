@@ -36,6 +36,8 @@ export interface Config {
   /** e.g. "chrome" to use the installed Google Chrome. */
   browserChannel: string | null;
   browserProxy: string | null;
+  /** "none" turns the workspace sandbox off (every command then asks first). Default: bubblewrap when it works. */
+  sandbox: 'auto' | 'none';
   /** Encrypts the secrets vault. Unset: a key file in DATA_DIR. */
   secretKey: string | null;
   providers: {
@@ -92,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, overrides: Part
     browserPath: v('BROWSER_PATH') ?? null,
     browserChannel: v('BROWSER_CHANNEL') ?? null,
     browserProxy: v('BROWSER_PROXY') ?? null,
+    sandbox: v('SANDBOX') === 'none' ? 'none' : 'auto',
     secretKey: v('SECRET_KEY') ?? null,
     providers: {
       google: pair(env, 'GOOGLE'),

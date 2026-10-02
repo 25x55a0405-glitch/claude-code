@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { BrowserContext, Page } from 'playwright-core';
 import type { Config } from '../config.ts';
 import type { Store } from '../store.ts';
-import type { BrowserSession } from '../types.ts';
+import type { BrowserSession, RecordedStep } from '../types.ts';
 import { ApiError, badRequest, firstLine as oneLine, iso, uid } from '../util.ts';
 
 /** One interactive element from the last snapshot of a Star's tab. */
@@ -35,6 +35,28 @@ interface Tab {
   url: string;
   title: string;
   updatedAt: string;
+  control: 'star' | 'person';
+  controlNote: string | null;
+  /** Taken by using the live view rather than "Take over": handed back after a short idle. */
+  implicit: boolean;
+  lastPersonAt: number;
+  /** Tasks waiting for the person to hand the tab back. */
+  waiting: string[];
+  recordingId: string | null;
+}
+
+/** Thrown when a Star tries to use its tab while the person has control. */
+export class PersonInControl extends Error {
+  constructor(note: string | null) {
+    super(`The person has taken over your browser${note ? ` (${note})` : ''}. Wait until they hand it back, then take a fresh snapshot.`);
+  }
+}
+
+/** A saved login being filled: the password goes straight into the page. */
+export interface LoginToFill {
+  origin: string;
+  username: string;
+  password: string;
 }
 
 /** What the person can do in a Star's tab from the live view, e.g. to sign in. */
@@ -48,6 +70,10 @@ export type ViewInput =
 
 const VIEWPORT = { width: 1280, height: 800 };
 const TEXT_LIMIT = 6_000;
+/** Control taken just by using the live view goes back to the Star after this long without input. */
+const IMPLICIT_IDLE_MS = 2 * 60_000;
+/** "Take over" goes back after this long without input, so a forgotten take-over can't park a Star for good. */
+const TAKEOVER_IDLE_MS = 30 * 60_000;
 
 /**
  * A real Chromium, driven with Playwright, shared by every Star: each Star
@@ -67,6 +93,11 @@ export class BrowserManager {
   private problem: string | null = null;
   private viewers = new Map<string, number>();
   private pumps = new Map<string, NodeJS.Timeout>();
+  private idleTimer: NodeJS.Timeout | null = null;
+  /** Called when control goes back to a Star, with the tasks that were waiting for it. */
+  onHandBack?: (starId: string, waitingTaskIds: string[], note: string | null) => void;
+  /** Called for each thing the person does while recording. */
+  onRecord?: (recordingId: string, step: RecordedStep) => void;
 
   constructor(store: Store, config: Config) {
     this.store = store;
@@ -148,7 +179,14 @@ export class BrowserManager {
     // The persistent context opens with one blank page; the first Star takes it.
     const blank = ctx.pages().find((p) => p.url() === 'about:blank' && ![...this.tabs.values()].some((t) => t.page === p));
     const page = blank ?? await ctx.newPage();
-    const tab: Tab = { page, elements: new Map(), frame: null, frameId: null, url: page.url(), title: '', updatedAt: iso() };
+    const tab: Tab = {
+      page, elements: new Map(), frame: null, frameId: null, url: page.url(), title: '', updatedAt: iso(),
+      control: 'star', controlNote: null, implicit: false, lastPersonAt: 0, waiting: [], recordingId: null,
+    };
+    // While recording, pages the person ends up on (by a link, a form or a redirect) are steps too.
+    page.on('framenavigated', (f) => {
+      if (f === page.mainFrame() && tab.recordingId) this.record(tab, { kind: 'open', value: f.url() });
+    });
     this.tabs.set(starId, tab);
     return tab;
   }
@@ -182,11 +220,15 @@ export class BrowserManager {
   redact: (text: string) => string = (t) => t;
 
   private session(starId: string, tab: Tab): BrowserSession {
-    return { starId, url: this.redact(tab.url), title: this.redact(tab.title), frameId: tab.frameId, updatedAt: tab.updatedAt };
+    return {
+      starId, url: this.redact(tab.url), title: this.redact(tab.title), frameId: tab.frameId, updatedAt: tab.updatedAt,
+      control: tab.control, controlNote: tab.controlNote, waitingTaskId: tab.waiting[0] ?? null, recordingId: tab.recordingId,
+    };
   }
 
   private async act(starId: string, action: (tab: Tab) => Promise<void>): Promise<Snapshot> {
     const tab = await this.tab(starId);
+    if (tab.control === 'person') throw new PersonInControl(tab.controlNote);
     await action(tab);
     await tab.page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
     await tab.page.waitForTimeout(300);
@@ -259,6 +301,166 @@ export class BrowserManager {
     return this.act(starId, async (t) => { await t.page.goBack({ timeout: 15_000 }).catch(() => {}); });
   }
 
+  // ---- take-over and hand-back -------------------------------------------
+
+  /** Who drives a Star's tab right now. */
+  controller(starId: string): 'star' | 'person' {
+    return this.tabs.get(starId)?.control ?? 'star';
+  }
+
+  /**
+   * The person takes the wheel: the Star's browser tools wait until it's
+   * handed back. `waitingTaskId` is a task that asked for this (to sign in,
+   * solve a puzzle) and carries on at hand-back.
+   */
+  async takeOver(starId: string, opts: { note?: string | null; waitingTaskId?: string | null; implicit?: boolean; recordingId?: string } = {}): Promise<BrowserSession> {
+    const tab = await this.tab(starId);
+    const was = tab.control;
+    tab.control = 'person';
+    tab.implicit = Boolean(opts.implicit) && (was === 'star' || tab.implicit);
+    tab.lastPersonAt = Date.now();
+    if (opts.note !== undefined) tab.controlNote = opts.note ? oneLine(opts.note, 200) : null;
+    if (opts.waitingTaskId && !tab.waiting.includes(opts.waitingTaskId)) tab.waiting.push(opts.waitingTaskId);
+    if (opts.recordingId) tab.recordingId = opts.recordingId;
+    if (!this.idleTimer) {
+      this.idleTimer = setInterval(() => this.handBackIdle(), 15_000);
+      this.idleTimer.unref();
+    }
+    if (was !== 'person' && !tab.implicit) this.store.log('browser', `You took over ${this.starName(starId)}’s browser${tab.controlNote ? `: ${tab.controlNote}` : ''}`, undefined, starId);
+    await this.capture(starId, tab);
+    this.emitControl(starId, tab);
+    return this.session(starId, tab);
+  }
+
+  /** Control goes back to the Star; a task waiting for this carries on. */
+  handBack(starId: string, note?: string | null): BrowserSession | null {
+    const tab = this.tabs.get(starId);
+    if (!tab) return null;
+    if (tab.control === 'star') return this.session(starId, tab);
+    const waiting = tab.waiting;
+    const recorded = tab.recordingId;
+    const implicit = tab.implicit;
+    tab.control = 'star';
+    tab.controlNote = null;
+    tab.implicit = false;
+    tab.waiting = [];
+    tab.recordingId = null;
+    const clean = note?.trim() ? oneLine(note, 300) : null;
+    if (!implicit || waiting.length) this.store.log('browser', `${this.starName(starId)} has the browser back${clean ? `: ${clean}` : ''}`, waiting[0], starId);
+    this.emitControl(starId, tab);
+    if (recorded) this.onRecordEnd?.(recorded);
+    this.onHandBack?.(starId, waiting, clean);
+    if (![...this.tabs.values()].some((t) => t.control === 'person') && this.idleTimer) {
+      clearInterval(this.idleTimer);
+      this.idleTimer = null;
+    }
+    return this.session(starId, tab);
+  }
+
+  /** Called when a recording ends with a hand-back (by the person or the idle timer). */
+  onRecordEnd?: (recordingId: string) => void;
+
+  /** Forgotten take-overs end on their own. */
+  handBackIdle(now = Date.now()) {
+    for (const [starId, t] of this.tabs) {
+      if (t.control !== 'person' || t.recordingId) continue;
+      const limit = t.implicit ? IMPLICIT_IDLE_MS : TAKEOVER_IDLE_MS;
+      if (now - t.lastPersonAt >= limit) this.handBack(starId, t.implicit ? null : 'handed back on its own after 30 minutes without input');
+    }
+  }
+
+  private emitControl(starId: string, tab: Tab) {
+    this.store.bus.emit({ type: 'browser.control', data: this.session(starId, tab) });
+  }
+
+  private starName(starId: string) {
+    return this.store.findStar(starId)?.name ?? 'The Star';
+  }
+
+  /** A task that tried to use the tab while the person has it waits for the hand-back. */
+  waitForHandBack(starId: string, taskId: string) {
+    const tab = this.tabs.get(starId);
+    if (tab && tab.control === 'person' && !tab.waiting.includes(taskId)) {
+      tab.waiting.push(taskId);
+      this.emitControl(starId, tab);
+    }
+  }
+
+  // ---- recording (teach a task) ------------------------------------------
+
+  /** Starts recording the person in a Star's tab; the person takes control for it. */
+  async startRecording(starId: string, recordingId: string, title: string, url?: string) {
+    const target = url ? pageUrl(url) : null;
+    if (url && !target) throw badRequest(`“${oneLine(url, 80)}” isn’t a web address`);
+    const tab = await this.tab(starId);
+    if (tab.recordingId) throw new ApiError(409, 'conflict', 'Already recording in this browser. Stop that recording first.');
+    await this.takeOver(starId, { note: `Recording: ${title}`, recordingId });
+    if (target) {
+      await tab.page.goto(target, { waitUntil: 'domcontentloaded', timeout: 45_000 }).catch(() => {});
+      await this.capture(starId, tab);
+    } else if (tab.page.url() !== 'about:blank') {
+      this.record(tab, { kind: 'open', value: tab.page.url() });
+    }
+  }
+
+  /** Stops recording (and hands the browser back). */
+  stopRecording(starId: string): string | null {
+    const tab = this.tabs.get(starId);
+    const id = tab?.recordingId ?? null;
+    if (tab && id) {
+      // Hand back without the end hook: the caller drafts the skill itself.
+      const hook = this.onRecordEnd;
+      this.onRecordEnd = undefined;
+      try { this.handBack(starId); } finally { this.onRecordEnd = hook; }
+    }
+    return id;
+  }
+
+  private lastOpen = new Map<string, string>();
+
+  private record(tab: Tab, step: Omit<RecordedStep, 'at' | 'url'>) {
+    if (!tab.recordingId || !this.onRecord) return;
+    const url = tab.page.url();
+    if (step.kind === 'open') {
+      if (!step.value || step.value === 'about:blank' || this.lastOpen.get(tab.recordingId) === step.value) return;
+      this.lastOpen.set(tab.recordingId, step.value);
+    }
+    this.onRecord(tab.recordingId, { at: iso(), url, ...step });
+  }
+
+  /** What the person is about to click or type into, for the recording. */
+  private async describeAt(page: Page, x?: number, y?: number) {
+    return await page.evaluate(describeFn, x === undefined ? null : [x, y]).catch(() => null) as { label: string; password: boolean } | null;
+  }
+
+  // ---- saved logins ------------------------------------------------------
+
+  /**
+   * Fills a saved login into the current page. Only on the exact site it was
+   * saved for, only over https (or on this machine), and never on a page with
+   * a new-password field or more than one password field, which is a
+   * sign-up or change-password form. The password goes into the page and
+   * nowhere else: not the snapshot, the timeline or the model.
+   */
+  async fillLogin(starId: string, login: LoginToFill, submit: boolean): Promise<{ snapshot: Snapshot; filled: 'both' | 'username' | 'password' }> {
+    let filled: 'both' | 'username' | 'password' = 'both';
+    const snapshot = await this.act(starId, async (t) => {
+      const here = new URL(t.page.url());
+      if (here.origin !== login.origin) throw new Error(`This login is for ${login.origin}, and the page is on ${here.origin}. Logins are only filled on the site they were saved for.`);
+      const local = ['localhost', '127.0.0.1', '[::1]'].includes(here.hostname);
+      if (here.protocol !== 'https:' && !local) throw new Error('The page isn’t secure (https), so the login wasn’t filled.');
+      const form = await t.page.evaluate(LOGIN_SCRIPT) as { passwords: number; newPassword: boolean; user: boolean; pass: boolean };
+      if (form.newPassword || form.passwords > 1) throw new Error('This looks like a sign-up or change-password form. Stars only sign in; they never set or change passwords.');
+      if (!form.user && !form.pass) throw new Error('No sign-in fields on this page. Open the sign-in page first.');
+      if (form.user) await t.page.locator('[data-sky-fill="user"]').first().fill(login.username, { timeout: 10_000 });
+      if (form.pass) await t.page.locator('[data-sky-fill="pass"]').first().fill(login.password, { timeout: 10_000 });
+      filled = form.user && form.pass ? 'both' : form.user ? 'username' : 'password';
+      if (submit) await t.page.locator(`[data-sky-fill="${form.pass ? 'pass' : 'user'}"]`).first().press('Enter');
+      await t.page.evaluate(`document.querySelectorAll('[data-sky-fill]').forEach((e) => e.removeAttribute('data-sky-fill'))`);
+    });
+    return { snapshot, filled };
+  }
+
   // ---- the live view -----------------------------------------------------
 
   sessions(): BrowserSession[] {
@@ -275,6 +477,18 @@ export class BrowserManager {
     if (i.type === 'navigate' && !target) throw badRequest(`“${oneLine(i.url, 80)}” isn’t a web address. Try something like example.com or https://example.com`);
     const tab = await this.tab(starId);
     const { page } = tab;
+    // Using the live view takes control, so the Star and the person don't fight over the page.
+    if (tab.control === 'star') await this.takeOver(starId, { implicit: true, note: null });
+    tab.lastPersonAt = Date.now();
+    if (tab.recordingId) {
+      const at = i.type === 'click' ? await this.describeAt(page, i.x, i.y) : i.type === 'type' ? await this.describeAt(page) : null;
+      if (i.type === 'click') this.record(tab, { kind: 'click', target: at?.label || `the spot at ${Math.round(i.x)}, ${Math.round(i.y)}` });
+      else if (i.type === 'type') this.record(tab, { kind: 'type', ...(at?.label ? { target: at.label } : {}), value: at?.password ? '[password]' : i.text });
+      else if (i.type === 'key') this.record(tab, { kind: 'key', value: i.key });
+      else if (i.type === 'scroll') this.record(tab, { kind: 'scroll', value: i.dy > 0 ? 'down' : 'up' });
+      else if (i.type === 'back') this.record(tab, { kind: 'back' });
+      else if (i.type === 'navigate') this.record(tab, { kind: 'open', value: target! });
+    }
     try {
       switch (i.type) {
         case 'click': await page.mouse.click(i.x, i.y); break;
@@ -330,6 +544,8 @@ export class BrowserManager {
   }
 
   async close() {
+    if (this.idleTimer) clearInterval(this.idleTimer);
+    this.idleTimer = null;
     for (const t of this.pumps.values()) clearInterval(t);
     this.pumps.clear();
     const ctx = this.context;
@@ -376,6 +592,43 @@ const SNAPSHOT_SCRIPT = `(() => {
   }
   const text = document.body ? document.body.innerText.replace(/\\n{3,}/g, '\\n\\n').trim() : '';
   return { elements: out, text };
+})()`;
+
+/** Runs in the page: what's at a point (or focused), labelled like the snapshot labels it. */
+const DESCRIBE_SCRIPT = `((at) => {
+  let el = at ? document.elementFromPoint(at[0], at[1]) : document.activeElement;
+  if (!el) return null;
+  el = el.closest('a,button,input,select,textarea,label,[role=button],[role=link],[role=tab],[role=menuitem],[role=checkbox],summary') || el;
+  const type = (el.getAttribute('type') || '').toLowerCase();
+  const label = (el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.innerText
+    || (type === 'submit' || type === 'button' ? el.value : '') || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('name') || '')
+    .trim().replace(/\\s+/g, ' ').slice(0, 80);
+  return { label, password: type === 'password' };
+})`;
+
+// A real function, so Playwright passes the point to it.
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const describeFn = new Function(`return ${DESCRIBE_SCRIPT}`)() as (at: (number | undefined)[] | null) => unknown;
+
+/** Runs in the page: marks the sign-in fields with data-sky-fill and says what it found. */
+const LOGIN_SCRIPT = `(() => {
+  const visible = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && !el.disabled; };
+  const inputs = [...document.querySelectorAll('input')].filter(visible);
+  const passwords = inputs.filter((i) => i.type === 'password');
+  const newPassword = passwords.some((p) => (p.autocomplete || '').includes('new-password'));
+  const pass = passwords[0] || null;
+  const userish = (i) => ['text', 'email', 'tel', ''].includes(i.type) && (/user|email|login|account|identifier/i.test(i.autocomplete + ' ' + i.name + ' ' + i.id + ' ' + (i.getAttribute('aria-label') || '') + ' ' + (i.placeholder || '')) || i.type === 'email');
+  let user = null;
+  if (pass) {
+    const scope = pass.form ? [...pass.form.querySelectorAll('input')].filter(visible) : inputs;
+    const before = scope.slice(0, scope.indexOf(pass)).filter((i) => ['text', 'email', 'tel', ''].includes(i.type));
+    user = before.filter(userish).pop() || before.pop() || null;
+  } else {
+    user = inputs.find(userish) || null;
+  }
+  if (user) user.setAttribute('data-sky-fill', 'user');
+  if (pass) pass.setAttribute('data-sky-fill', 'pass');
+  return { passwords: passwords.length, newPassword, user: !!user, pass: !!pass };
 })()`;
 
 /** A typed address as a page URL: "example.com" gets https://. Null when it isn't an http(s) address. */

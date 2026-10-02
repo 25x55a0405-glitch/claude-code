@@ -3,11 +3,13 @@ import { validTimeZone, parseHHMM } from '../agent/time.ts';
 import type { Providers } from '../connections/providers.ts';
 import type { Store } from '../store.ts';
 import type { Access, ApprovalStatus, Autonomy, AvatarCharacter, AvatarColor, MemoryCategory, Message, Settings, Star, TaskStatus, Tone } from '../types.ts';
-import { badRequest, firstLine, iso, uid } from '../util.ts';
+import { ApiError, badRequest, firstLine, iso, uid } from '../util.ts';
 import type { Router } from './router.ts';
 import type { ModelRouter } from '../models/router.ts';
 import { PRESETS, type ProviderInput } from '../models/registry.ts';
 import type { BrowserManager, ViewInput } from '../browser/browser.ts';
+import type { Workspaces } from '../workspace.ts';
+import type { Teach } from '../teach.ts';
 import type { Vault } from '../vault.ts';
 import type { Push } from '../push.ts';
 import type { Triggers } from '../triggers.ts';
@@ -67,10 +69,24 @@ export interface Services {
   messaging: Messaging;
   templates: Templates;
   mail: StarMail;
+  workspaces: Workspaces;
+  teach: Teach;
+}
+
+/** A route's answer that isn't JSON: a file download. */
+export class RawBody {
+  data: Buffer;
+  type: string;
+  filename: string;
+  constructor(data: Buffer, type: string, filename: string) {
+    this.data = data;
+    this.type = type;
+    this.filename = filename;
+  }
 }
 
 export function registerRoutes(r: Router, services: Services) {
-  const { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates } = services;
+  const { store, runtime, providers, models, browser, vault, push, triggers, mcp, messaging, templates, workspaces, teach } = services;
   const registry = models.registry;
   /** An optional Star id from a query or body; an unknown one is a 400. */
   const starRef = (v: unknown, field = 'starId'): string | undefined => {
@@ -186,6 +202,63 @@ export function registerRoutes(r: Router, services: Services) {
     return browser.input(params.starId, input);
   });
   r.post('/browser/:starId/close', async ({ params }) => { await browser.closeTab(params.starId); });
+  const note = (v: unknown) => (v === undefined || v === null ? null : optionalText(v, 'note', 300) || null);
+  r.post('/browser/:starId/takeover', ({ params, body }) => {
+    store.getStar(params.starId);
+    return browser.takeOver(params.starId, { note: note(body === undefined ? undefined : object(body).note) });
+  });
+  r.post('/browser/:starId/handback', ({ params, body }) => {
+    store.getStar(params.starId);
+    const session = browser.handBack(params.starId, note(body === undefined ? undefined : object(body).note));
+    if (!session) throw new ApiError(409, 'conflict', 'That Star’s browser isn’t open.');
+    return session;
+  });
+
+  // ---- teach a task (recordings) ----
+  r.post('/browser/:starId/record', ({ params, body }) => {
+    const b = body === undefined ? {} : object(body);
+    return teach.start(params.starId, { title: b.title, url: b.url });
+  });
+  r.post('/browser/:starId/record/stop', ({ params }) => {
+    store.getStar(params.starId);
+    return teach.stop(params.starId);
+  });
+  r.get('/recordings', ({ query }) => teach.list(starRef(query.get('starId'))));
+  r.get('/recordings/:id', ({ params }) => teach.get(params.id));
+  r.post('/recordings/:id/skill', ({ params, body }) => {
+    const b = body === undefined ? {} : object(body);
+    return teach.saveSkill(params.id, { name: b.name, whenToUse: b.whenToUse, steps: b.steps, shared: b.shared, schedule: b.schedule });
+  });
+  r.delete('/recordings/:id', ({ params }) => teach.delete(params.id));
+
+  // ---- each Star's workspace ----
+  r.get('/workspace', () => workspaces.status());
+  r.get('/stars/:id/files', ({ params, query }) => {
+    const star = store.getStar(params.id);
+    return { files: workspaces.list(star.id, query.get('path') ?? '', query.get('recursive') === '1' || query.get('recursive') === 'true'), usage: workspaces.usage(star.id) };
+  });
+  r.get('/stars/:id/files/content', ({ params, query }) => {
+    const star = store.getStar(params.id);
+    const path = text(query.get('path'), 'path', 1000);
+    return new RawBody(workspaces.read(star.id, path), safeType(path), path.split('/').pop() || 'file');
+  });
+  r.delete('/stars/:id/files', ({ params, query }) => workspaces.remove(store.getStar(params.id).id, text(query.get('path'), 'path', 1000)));
+
+  // ---- saved logins (password fill; passwords go in, never come out) ----
+  r.get('/logins', () => ({ enabled: store.settings().passwordFill === true, logins: vault.listLogins() }));
+  r.post('/logins', ({ body }) => {
+    const b = object(body);
+    return vault.createLogin({
+      origin: b.origin, username: b.username, password: b.password,
+      starIds: b.starIds === undefined ? null : starIdList(b.starIds),
+      autoFill: b.autoFill === undefined ? false : boolean(b.autoFill, 'autoFill'),
+    });
+  });
+  r.patch('/logins/:id', ({ params, body }) => {
+    const b = object(body);
+    return vault.patchLogin(params.id, { username: b.username, password: b.password, autoFill: b.autoFill, ...(b.starIds !== undefined ? { starIds: starIdList(b.starIds) } : {}) });
+  });
+  r.delete('/logins/:id', ({ params }) => vault.deleteLogin(params.id));
 
   // ---- stars and the constellation ----
   r.get('/stars', () => store.listStars().map((s) => store.starView(s)));
@@ -502,6 +575,11 @@ function validateSettings(b: Record<string, unknown>): Partial<Settings> {
     };
   }
   if (b.learnFromCorrections !== undefined) p.learnFromCorrections = boolean(b.learnFromCorrections, 'learnFromCorrections');
+  if (b.guard !== undefined) {
+    if (!['model', 'rules', 'off'].includes(b.guard as string)) throw badRequest('guard must be model, rules or off');
+    p.guard = b.guard as Settings['guard'];
+  }
+  if (b.passwordFill !== undefined) p.passwordFill = boolean(b.passwordFill, 'passwordFill');
   if (b.smallProviderIds !== undefined) {
     if (b.smallProviderIds !== null && (!Array.isArray(b.smallProviderIds) || b.smallProviderIds.some((x) => typeof x !== 'string'))) {
       throw badRequest('smallProviderIds must be null (each Star\'s own chain) or a list of model provider ids');
@@ -531,4 +609,16 @@ function validateSettings(b: Record<string, unknown>): Partial<Settings> {
     p.ntfyServer = b.ntfyServer.replace(/\/+$/, '');
   }
   return p;
+}
+
+/** A download's type: text, images and PDFs as themselves, everything else (HTML, SVG, scripts) as a plain download. */
+function safeType(path: string): string {
+  const ext = path.toLowerCase().split('.').pop() ?? '';
+  const types: Record<string, string> = {
+    txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8', csv: 'text/csv; charset=utf-8', json: 'application/json; charset=utf-8',
+    log: 'text/plain; charset=utf-8', py: 'text/plain; charset=utf-8', js: 'text/plain; charset=utf-8', ts: 'text/plain; charset=utf-8',
+    html: 'text/plain; charset=utf-8', svg: 'text/plain; charset=utf-8', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', webp: 'image/webp', pdf: 'application/pdf',
+  };
+  return types[ext] ?? 'application/octet-stream';
 }

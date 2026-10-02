@@ -5,7 +5,8 @@ import type { Config } from '../config.ts';
 import { ApiError } from '../util.ts';
 import { Auth } from './auth.ts';
 import { loginPage } from './login.ts';
-import { registerRoutes, type Services } from './routes.ts';
+import { RawBody, registerRoutes, type Services } from './routes.ts';
+import { MAX_FILE } from '../workspace.ts';
 import { Router, type Req } from './router.ts';
 
 const API = '/api/v1';
@@ -41,6 +42,17 @@ export function createHttpServer(config: Config, services: Services): Server {
       chunks.push(chunk as Buffer);
     }
     return Buffer.concat(chunks).toString('utf8');
+  }
+
+  async function readRawBuffer(req: IncomingMessage, max: number): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    for await (const chunk of req) {
+      size += chunk.length;
+      if (size > max) throw new ApiError(413, 'too_large', `Files can be up to ${Math.round(max / 1024 / 1024)} MB`);
+      chunks.push(chunk as Buffer);
+    }
+    return Buffer.concat(chunks);
   }
 
   async function readBody(req: IncomingMessage): Promise<unknown> {
@@ -206,11 +218,31 @@ export function createHttpServer(config: Config, services: Services): Server {
       return;
     }
 
+    // Uploading into a Star's workspace: the raw file as the body (not JSON, so it can be up to 10 MB).
+    const upload = /^\/stars\/([^/]+)\/files\/content$/.exec(path);
+    if (upload && req.method === 'PUT') {
+      const star = store.getStar(decodeURIComponent(upload[1]));
+      const target = url.searchParams.get('path');
+      if (!target) return fail(res, 400, 'bad_request', 'path is required');
+      if (/^(text\/plain|application\/x-www-form-urlencoded|multipart\/form-data)\b/i.test(req.headers['content-type'] ?? '')) {
+        return fail(res, 415, 'raw_only', 'Send the file as the body with Content-Type: application/octet-stream (or its own type)');
+      }
+      return send(res, 200, services.workspaces.write(star.id, target, await readRawBuffer(req, MAX_FILE)));
+    }
+
     const match = router.match(req.method ?? 'GET', path);
     if (!match) return fail(res, 404, 'not_found', `No endpoint at ${req.method} ${url.pathname}`);
     if (match === 'method') return fail(res, 405, 'method_not_allowed', `${req.method} isn’t supported on ${url.pathname}`);
     const r: Req = { raw: req, res, method: req.method ?? 'GET', path, params: match.params, query: url.searchParams, body: await readBody(req) };
     const out = await match.handler(r);
+    if (out instanceof RawBody) {
+      // Files a Star made are never run as a page on Sky's own address: a fixed type, no sniffing, and a sandbox.
+      res.writeHead(200, {
+        'Content-Type': out.type, 'Content-Length': String(out.data.length), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "sandbox; default-src 'none'", 'Content-Disposition': `${r.query.get('download') === '1' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(out.filename)}`,
+      }).end(out.data);
+      return;
+    }
     send(res, out === undefined ? 204 : 200, out);
   }
 

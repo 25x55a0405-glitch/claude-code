@@ -5,7 +5,7 @@ import type { EventBus } from './events.ts';
 import { startOfLocalDay } from './agent/time.ts';
 import type {
   ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, ConstellationMessage, Conversation, Idea,
-  Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep,
+  Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep, ServerActivityKind,
 } from './types.ts';
 import { ApiError, badRequest, iso, notFound, uid } from './util.ts';
 
@@ -407,10 +407,10 @@ export class Store {
 
   // ---- activity ----------------------------------------------------------
 
-  log(kind: ActivityKind, summary: string, taskId?: string, starId?: string): ActivityEvent {
+  log(kind: ServerActivityKind, summary: string, taskId?: string, starId?: string): ActivityEvent {
     const task = taskId ? this.findTask(taskId) : undefined;
     const who = starId ?? (task ? this.starIdOf(task) : undefined);
-    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind, summary, ...(taskId ? { taskId } : {}), ...(who ? { starId: who } : {}) };
+    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind: kind as ActivityKind, summary, ...(taskId ? { taskId } : {}), ...(who ? { starId: who } : {}) };
     this.db.sql.prepare('INSERT INTO activity (id, at, kind, data) VALUES (?, ?, ?, ?)')
       .run(ev.id, ev.at, ev.kind, JSON.stringify(ev));
     this.bus.emit({ type: 'activity', data: ev });

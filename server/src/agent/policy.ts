@@ -3,6 +3,7 @@ import type { Risk, Rule, Star } from '../types.ts';
 import type { Brain } from './brain.ts';
 import type { BrowserManager } from '../browser/browser.ts';
 import type { Vault } from '../vault.ts';
+import type { Workspaces } from '../workspace.ts';
 import type { ApprovalPreview, Effect, ToolDef } from './tools/types.ts';
 
 export type Verdict =
@@ -27,6 +28,7 @@ export class Policy {
   brain: Brain;
   browser?: BrowserManager;
   vault?: Vault;
+  workspaces?: Workspaces;
 
   constructor(store: Store, brain: Brain) {
     this.store = store;
@@ -35,7 +37,7 @@ export class Policy {
 
   /** Decides for one Star: its own autonomy (or the global one) and the global rules plus its own. */
   async check(tool: ToolDef, input: unknown, why: string, star: Star = this.store.mainStar()): Promise<Verdict> {
-    const env = { starId: star.id, browser: this.browser };
+    const env = { starId: star.id, browser: this.browser, workspaces: this.workspaces, vault: this.vault };
     const effect = tool.effectFor?.(input, env) ?? tool.effect;
     // A secret leaving through any tool needs the person's OK, whatever the autonomy.
     const secrets = this.vault?.refs(input) ?? [];
@@ -53,12 +55,17 @@ export class Policy {
       }
     }
     const rules = this.store.listRules(star.id).filter((r) => r.enabled);
-    if (rules.some((r) => r.id === 'r_pw') && SECURITY.test(text)) {
+    // Signing in with a saved login is the one password action allowed, and only once the person turned password fill on
+    // (the tool isn't offered otherwise). It never changes a password: it refuses pages with a new-password field.
+    if (rules.some((r) => r.id === 'r_pw') && SECURITY.test(text) && tool.name !== 'browser_fill_login') {
       return { kind: 'forbid', reason: 'Built-in rule: Stars never change passwords or security settings.' };
     }
     if (effect === 'spend' || (effect !== 'write' && MONEY.test(`${preview.action} ${preview.preview}`))) {
       return { kind: 'ask', reason: 'Built-in rule: always ask before spending money or moving funds.', risk: 'high' };
     }
+
+    const must = tool.mustAsk?.(input, env);
+    if (must) return { kind: 'ask', reason: `${why} (${must})`, risk: preview.risk ?? 'high' };
 
     const custom = rules.filter((r) => !r.builtIn);
     const ruling = custom.length ? await this.applyRules(custom, preview, why) : null;

@@ -159,4 +159,60 @@ export const browserBack: ToolDef<Record<string, never>> = {
   },
 };
 
-export const browserTools: ToolDef[] = [browserOpen, browserSearch, browserSnapshot, browserClick, browserType, browserPress, browserScroll, browserBack];
+export const browserAskPerson: ToolDef<{ reason: string }> = {
+  name: 'browser_ask_person',
+  description: 'Hand your browser tab to the person for something only they should do: signing in, a captcha, a two-factor code, '
+    + 'or a choice that is theirs. The task waits until they hand it back, then you get their note. Take a fresh snapshot after.',
+  input_schema: schema({ reason: str('What you need them to do, in one sentence, e.g. "Sign in to your bank so I can download the statement"') }, ['reason']),
+  // The runner handles it: the task waits for the hand-back like it waits for an approval.
+  effect: 'internal',
+  connection: 'browser',
+  scope: 'task',
+  label: (i) => `Asked you to take over the browser: ${firstLine(i.reason, 80)}`,
+  async run() {
+    throw new Error('browser_ask_person only works inside a task.');
+  },
+};
+
+/** The saved login a fill would use: the one named, or the one for the current page's site. */
+function pickLogin(i: { login?: string }, env: { starId: string; browser?: ToolEnv['browser'] }, vault: ToolContext['vault']) {
+  const page = env.browser?.currentPage(env.starId);
+  let origin: string | null = null;
+  try {
+    origin = page ? new URL(page.url).origin : null;
+  } catch { /* no page */ }
+  return vault?.loginFor(env.starId, origin, i.login) ?? null;
+}
+
+export const browserFillLogin: ToolDef<{ login?: string; submit?: boolean }> = {
+  name: 'browser_fill_login',
+  description: 'Sign in on the current page with a login the person saved for this exact site. The username and password go '
+    + 'straight into the page; you never see the password. Open the site’s sign-in page first. Set submit to press Enter afterwards. '
+    + 'It only signs in: it refuses sign-up and change-password forms.',
+  input_schema: schema({ login: str('The saved login’s username, if there is more than one for this site'), submit: bool('Press Enter to sign in') }),
+  effect: 'send',
+  connection: 'browser',
+  scope: 'task',
+  when: (store) => store.settings().passwordFill === true,
+  // A login the person marked "fill without asking" is a plain write; any other fill asks each time.
+  effectFor: (i, env) => (env && pickLogin(i, env, env.vault)?.autoFill ? 'write' : 'send'),
+  mustAsk: (i, env) => (env && pickLogin(i, env, env.vault)?.autoFill ? null : 'Signing in with a saved password asks you each time, unless you set that login to fill without asking'),
+  approval: (i, env) => {
+    const login = env ? pickLogin(i, env, env.vault) : null;
+    return { ...pagePreview(env, 'Sign in with your saved login', `Fill in ${login ? `${login.username} and its password` : 'a saved login'}${i.submit ? ' and sign in' : ''}.`), risk: 'high' as const };
+  },
+  label: (i) => `Signed in with a saved login${i.login ? ` (${firstLine(i.login, 40)})` : ''}`,
+  async run(i, ctx) {
+    const b = tab(ctx);
+    if (!ctx.vault) throw new Error('Saved logins aren’t available on this server.');
+    if (ctx.store.settings().passwordFill !== true) throw new Error('Password fill is turned off. The person can turn it on in Settings.');
+    const login = pickLogin(i, { starId: ctx.star.id, browser: b }, ctx.vault);
+    if (!login) throw new Error('There’s no saved login for this site that you may use. Ask the person to sign in with browser_ask_person, or to save a login in Settings.');
+    const { snapshot, filled } = await b.fillLogin(ctx.star.id, { origin: login.origin, username: login.username, password: ctx.vault.loginPassword(login.id) }, Boolean(i.submit));
+    ctx.vault.touchLogin(login.id);
+    const what = filled === 'both' ? 'the username and password' : filled === 'username' ? 'the username (the password goes on the next page: call this again there)' : 'the password';
+    return { content: `Filled ${what} for ${login.username}.${i.submit ? ' Pressed Enter.' : ''}\n\n${describeSnapshot(snapshot)}`, summary: `Signed in to ${new URL(login.origin).host} as ${login.username}` };
+  },
+};
+
+export const browserTools: ToolDef[] = [browserOpen, browserSearch, browserSnapshot, browserClick, browserType, browserPress, browserScroll, browserBack, browserAskPerson, browserFillLogin];

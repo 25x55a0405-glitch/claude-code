@@ -364,6 +364,106 @@ Free-tier notes for wave 2:
   through a real WebSocket server), not the live services. MCP was tested
   with a real MCP server over stdio.
 
+## Wave 3: the Star's own computer
+
+Each Star now has a computer of its own: a folder, a terminal and the browser.
+The person can step into the browser at any time, and a guard checks every
+action that reaches outside.
+
+**Workspace (#1).** Each Star gets a folder, `DATA_DIR/workspaces/<starId>`,
+that keeps its files between tasks. The person can browse, upload, download
+and delete files through the API. Stars use the tools `files_list`,
+`file_read`, `file_write`, `file_delete` and `run_command`. Commands run in
+[bubblewrap](https://github.com/containers/bubblewrap) when it's installed and
+user namespaces are on:
+- The Star's folder is mounted at `/workspace` and is the only place it can write.
+- The system's programs and libraries are read-only.
+- `/home`, `/root`, `/var`, `/run`, `/mnt` and the server's data folder aren't
+  there at all, and `/etc/shadow` is masked.
+- No environment variables are passed through, so the server's keys never
+  reach a command.
+- There's no network unless the call asks for it. A call with network counts
+  as a send, so it asks first under balanced autonomy.
+- Commands run as uid 1000, with a 2 GB memory limit, a 1 GB file limit and a
+  timeout (60 seconds by default, 600 at most).
+- Output is cut to the last 8,000 characters. It goes to the model, and to
+  the task timeline as the step's detail.
+
+Without bubblewrap (macOS, Windows, a host that blocks user namespaces, or
+`SKY_SANDBOX=none`), commands run in the folder with a clean environment but
+no sandbox. Every command then asks, whatever the autonomy, at high risk.
+Writing and deleting files inside the folder count as writes, because nothing
+outside changes. Downloads are served as text, images or PDFs with `nosniff`
+and a `sandbox` CSP, so an HTML file a Star made never runs on Sky's own
+address.
+
+**Take over and hand back (#5).** The person can take a Star's browser tab
+(`POST /browser/:starId/takeover`) and hand it back (`.../handback`, with an
+optional note). Using the live view (`/input`) takes control too. That
+take-over hands back on its own after 2 minutes without input; an explicit
+one lasts 30 minutes. While the person has the tab, a task that calls a
+browser tool waits ("Waiting for you to hand the browser back"), and the call
+isn't run behind their back. After the hand-back the Star is told what
+happened and takes a fresh snapshot. A Star can ask for help itself with
+`browser_ask_person` ("Sign in to your bank"): the person gets a "needs you"
+message, and the task carries on with their note when they hand back. That
+is how sign-ins, captchas and two-factor codes work without passwords.
+
+**Teach a task (#3).** `POST /browser/:starId/record` takes over the tab
+(optionally opening a URL) and records what the person does: pages opened,
+clicks (labelled with what was clicked), typing (grouped per field), keys,
+scrolls and going back. Typing into a password field is stored as
+`[password]` and never kept. A recording ends after 10 minutes, at 300 steps,
+when the person stops it, or when they hand back. When it ends, a model
+drafts a skill (name, when to use it, general steps with placeholders). When
+no model is available, the draft is the steps as recorded. The person reviews
+the draft and saves it with `POST /recordings/:id/skill`. The skill gets
+`source: "taught"`. The save can also take a `schedule`, which sets up a
+recurring task that uses the skill.
+
+**The guard (#20).** A second check, separate from the Star doing the work,
+runs before the policy on every action that changes something
+(write/send/delete/spend). It can only make things stricter:
+- **Quick checks** (no model). These block dangerous shell commands (`rm -rf /`, fork
+  bombs, writing to disks, remote shells). They ask about piping a download
+  into a shell, `sudo`, and background services. They also ask about content
+  that tries to instruct an assistant ("ignore previous instructions"), and
+  about long encoded blobs leaving in a send.
+- **Model review** (`settings.guard: "model"`, the default). Sends, deletes,
+  spending, commands with internet and MCP writes are shown to the small
+  model chain, with only the person's request and the action. It never sees
+  the pages, mail or messages the Star read, so instructions hidden in those
+  can't argue with it. It answers ok, ask or block. If it can't be reached or
+  its answer is unclear, the guard asks.
+
+A guard "block" is refused like a forbidden rule, and an "ask" becomes a
+high-risk approval even under autonomous mode. Both are logged in Activity
+with `kind: "guard"`. `guard: "rules"` keeps only the quick checks (no model
+calls); `"off"` turns it off.
+
+**Password fill (#17), off by default.** The person saves logins (site,
+username, password; encrypted like secrets, never returned). With
+`settings.passwordFill` on, Stars get `browser_fill_login`. It fills the
+username and password straight into the page; the model, the timeline and
+the logs never see the password, and saved passwords are redacted like
+secrets wherever they appear. Turning it on relaxes the built-in rule
+"Never change passwords or security settings" in exactly one way: a Star may
+sign in with a saved login. Everything else stays:
+- It only fills on the exact origin the login was saved for, so a look-alike
+  site gets nothing.
+- It only fills over https (or on this machine).
+- It refuses pages with a new-password field or more than one password field,
+  which are sign-up and change-password forms.
+- Each fill asks first, at high risk, unless the person marks that login
+  `autoFill`.
+- `browser_type` still refuses password fields.
+- Logins can be limited to some Stars.
+
+**Hosting.** Waves 1 and 2 run anywhere. This wave needs an always-on
+machine that can run Chromium and bubblewrap: the person's own computer, or
+a free cloud VM. `server/README.md` has the steps for Oracle Cloud Always
+Free, with its current limits.
+
 ## Ideas
 
 Every few hours the runtime offers new ideas: starter ones that follow from
@@ -689,6 +789,67 @@ browser can't start, `GET /browser` says why (`ok: false` and a `reason`),
 and the input endpoints return `503` with the same message. A correction as
 the very first chat message ("Actually, always reply in English") now
 becomes a lesson too.
+
+### Wave 3 (for the UI to build on)
+
+Types (in `server/src/types.ts`): `BrowserSession` gains `control:
+'star'|'person'`, `controlNote`, `waitingTaskId` and `recordingId`.
+`Recording`, `RecordedStep`, `WorkspaceFile`, `WorkspaceStatus`, `SavedLogin`
+and `GuardDecision` are new. `Skill.source` can be `'taught'`. Settings gain
+`guard?: 'model'|'rules'|'off'` (default `model`) and `passwordFill?: boolean`
+(default `false`). The new activity kinds are `guard` and `browser` (taken
+over or handed back); the server's `ServerActivityKind` adds them to
+`ActivityKind`.
+
+Browser:
+- `POST /browser/:starId/takeover` `{ note? }` → `BrowserSession` with `control: "person"`.
+- `POST /browser/:starId/handback` `{ note? }` → `BrowserSession` with
+  `control: "star"`. A task waiting on it carries on with the note. `409` if
+  the tab isn't open.
+- `POST /browser/:starId/input` now takes control for the person if the Star
+  had it (it goes back after 2 idle minutes). A page that won't load is `400 page_failed`.
+- The live view should show "Take over / Hand back" from `control`, and the
+  `controlNote` (what the Star asked for) while `waitingTaskId` is set.
+
+Teach a task:
+- `POST /browser/:starId/record` `{ title?, url? }` → `Recording`
+  (`status: "recording"`). `409` while one is already recording for that Star.
+- `POST /browser/:starId/record/stop` → `Recording` (`status: "done"`, with
+  `draft: { name, whenToUse, steps }` or `null` if nothing was recorded).
+  Handing back also stops it; the draft then arrives as `recording.updated`.
+- `GET /recordings?starId=`, `GET /recordings/:id`, `DELETE /recordings/:id`.
+- `POST /recordings/:id/skill` `{ name?, whenToUse?, steps?, shared?, schedule? }`
+  → `{ recording, skill, task }`. Missing fields come from the draft.
+  `shared: true` gives the skill to every Star. `task` is the recurring task,
+  or `null`. `409` if the recording is already a skill.
+
+Workspace:
+- `GET /workspace` → `WorkspaceStatus` (`sandbox: "bwrap"|"none"`, `reason`, `root`).
+- `GET /stars/:id/files?path=&recursive=1` → `{ files: WorkspaceFile[], usage }` (bytes).
+- `GET /stars/:id/files/content?path=` downloads a file (`&download=1` for
+  an attachment). Text and code come back as `text/plain`.
+- `PUT /stars/:id/files/content?path=` uploads a file: the raw file is the
+  body, with its own content type (not `text/plain` or form types), up to
+  10 MB. Returns the `WorkspaceFile`.
+- `DELETE /stars/:id/files?path=` deletes a file or folder.
+- A path outside the folder, including through a symlink, is a `400`.
+- Commands show as task steps: "Ran \`…\` (exit 0)", with the output in `detail`.
+
+Saved logins:
+- `GET /logins` → `{ enabled, logins: SavedLogin[] }`.
+- `POST /logins` `{ origin, username, password, starIds?, autoFill? }`. The
+  origin must be https (`http://localhost` is fine for trying it out); `409`
+  for a duplicate.
+- `PATCH /logins/:id` `{ username?, password?, starIds?, autoFill? }`, `DELETE /logins/:id`.
+- The opt-in switch is `PATCH /settings { passwordFill: true }`. The UI
+  should say what turning it on relaxes (see Wave 3 above).
+
+Guard: `PATCH /settings { guard: "model" | "rules" | "off" }`. Its decisions
+appear in Activity (`kind: "guard"`), as a task step ("The guard wants your
+OK: …") and in the approval's `reason`.
+
+Events: `browser.control` (`BrowserSession`), `recording.updated`
+(`Recording`), `workspace.changed` (`{ starId, path }`).
 
 ### Server-side additions
 
