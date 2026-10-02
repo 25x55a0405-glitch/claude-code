@@ -4,6 +4,7 @@ import { starLine, useAgent } from '../lib/agent';
 import { relTime } from '../lib/format';
 import { useResource } from '../lib/hooks';
 import { href } from '../lib/router';
+import { BrowserPip, BrowserWindow, useBrowserTab } from './BrowserView';
 import { Icon } from './Icon';
 import { Bar, Segmented, StarFace, StatusChip, useToast } from './ui';
 
@@ -17,12 +18,14 @@ export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () =>
   const tasks = useResource(() => api.listTasks(star.id ? { starId: star.id } : undefined), [star.id], ['task.updated']);
   const others = (stars ?? []).filter((s) => s.id !== star.id);
   const allPaused = status?.state === 'paused';
+  const browser = useBrowserTab(star.id || undefined);
+  const [watching, setWatching] = useState(false);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && !watching && onClose();
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onClose, watching]);
 
   const list = (tasks.data ?? []).filter((t) =>
     tab === 'now' ? ['active', 'waiting_approval', 'blocked'].includes(t.status) : tab === 'upcoming' ? ['scheduled', 'paused'].includes(t.status) : ['done', 'failed'].includes(t.status),
@@ -59,6 +62,13 @@ export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () =>
             <a href={href('approvals')} onClick={onClose}><div className="n" style={star.status.pendingApprovals ? { color: 'var(--attn)' } : undefined}>{star.status.pendingApprovals}</div><div className="k">Needs you</div></a>
             <a href={href('activity')} onClick={onClose}><div className="n">{star.id ? done : status?.counts.completedToday ?? 0}</div><div className="k">Finished</div></a>
           </div>
+
+          {browser.tab && (
+            <div>
+              <div className="section-title">In the browser</div>
+              <BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} />
+            </div>
+          )}
 
           <div className="col">
             <Segmented label="Goals" value={tab} onChange={setTab} options={[{ value: 'now', label: 'Working on' }, { value: 'upcoming', label: 'Upcoming' }, { value: 'done', label: 'Done' }]} />
@@ -123,6 +133,7 @@ export function ProfileSheet({ star, onClose }: { star: StarView; onClose: () =>
           </div>
         </div>
       </aside>
+      {watching && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
     </>
   );
 }

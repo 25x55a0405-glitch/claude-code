@@ -294,6 +294,8 @@ export interface Star {
   /** Connection ids this Star may use; null means every connected app. */
   connectionIds: string[] | null;
   paused: boolean;
+  /** Model providers this Star uses, in order; null means the global order. Absent on older servers. */
+  providerIds?: string[] | null;
   /** This Star's own chat (for the main Star, the main chat). */
   conversationId: string;
   createdAt: string;
@@ -313,7 +315,7 @@ export interface StarView extends Star {
   status: StarStatus;
 }
 
-export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds'>>;
+export type StarInput = Pick<Star, 'name' | 'role'> & Partial<Pick<Star, 'instructions' | 'avatar' | 'autonomy' | 'connectionIds' | 'providerIds'>>;
 
 export type ConstellationMessageKind = 'message' | 'request' | 'reply' | 'handoff';
 
@@ -331,6 +333,98 @@ export interface ConstellationMessage {
   /** Whether the receiving Star has seen it yet. */
   read: boolean;
 }
+
+// ---- Model providers --------------------------------------------------
+
+/** anthropic: the Anthropic Messages format. openai: the Chat Completions format. */
+export type ProviderKind = 'anthropic' | 'openai';
+
+export interface ProviderHealth {
+  /** unknown: not used yet; ok: last call worked; cooling: skipped until cooldownUntil; failing: needs fixing (bad key, unknown model). */
+  state: 'unknown' | 'ok' | 'cooling' | 'failing';
+  lastOkAt: string | null;
+  lastError: string | null;
+  lastErrorAt: string | null;
+  cooldownUntil: string | null;
+  /** Failures in a row. */
+  failures: number;
+  latencyMs: number | null;
+}
+
+/** A model the Stars can think with. The API key never leaves the server. */
+export interface ModelProvider {
+  id: string;
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  enabled: boolean;
+  hasKey: boolean;
+  /** Last four characters of the key, for recognising it. */
+  keyHint: string | null;
+  /** Comes from the server's ANTHROPIC_API_KEY; can't be edited or removed here. */
+  builtIn: boolean;
+  health: ProviderHealth;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderPreset {
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  /** An example model id; providers change their lists often. */
+  exampleModel: string;
+  needsKey: boolean;
+  keyUrl: string | null;
+  note: string;
+}
+
+/** apiKey is write-only: send a string to set it, null to remove it, or leave it out to keep it. */
+export interface ProviderInput {
+  name: string;
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  apiKey?: string | null;
+  enabled?: boolean;
+}
+
+export interface ProviderTest {
+  ok: boolean;
+  latencyMs: number;
+  reply?: string;
+  error?: string;
+}
+
+// ---- Browser ----------------------------------------------------------
+
+/** A Star's tab in the shared real browser. */
+export interface BrowserSession {
+  starId: string;
+  url: string;
+  title: string;
+  /** Changes whenever a new screenshot is ready. */
+  frameId: string | null;
+  updatedAt: string;
+}
+
+export interface BrowserState {
+  ok: boolean;
+  running: boolean;
+  /** Why the browser can't start, when it can't. */
+  reason?: string | null;
+  sessions: BrowserSession[];
+}
+
+/** What the person does in a Star's tab. Clicks are in the 1280×800 page. */
+export type BrowserInput =
+  | { type: 'click'; x: number; y: number }
+  | { type: 'type'; text: string }
+  | { type: 'key'; key: string }
+  | { type: 'scroll'; dy: number }
+  | { type: 'navigate'; url: string }
+  | { type: 'back' };
 
 // ---- Pagination --------------------------------------------------------
 
@@ -354,6 +448,9 @@ export type LiveEvent =
   | { type: 'memory.learned'; data: MemoryItem }
   | { type: 'idea.created'; data: Idea }
   | { type: 'settings.updated'; data: Settings }
+  | { type: 'provider.updated'; data: ModelProvider }
+  | { type: 'provider.deleted'; data: { id: string } }
+  | { type: 'browser.frame'; data: BrowserSession }
   | { type: 'star.updated'; data: StarView }
   | { type: 'star.deleted'; data: { id: string } }
   | { type: 'constellation.message'; data: ConstellationMessage };

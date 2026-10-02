@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api, type ConstellationMessage, type Message } from '../api';
 import { ApprovalCard } from '../components/ApprovalCard';
+import { BrowserPip, BrowserWindow, useBrowserTab } from '../components/BrowserView';
 import { Avatar } from '../components/Avatar';
 import { Composer } from '../components/Composer';
 import { TaskInline } from '../components/TaskInline';
@@ -22,6 +23,8 @@ export function Chat({ conversationId }: { conversationId?: string }) {
   const home = !!star && !!activeId && (star.conversationId === activeId || (star.main && !!conv?.main));
   const notesFor = home && star?.id && (stars?.length ?? 0) > 1 ? star.id : null;
   const [notes, setNotes] = useState<ConstellationMessage[]>([]);
+  const browser = useBrowserTab(star?.id || undefined);
+  const [watching, setWatching] = useState(false);
   const tasks = useResource(() => api.listTasks(), [], ['task.updated']);
   const approvals = useResource(() => api.listApprovals(), [], ['approval.created', 'approval.updated']);
   const ideas = useResource(() => api.listIdeas(), []);
@@ -141,6 +144,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
           {star && !star.main && !sideChat && <p className="t2" style={{ marginTop: -10 }}>{star.role}</p>}
           <Composer onSend={send} placeholder={`Ask ${name} anything`} autoFocus value={draft} onChange={setDraft} />
           {sendError && <p className="send-error" role="alert">{sendError}</p>}
+          {star && browser.tab && <div className="hero-pip"><BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} /></div>}
           {(!star || star.main) && (
             <div className="ideas-row">
               {ideas.data?.slice(0, 3).map((i) => (
@@ -149,6 +153,7 @@ export function Chat({ conversationId }: { conversationId?: string }) {
             </div>
           )}
         </div>
+        {watching && star && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
       </div>
     );
   }
@@ -215,10 +220,12 @@ export function Chat({ conversationId }: { conversationId?: string }) {
         </div>
       </div>
       <div className="dock">
+        {star && browser.tab && <BrowserPip star={star} tab={browser.tab} onOpen={() => setWatching(true)} />}
         {sendError && <p className="send-error" role="alert">{sendError}</p>}
         <Composer onSend={send} placeholder={conv && !conv.main && !home ? `Message ${name} in “${conv.title}”` : `Message ${name}`} value={draft} onChange={setDraft} />
         <div className="hint">{name} keeps working after you close this tab, and asks before anything it can’t undo.</div>
       </div>
+      {watching && star && browser.tab && <BrowserWindow star={star} tab={browser.tab} onTab={browser.setTab} onClose={() => setWatching(false)} />}
     </>
   );
 }

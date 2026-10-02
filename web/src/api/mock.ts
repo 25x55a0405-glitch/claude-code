@@ -13,6 +13,37 @@ import type {
   StarView,
 } from './types';
 import * as seed from './mockData';
+import type { BrowserSession, ModelProvider } from './types';
+
+const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** A stand-in screenshot of a Star's tab: a simple page drawn as SVG at 1280×800. */
+function mockFrame(s: BrowserSession, clicks: { x: number; y: number }[]): string {
+  let host = s.url;
+  try { host = new URL(s.url).hostname.replace(/^www\./, ''); } catch { /* keep the raw text */ }
+  const flights = /kayak|flights|skyscanner/.test(host);
+  const rows = flights
+    ? [['TAP Air Portugal', '1 stop · EWR', '8h 05m', '$642'], ['United', 'Nonstop', '6h 50m', '$711'], ['Iberia', '1 stop · MAD', '10h 20m', '$658'], ['Delta', 'Nonstop', '6h 55m', '$733']]
+    : [['Result one', 'A page Sky found', '', ''], ['Result two', 'Another source', '', ''], ['Result three', 'Worth a look', '', '']];
+  const cards = rows.map(([a, b, c, d], i) => {
+    const y = 250 + i * 120;
+    return `<rect x="80" y="${y}" width="1120" height="100" rx="14" fill="#fff" stroke="#e6e6e6"/>
+      <text x="112" y="${y + 44}" font-size="24" font-weight="600" fill="#111">${esc(a)}</text>
+      <text x="112" y="${y + 76}" font-size="18" fill="#777">${esc(b)}</text>
+      <text x="760" y="${y + 58}" font-size="20" fill="#555">${esc(c)}</text>
+      ${d ? `<rect x="1010" y="${y + 26}" width="160" height="48" rx="10" fill="#ff690f"/><text x="1090" y="${y + 58}" font-size="22" font-weight="700" fill="#fff" text-anchor="middle">${esc(d)}</text>` : ''}`;
+  }).join('');
+  const dots = clicks.slice(-3).map((c) => `<circle cx="${c.x}" cy="${c.y}" r="18" fill="none" stroke="#ff690f" stroke-width="3" opacity=".8"/>`).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" font-family="Helvetica, Arial, sans-serif">
+    <rect width="1280" height="800" fill="#f5f6f7"/>
+    <rect width="1280" height="84" fill="${flights ? '#1d1d1f' : '#fff'}"/>
+    <text x="80" y="54" font-size="30" font-weight="800" fill="${flights ? '#ff690f' : '#111'}">${esc(host.split('.')[0].toUpperCase())}</text>
+    <text x="80" y="160" font-size="34" font-weight="700" fill="#111">${esc(s.title.split(' · ')[0])}</text>
+    <text x="80" y="200" font-size="18" fill="#888">${esc(s.url.slice(0, 90))}</text>
+    ${cards}${dots}
+  </svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
 
 const uid = (p: string) => `${p}_${Math.random().toString(36).slice(2, 10)}`;
 const iso = () => new Date().toISOString();
@@ -35,6 +66,9 @@ export function createMockApi(): SkyApi {
     messages: clone(seed.seedMessages),
     stars: clone(seed.seedStars),
     constellation: clone(seed.seedConstellation),
+    providers: clone(seed.seedProviders),
+    browser: clone(seed.seedBrowser),
+    clicks: {} as Record<string, { x: number; y: number }[]>,
     paused: false,
     activity_line: 'Watching Lisbon fares' as string | null,
     activityTask: 't_flights' as string | null,
@@ -73,6 +107,26 @@ export function createMockApi(): SkyApi {
     db.constellation.push(m);
     emit({ type: 'constellation.message', data: clone(m) });
     return m;
+  };
+
+  const findProvider = (id: string) => {
+    const p = db.providers.find((x) => x.id === id);
+    if (!p) throw new Error('That model is no longer set up');
+    return p;
+  };
+  const freshHealth = (): ModelProvider['health'] => ({ state: 'unknown', lastOkAt: null, lastError: null, lastErrorAt: null, cooldownUntil: null, failures: 0, latencyMs: null });
+  const tab = (starId: string) => {
+    let s = db.browser.find((b) => b.starId === starId);
+    if (!s) {
+      s = { starId, url: 'about:blank', title: 'New tab', frameId: null, updatedAt: iso() };
+      db.browser.push(s);
+    }
+    return s;
+  };
+  const frame = (s: BrowserSession) => {
+    s.frameId = uid('f');
+    s.updatedAt = iso();
+    emit({ type: 'browser.frame', data: clone(s) });
   };
 
   const summary = (t: TaskDetail): Task => {
@@ -136,6 +190,7 @@ export function createMockApi(): SkyApi {
       emit({ type: 'task.updated', data: summary(t) });
       logActivity('research', next.step, t.id);
       if (t.id === 't_flights' && tick % 10 === 1) tell('star_scout', MAIN, 'message', next.step, t.id);
+      if (t.id === 't_flights') { const b = db.browser.find((x) => x.starId === 'star_scout'); if (b) frame(b); }
     }
     emit({ type: 'status', data: status() });
     emitStars();
@@ -236,6 +291,7 @@ export function createMockApi(): SkyApi {
         id, name, role: input.role, instructions: input.instructions ?? '',
         avatar: input.avatar ?? { character: 'dot', color: colors[db.stars.length % colors.length] },
         main: false, autonomy: input.autonomy ?? null, connectionIds: input.connectionIds ?? null, paused: false,
+        providerIds: input.providerIds ?? null,
         conversationId: conv.id, createdAt: iso(), updatedAt: iso(),
       };
       db.stars.push(star);
@@ -293,6 +349,89 @@ export function createMockApi(): SkyApi {
       return clone(db.constellation.filter((m) => !starId || m.fromStarId === starId || m.toStarId === starId).slice(-100));
     },
     async getBriefing() { await wait(); return clone(db.briefing); },
+
+    async listProviders() { await wait(); return clone(db.providers); },
+    async listProviderPresets() { await wait(); return clone(seed.seedPresets); },
+    async createProvider(input) {
+      await wait();
+      const { apiKey, ...rest } = input;
+      const p: ModelProvider = {
+        id: uid('p'), ...rest, enabled: input.enabled ?? true, hasKey: !!apiKey, keyHint: apiKey ? apiKey.slice(-4) : null,
+        builtIn: false, health: freshHealth(), createdAt: iso(), updatedAt: iso(),
+      };
+      db.providers.push(p);
+      emit({ type: 'provider.updated', data: clone(p) });
+      return clone(p);
+    },
+    async updateProvider(id, patch) {
+      await wait();
+      const p = findProvider(id);
+      const { apiKey, ...rest } = patch;
+      if (p.builtIn && Object.keys(rest).some((k) => k !== 'name' && k !== 'enabled')) throw new Error('The server’s own model can only be renamed or turned off');
+      const resets = apiKey !== undefined || ['kind', 'baseUrl', 'model'].some((k) => k in rest && (rest as Record<string, unknown>)[k] !== (p as unknown as Record<string, unknown>)[k]);
+      Object.assign(p, rest, { updatedAt: iso() });
+      if (apiKey !== undefined) { p.hasKey = !!apiKey; p.keyHint = apiKey ? apiKey.slice(-4) : null; }
+      if (resets) p.health = freshHealth();
+      emit({ type: 'provider.updated', data: clone(p) });
+      return clone(p);
+    },
+    async deleteProvider(id) {
+      await wait();
+      const p = findProvider(id);
+      if (p.builtIn) throw new Error('The server’s own model can’t be removed, only turned off');
+      db.providers = db.providers.filter((x) => x.id !== id);
+      for (const s of db.stars) if (s.providerIds) s.providerIds = s.providerIds.filter((x) => x !== id);
+      emit({ type: 'provider.deleted', data: { id } });
+    },
+    async testProvider(id) {
+      const p = findProvider(id);
+      const started = Date.now();
+      await wait(500 + Math.random() * 600);
+      const latencyMs = Date.now() - started;
+      const broken = !p.hasKey && !/localhost|127\.0\.0\.1/.test(p.baseUrl);
+      const local = /localhost/.test(p.baseUrl);
+      const result = broken
+        ? { ok: false, latencyMs, error: '401 Unauthorized: missing API key' }
+        : local ? { ok: false, latencyMs, error: 'Couldn’t reach http://localhost:11434. Is it running?' }
+        : { ok: true, latencyMs, reply: 'Hello! Ready when you are.' };
+      p.health = result.ok
+        ? { ...p.health, state: 'ok', lastOkAt: iso(), latencyMs, failures: 0, cooldownUntil: null }
+        : { ...p.health, state: broken ? 'failing' : 'cooling', lastError: result.error!, lastErrorAt: iso(), failures: p.health.failures + 1, cooldownUntil: broken ? null : new Date(Date.now() + 30_000).toISOString() };
+      emit({ type: 'provider.updated', data: clone(p) });
+      return result;
+    },
+    async setProviderOrder(ids) {
+      await wait();
+      const named = ids.map((id) => db.providers.find((p) => p.id === id)).filter((p): p is ModelProvider => !!p);
+      db.providers = [...named, ...db.providers.filter((p) => !ids.includes(p.id))];
+      return db.providers.map((p) => p.id);
+    },
+
+    async getBrowser() { await wait(); return { ok: true, running: true, reason: null, sessions: clone(db.browser.filter((b) => b.frameId)) }; },
+    browserFrameUrl(starId) {
+      const s = db.browser.find((b) => b.starId === starId);
+      return s ? mockFrame(s, db.clicks[starId] ?? []) : '';
+    },
+    async browserInput(starId, input) {
+      await wait(120);
+      const s = tab(starId);
+      if (input.type === 'navigate') {
+        const url = /^[a-z]+:\/\//i.test(input.url) ? input.url : `https://${input.url}`;
+        s.url = url;
+        try { s.title = new URL(url).hostname.replace(/^www\./, ''); } catch { s.title = url; }
+        db.clicks[starId] = [];
+      } else if (input.type === 'click') {
+        (db.clicks[starId] ??= []).push({ x: input.x, y: input.y });
+      } else if (input.type === 'back') {
+        db.clicks[starId] = [];
+      }
+      frame(s);
+      return clone(s);
+    },
+    async closeBrowserTab(starId) {
+      await wait();
+      db.browser = db.browser.filter((b) => b.starId !== starId);
+    },
 
     async listTasks(filter) {
       await wait();

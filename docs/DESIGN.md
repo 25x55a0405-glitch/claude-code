@@ -71,6 +71,9 @@ decorative animation beyond the character.
 | **Profile** (tap the character) | The current Star: name, role, live status, counts, Working on / Upcoming / Done, who it works with, edit, pause this Star or every Star |
 | **Constellation** | A map of the Stars with lines where they've talked, a card per Star (role, independence, apps, pause), and the feed of notes between them |
 | **New Star / edit a Star** | Start from a template (research, inbox, calendar, code), then name, character and colour, role and instructions, independence (or follow yours), which apps, and its own rules. Pause or remove from here |
+| **Models** | The fallback order of model providers, any OpenAI-compatible or Anthropic-compatible one. Each row shows its health: working with latency, resting until a rate limit clears, needs fixing, or off. Drag or use the arrows to reorder, test, turn off, or edit. Adding one starts from a preset (Groq, OpenRouter, Ollama and so on). Keys are write-only: after saving, only "a key is saved, ending in 1234" shows, with Replace and Remove |
+| **A Star's models** | On a Star's page: "Same as everyone" or "Its own order", picking and ordering the models that Star uses |
+| **Live browser** | When a Star has a tab open, a small live thumbnail sits above the composer in its chat and in its profile. Opening it shows the page, live. "Take over" pauses that Star and lets you click, type, paste, scroll, go back or enter an address on the page, for example to sign in; "Hand back" wakes it again (unless it was already paused). Anything it wants to submit still comes as an approval card |
 | **Goals** | Everything the Stars have taken on, filterable by Star, with progress and schedule, plus a goal's step-by-step history and who asked for it |
 | **Ideas** | Suggestions Sky came up with. "Do it" sends it to chat |
 | **Approvals** | Everything waiting for a yes, and the history |

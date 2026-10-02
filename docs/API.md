@@ -195,6 +195,18 @@ filters listed there. The shapes are `Star`, `StarView` and
 `ConstellationMessage` in `web/src/api/types.ts`. A server without `/stars`
 still works: the UI shows a single Star built from Settings.
 
+## Models and the browser
+
+The Models screen uses `/providers`, `/providers/presets`,
+`/providers/:id/test` and `/providers/order`, plus `providerIds` on a Star, all
+in [BACKEND.md](BACKEND.md). The UI only sends `apiKey` when the person types a
+new one (or `null` to remove it) and only ever shows `hasKey` and `keyHint`.
+The live browser shows `GET /browser/:starId/screenshot?f=<frameId>`, refreshed
+on each `browser.frame` event (not the MJPEG stream, so it doesn't hold a
+connection open per tab), and sends what the person does to
+`POST /browser/:starId/input` in the 1280×800 page's coordinates. Taking over
+pauses the Star with `POST /stars/:id/pause`; handing back resumes it.
+
 ## Live events
 
 `GET /events` is a Server-Sent Events stream. Each event uses the SSE `event:`

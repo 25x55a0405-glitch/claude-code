@@ -21,6 +21,7 @@ const paths: Record<string, string> = {
   x: 'M6 6l12 12M18 6 6 18',
   pause: 'M8 5v14M16 5v14',
   play: 'M7 5v14l12-7z',
+  cursor: 'M5 3l14 7-6.5 2L10 18.5z',
   bolt: 'M13 3 4 14h7l-1 7 9-11h-7z',
   pin: 'M15 4l5 5-3 1-4 4 1 5-2 1-3-4-5 5M9 11 4 6',
   trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',

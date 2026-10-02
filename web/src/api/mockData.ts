@@ -12,6 +12,9 @@ import type {
   Star,
   ConstellationMessage,
   TaskDetail,
+  BrowserSession,
+  ModelProvider,
+  ProviderPreset,
 } from './types';
 
 const now = Date.now();
@@ -35,7 +38,8 @@ export const seedConnections: Connection[] = [
   { id: 'gmail', provider: 'gmail', name: 'Gmail', description: 'Read, draft and send email', status: 'connected', access: 'read_write', lastSyncAt: ago(4) },
   { id: 'calendar', provider: 'calendar', name: 'Google Calendar', description: 'See and schedule events', status: 'connected', access: 'read_write', lastSyncAt: ago(4) },
   { id: 'github', provider: 'github', name: 'GitHub', description: 'Watch repos, issues and pull requests', status: 'connected', access: 'read', lastSyncAt: ago(12) },
-  { id: 'web', provider: 'web', name: 'Web browser', description: 'Search and read the web in a sandboxed browser', status: 'connected', access: 'read', lastSyncAt: ago(1) },
+  { id: 'web', provider: 'web', name: 'Web search', description: 'Search and read the web', status: 'connected', access: 'read', lastSyncAt: ago(1) },
+  { id: 'browser', provider: 'browser', name: 'Browser', description: 'A real browser your Stars drive: open sites, click and fill in forms. Sign-ins stick.', status: 'connected', access: 'read_write', lastSyncAt: ago(1) },
   { id: 'notion', provider: 'notion', name: 'Notion', description: 'Read and update pages and databases', status: 'expired', access: 'read_write', lastSyncAt: ago(60 * 26) },
   { id: 'slack', provider: 'slack', name: 'Slack', description: 'Talk to Sky and post to channels', status: 'disconnected', access: 'read' },
   { id: 'drive', provider: 'drive', name: 'Google Drive', description: 'Find and read documents', status: 'disconnected', access: 'read' },
@@ -264,7 +268,7 @@ export const seedStars: Star[] = [
   {
     id: 'star_scout', name: 'Scout', role: 'Researches trips, prices and places',
     instructions: 'Compare at least three sources. Never book or pay; bring me the options.',
-    avatar: { character: 'dot', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'calendar'], paused: false,
+    avatar: { character: 'dot', color: 'mint' }, main: false, autonomy: 'ask', connectionIds: ['web', 'browser', 'calendar'], paused: false, providerIds: ['p_groq', 'p_openrouter'],
     conversationId: 'c_scout', createdAt: ago(60 * 24 * 2), updatedAt: ago(60 * 24 * 2),
   },
   {
@@ -280,4 +284,45 @@ export const seedConstellation: ConstellationMessage[] = [
   { id: 'cm2', fromStarId: 'star_scout', toStarId: 'star_sky', kind: 'message', content: 'Fares dropped 4%. Best is $642 on TAP. Still watching for under $600.', taskId: 't_flights', createdAt: ago(60 * 2 + 1), read: true },
   { id: 'cm3', fromStarId: 'star_post', toStarId: 'star_sky', kind: 'request', content: 'Maya wants to move Friday’s review. Is d free Thursday at 3?', createdAt: ago(10), read: true },
   { id: 'cm4', fromStarId: 'star_sky', toStarId: 'star_post', kind: 'reply', content: 'Yes, Thursday 3pm is free. I’ll ask d before anything goes out.', createdAt: ago(3), read: true },
+];
+
+export const seedProviders: ModelProvider[] = [
+  {
+    id: 'p_builtin', name: 'Claude (server key)', kind: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'claude-opus-5-5', enabled: true,
+    hasKey: true, keyHint: null, builtIn: true,
+    health: { state: 'ok', lastOkAt: ago(1), lastError: null, lastErrorAt: null, cooldownUntil: null, failures: 0, latencyMs: 1840 },
+    createdAt: ago(60 * 24 * 7), updatedAt: ago(1),
+  },
+  {
+    id: 'p_openrouter', name: 'OpenRouter', kind: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'meta-llama/llama-3.3-70b-instruct:free', enabled: true,
+    hasKey: true, keyHint: '9f2c', builtIn: false,
+    health: { state: 'cooling', lastOkAt: ago(40), lastError: '429 Rate limit exceeded: free-models-per-min', lastErrorAt: ago(1), cooldownUntil: ahead(4), failures: 2, latencyMs: 2310 },
+    createdAt: ago(60 * 24 * 3), updatedAt: ago(1),
+  },
+  {
+    id: 'p_groq', name: 'Groq', kind: 'openai', baseUrl: 'https://api.groq.com/openai/v1', model: 'llama-3.3-70b-versatile', enabled: true,
+    hasKey: true, keyHint: 'a71e', builtIn: false,
+    health: { state: 'ok', lastOkAt: ago(12), lastError: null, lastErrorAt: null, cooldownUntil: null, failures: 0, latencyMs: 420 },
+    createdAt: ago(60 * 24 * 3), updatedAt: ago(12),
+  },
+  {
+    id: 'p_ollama', name: 'Ollama (this computer)', kind: 'openai', baseUrl: 'http://localhost:11434/v1', model: 'llama3.1', enabled: false,
+    hasKey: false, keyHint: null, builtIn: false,
+    health: { state: 'unknown', lastOkAt: null, lastError: null, lastErrorAt: null, cooldownUntil: null, failures: 0, latencyMs: null },
+    createdAt: ago(60 * 24), updatedAt: ago(60 * 24),
+  },
+];
+
+export const seedPresets: ProviderPreset[] = [
+  { name: 'Anthropic', kind: 'anthropic', baseUrl: 'https://api.anthropic.com', exampleModel: 'claude-opus-5-5', needsKey: true, keyUrl: 'https://console.anthropic.com/settings/keys', note: 'Claude with thinking, web search and caching.' },
+  { name: 'OpenRouter', kind: 'openai', baseUrl: 'https://openrouter.ai/api/v1', exampleModel: 'meta-llama/llama-3.3-70b-instruct:free', needsKey: true, keyUrl: 'https://openrouter.ai/keys', note: 'Hundreds of models; ids ending in :free cost nothing, with daily limits.' },
+  { name: 'Groq', kind: 'openai', baseUrl: 'https://api.groq.com/openai/v1', exampleModel: 'llama-3.3-70b-versatile', needsKey: true, keyUrl: 'https://console.groq.com/keys', note: 'Very fast; free tier with per-minute limits.' },
+  { name: 'Google Gemini', kind: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', exampleModel: 'gemini-2.5-flash', needsKey: true, keyUrl: 'https://aistudio.google.com/apikey', note: 'Free tier through Google AI Studio.' },
+  { name: 'Mistral', kind: 'openai', baseUrl: 'https://api.mistral.ai/v1', exampleModel: 'mistral-small-latest', needsKey: true, keyUrl: 'https://console.mistral.ai/api-keys', note: 'Free experiment plan.' },
+  { name: 'OpenAI', kind: 'openai', baseUrl: 'https://api.openai.com/v1', exampleModel: 'gpt-4.1-mini', needsKey: true, keyUrl: 'https://platform.openai.com/api-keys', note: '' },
+  { name: 'Ollama (this computer)', kind: 'openai', baseUrl: 'http://localhost:11434/v1', exampleModel: 'llama3.1', needsKey: false, keyUrl: null, note: 'Free and private; runs models on your own machine.' },
+];
+
+export const seedBrowser: BrowserSession[] = [
+  { starId: 'star_scout', url: 'https://www.kayak.com/flights/JFK-LIS/2026-10-18/2026-10-25', title: 'New York to Lisbon, Oct 18 to 25 · KAYAK', frameId: 'f1', updatedAt: ago(1) },
 ];

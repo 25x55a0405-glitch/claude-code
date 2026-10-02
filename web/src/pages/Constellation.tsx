@@ -117,6 +117,7 @@ export function Constellation() {
               <div className="row wrap" style={{ gap: 6 }}>
                 <span className="chip">{s.autonomy ? AUTONOMY[s.autonomy] : 'Follows your setting'}</span>
                 <span className="chip">{s.connectionIds === null ? 'All your apps' : s.connectionIds.length === 0 ? 'No apps' : `${s.connectionIds.length} app${s.connectionIds.length === 1 ? '' : 's'}`}</span>
+                {s.providerIds && s.providerIds.length > 0 && <span className="chip">Its own models</span>}
                 {s.status.activeTasks > 0 && <span className="chip">{s.status.activeTasks} on the go</span>}
               </div>
               <div className="row wrap">

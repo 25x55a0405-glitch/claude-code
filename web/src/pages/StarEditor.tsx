@@ -6,6 +6,7 @@ import { PageHead, Segmented, Skeleton, Switch, useToast } from '../components/u
 import { starChat, useAgent } from '../lib/agent';
 import { useResource } from '../lib/hooks';
 import { href, navigate } from '../lib/router';
+import { HealthChip } from './Models';
 import { LOGO } from './Permissions';
 
 const CHARACTERS: AvatarCharacter[] = ['cloud', 'dot', 'drop'];
@@ -33,9 +34,10 @@ interface Draft {
   avatar: { character: AvatarCharacter; color: AvatarColor };
   autonomy: Autonomy | null;
   connectionIds: string[] | null;
+  providerIds: string[] | null;
 }
 
-const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds });
+const fromStar = (s: StarView): Draft => ({ name: s.name, role: s.role, instructions: s.instructions, avatar: s.avatar, autonomy: s.autonomy, connectionIds: s.connectionIds, providerIds: s.providerIds ?? null });
 
 export function StarEditor({ id }: { id: string }) {
   const isNew = id === 'new';
@@ -43,8 +45,9 @@ export function StarEditor({ id }: { id: string }) {
   const toast = useToast();
   const star = isNew ? null : stars?.find((s) => s.id === id) ?? null;
   const conns = useResource(() => api.listConnections(), []);
+  const models = useResource(() => api.listProviders(), [], ['provider.updated', 'provider.deleted']);
   const rules = useResource(() => (isNew ? Promise.resolve([] as Rule[]) : api.listRules(id)), [id]);
-  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null } : null);
+  const [draft, setDraft] = useState<Draft | null>(isNew ? { name: '', role: '', instructions: '', avatar: { character: 'dot', color: COLORS[(stars?.length ?? 1) % COLORS.length] }, autonomy: null, connectionIds: null, providerIds: null } : null);
   const [newRules, setNewRules] = useState<string[]>([]);
   const [ruleText, setRuleText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +69,7 @@ export function StarEditor({ id }: { id: string }) {
   const own = (rules.data ?? []).filter((r) => r.starId === id);
   const shared = (rules.data ?? []).filter((r) => !r.starId).length;
   const dirty = isNew || (star && JSON.stringify(fromStar(star)) !== JSON.stringify(draft));
-  const canSave = draft.name.trim() && draft.role.trim() && dirty && !busy;
+  const canSave = draft.name.trim() && draft.role.trim() && dirty && !busy && !(draft.providerIds && draft.providerIds.length === 0);
 
   const applyTemplate = (t: (typeof TEMPLATES)[number]) => {
     const taken = stars?.some((s) => s.name.toLowerCase() === t.name.toLowerCase());
@@ -229,6 +232,60 @@ export function StarEditor({ id }: { id: string }) {
           </div>
         </div>
       </section>
+
+      {models.data && models.data.length > 0 && (() => {
+        const own = draft.providerIds;
+        const byId = new Map(models.data.map((p) => [p.id, p]));
+        const chosen = (own ?? []).filter((x) => byId.has(x));
+        const rest = models.data.filter((p) => !chosen.includes(p.id));
+        const move = (i: number, by: number) => {
+          const ids = [...chosen];
+          [ids[i], ids[i + by]] = [ids[i + by], ids[i]];
+          set({ providerIds: ids });
+        };
+        return (
+          <section>
+            <div className="between" style={{ marginBottom: 10 }}>
+              <div className="section-title" style={{ margin: 0 }}>Models</div>
+              <Segmented label="Which models" value={own === null ? 'all' : 'own'} onChange={(v) => set({ providerIds: v === 'all' ? null : models.data!.filter((p) => p.enabled).map((p) => p.id) })} options={[{ value: 'all', label: 'Same as everyone' }, { value: 'own', label: 'Its own order' }]} />
+            </div>
+            {own === null ? (
+              <p className="t3">{draft.name || 'This Star'} uses the <a href={href('models')} style={{ textDecoration: 'underline' }}>fallback order in Models</a>{models.data[0] ? `, starting with ${models.data.find((p) => p.enabled)?.name ?? models.data[0].name}` : ''}.</p>
+            ) : (
+              <ol className="panel chain" aria-label={`${draft.name || 'This Star'}’s model order`}>
+                {chosen.map((pid, i) => {
+                  const p = byId.get(pid)!;
+                  return (
+                    <li key={pid} className="chain-row">
+                      <span className="rank">{i + 1}</span>
+                      <div className="grow" style={{ minWidth: 0 }}>
+                        <div className="row wrap" style={{ gap: 6 }}><h3>{p.name}</h3><HealthChip p={p} /></div>
+                        <p className="t3 xs"><span className="mono">{p.model}</span></p>
+                      </div>
+                      <div className="row chain-actions">
+                        <button className="icon-btn" aria-label={`Move ${p.name} up`} disabled={i === 0} onClick={() => move(i, -1)}><Icon name="up" size={15} /></button>
+                        <button className="icon-btn" aria-label={`Move ${p.name} down`} disabled={i === chosen.length - 1} onClick={() => move(i, 1)}><span style={{ display: 'inline-grid', transform: 'rotate(180deg)' }}><Icon name="up" size={15} /></span></button>
+                        <Switch label={`${draft.name || 'This Star'} uses ${p.name}`} checked onChange={() => set({ providerIds: chosen.filter((x) => x !== pid) })} />
+                      </div>
+                    </li>
+                  );
+                })}
+                {rest.map((p) => (
+                  <li key={p.id} className="chain-row off">
+                    <span className="rank">·</span>
+                    <div className="grow" style={{ minWidth: 0 }}>
+                      <div className="row wrap" style={{ gap: 6 }}><h3>{p.name}</h3><HealthChip p={p} /></div>
+                      <p className="t3 xs"><span className="mono">{p.model}</span></p>
+                    </div>
+                    <Switch label={`${draft.name || 'This Star'} uses ${p.name}`} checked={false} onChange={() => set({ providerIds: [...chosen, p.id] })} />
+                  </li>
+                ))}
+              </ol>
+            )}
+            {own !== null && chosen.length === 0 && <p className="send-error" style={{ marginTop: 8 }}>Pick at least one model, or switch back to “Same as everyone”.</p>}
+          </section>
+        );
+      })()}
 
       <section>
         <div className="section-title">Its own rules</div>

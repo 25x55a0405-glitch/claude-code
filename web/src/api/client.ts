@@ -22,6 +22,13 @@ import type {
   ConstellationMessage,
   StarInput,
   StarView,
+  BrowserInput,
+  BrowserSession,
+  BrowserState,
+  ModelProvider,
+  ProviderInput,
+  ProviderPreset,
+  ProviderTest,
 } from './types';
 
 /**
@@ -52,6 +59,21 @@ export interface SkyApi {
   pauseStar(id: string, paused: boolean): Promise<StarView>;
   /** Messages between Stars, oldest first; with starId, only the ones that Star sent or received. */
   listConstellationMessages(starId?: string): Promise<ConstellationMessage[]>;
+
+  /** In the global order, which is also the fallback order. */
+  listProviders(): Promise<ModelProvider[]>;
+  listProviderPresets(): Promise<ProviderPreset[]>;
+  createProvider(input: ProviderInput): Promise<ModelProvider>;
+  updateProvider(id: string, patch: Partial<ProviderInput>): Promise<ModelProvider>;
+  deleteProvider(id: string): Promise<void>;
+  testProvider(id: string): Promise<ProviderTest>;
+  setProviderOrder(ids: string[]): Promise<string[]>;
+
+  getBrowser(): Promise<BrowserState>;
+  /** An image URL for the latest frame of a Star's tab; frameId busts the cache. */
+  browserFrameUrl(starId: string, frameId: string | null): string;
+  browserInput(starId: string, input: BrowserInput): Promise<BrowserSession>;
+  closeBrowserTab(starId: string): Promise<void>;
 
   listTasks(filter?: { status?: TaskStatus[]; starId?: string }): Promise<Task[]>;
   getTask(id: string): Promise<TaskDetail>;
