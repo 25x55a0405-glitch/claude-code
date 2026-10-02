@@ -70,6 +70,7 @@ export class Providers {
   connect(id: string): { authorizeUrl: string | null; connection: Connection } {
     const conn = this.store.getConnection(id);
     if (id === 'web' || id === 'browser') return { authorizeUrl: null, connection: this.markConnected(id) };
+    if (id === 'computer') throw new ApiError(400, 'use_companion', 'Your computer connects through the Sky companion. Get a pairing code from POST /companion/pair and run the companion on that computer.');
     if (id === 'github' && this.config.providers.githubToken) {
       this.store.db.setPrivate('connection', id, { accessToken: this.config.providers.githubToken } satisfies Credentials);
       return { authorizeUrl: null, connection: this.markConnected(id) };

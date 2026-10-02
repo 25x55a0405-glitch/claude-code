@@ -4,6 +4,9 @@ import type { Providers } from '../../connections/providers.ts';
 import type { Store } from '../../store.ts';
 import type { CreateTaskInput, MessageCard, Risk, Star, Task, TaskCommand } from '../../types.ts';
 import type { BrowserManager } from '../../browser/browser.ts';
+import type { Workspaces } from '../../workspace.ts';
+import type { Vault } from '../../vault.ts';
+import type { Companion } from '../../companion.ts';
 import type { ClientToolSpec } from '../brain.ts';
 
 /**
@@ -44,6 +47,11 @@ export interface ToolContext {
   /** The Star doing the work. */
   star: Star;
   browser?: BrowserManager;
+  workspaces?: Workspaces;
+  /** For saved logins (password fill). */
+  vault?: Vault;
+  /** The person's own computer, through the Sky companion. */
+  companion?: Companion;
   /** Set when running inside a task. */
   task?: Task;
   /** Set when replying in a chat. */
@@ -73,6 +81,9 @@ export interface ToolResult {
 export interface ToolEnv {
   starId: string;
   browser?: BrowserManager;
+  workspaces?: Workspaces;
+  vault?: Vault;
+  companion?: Companion;
 }
 
 export interface ToolDef<I = any> extends ClientToolSpec {
@@ -83,6 +94,10 @@ export interface ToolDef<I = any> extends ClientToolSpec {
   connection?: string;
   /** Only offered in chat, or only inside tasks. */
   scope?: 'chat' | 'task';
+  /** Only offered while this holds (a setting that's on). */
+  when?(store: Store): boolean;
+  /** A reason this call always needs the person's OK, whatever the autonomy (e.g. a command with no sandbox). */
+  mustAsk?(input: I, env?: ToolEnv): string | null;
   /** One line for the timeline before the result is known. */
   label(input: I): string;
   /** How a gated call is shown for approval. Required for send, delete and spend tools. */

@@ -90,6 +90,7 @@ test('the person can drive a Star’s tab from the live view, and Stars never ty
   const nav = await s.call('POST', `/browser/${main.id}/input`, { type: 'navigate', url: `${site}/menu` });
   assert.equal(nav.body.url, `${site}/menu`);
   assert.equal(nav.body.title, 'Menu');
+  assert.equal(nav.body.control, 'person', 'using the live view takes the wheel');
   assert.equal((await s.call('POST', `/browser/${main.id}/input`, { type: 'click' })).status, 400);
 
   // The stream is MJPEG, which an <img> shows directly.
@@ -100,6 +101,7 @@ test('the person can drive a Star’s tab from the live view, and Stars never ty
   assert.match(first, /--frame\r\nContent-Type: image\/jpeg/);
   ctrl.abort();
 
+  assert.equal((await s.call('POST', `/browser/${main.id}/handback`)).body.control, 'star');
   await s.app.browser.open(main.id, `${site}/shop`);
   const pw = s.app.browser.element(main.id, undefined, 'Password')!;
   assert.equal(pw.password, true);

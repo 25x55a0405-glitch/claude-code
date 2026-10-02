@@ -15,6 +15,8 @@ export const defaultSettings = (userName: string): Settings => ({
   smallProviderIds: null,
   ntfyTopic: null,
   ntfyServer: '',
+  guard: 'model',
+  passwordFill: false,
 });
 
 /** Built-in safety rules. The ids are stable; the policy engine keys off them. */
@@ -48,4 +50,5 @@ export const connectionCatalog: Omit<Connection, 'status' | 'lastSyncAt'>[] = [
   { id: 'notion', provider: 'notion', name: 'Notion', description: 'Read and update pages and databases', access: 'read_write' },
   { id: 'slack', provider: 'slack', name: 'Slack', description: 'Post updates to Slack', access: 'read' },
   { id: 'telegram', provider: 'telegram', name: 'Telegram', description: 'Chat with Sky from your phone', access: 'read_write' },
+  { id: 'computer', provider: 'computer', name: 'Your computer', description: 'Let Stars use your own computer through the Sky companion, only in the folders and commands you allow, and only with your OK each time', access: 'read_write' },
 ];

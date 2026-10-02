@@ -5,7 +5,7 @@ import type { EventBus } from './events.ts';
 import { startOfLocalDay } from './agent/time.ts';
 import type {
   ActivityEvent, ActivityKind, AgentStatus, Approval, ApprovalStatus, Briefing, Connection, ConstellationMessage, Conversation, Idea,
-  Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep,
+  Lesson, MemoryCategory, MemoryItem, Message, MessageCard, Page, Rule, Settings, Skill, Star, StarStatus, StarView, Task, TaskDetail, TaskStatus, TaskStep, ServerActivityKind,
 } from './types.ts';
 import { ApiError, badRequest, iso, notFound, uid } from './util.ts';
 
@@ -388,15 +388,16 @@ export class Store {
     return r;
   }
 
-  addRule(text: string, starId: string | null = null): Rule {
+  addRule(text: string, starId: string | null = null, askOnly = false): Rule {
     if (starId) this.getStar(starId);
-    return this.db.put<Rule>('rule', { id: uid('r'), text, enabled: true, builtIn: false, createdAt: iso(), starId });
+    return this.db.put<Rule>('rule', { id: uid('r'), text, enabled: true, builtIn: false, createdAt: iso(), starId, ...(askOnly ? { askOnly } : {}) });
   }
 
   patchRule(id: string, patch: Partial<Pick<Rule, 'text' | 'enabled'>>): Rule {
     const r = this.getRule(id);
     if (r.builtIn) throw new ApiError(403, 'forbidden', 'Built-in safety rules can’t be changed');
-    return this.db.put('rule', { ...r, ...patch });
+    // Rewording a rule makes it the person's own.
+    return this.db.put('rule', { ...r, ...patch, ...(patch.text !== undefined && patch.text !== r.text ? { askOnly: false } : {}) });
   }
 
   deleteRule(id: string) {
@@ -407,10 +408,10 @@ export class Store {
 
   // ---- activity ----------------------------------------------------------
 
-  log(kind: ActivityKind, summary: string, taskId?: string, starId?: string): ActivityEvent {
+  log(kind: ServerActivityKind, summary: string, taskId?: string, starId?: string): ActivityEvent {
     const task = taskId ? this.findTask(taskId) : undefined;
     const who = starId ?? (task ? this.starIdOf(task) : undefined);
-    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind, summary, ...(taskId ? { taskId } : {}), ...(who ? { starId: who } : {}) };
+    const ev: ActivityEvent = { id: uid('e'), at: iso(), kind: kind as ActivityKind, summary, ...(taskId ? { taskId } : {}), ...(who ? { starId: who } : {}) };
     this.db.sql.prepare('INSERT INTO activity (id, at, kind, data) VALUES (?, ?, ?, ?)')
       .run(ev.id, ev.at, ev.kind, JSON.stringify(ev));
     this.bus.emit({ type: 'activity', data: ev });

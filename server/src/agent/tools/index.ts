@@ -6,9 +6,11 @@ import { browserTools } from './browser.ts';
 import { skillTools } from './skills.ts';
 import { appTools } from './apps.ts';
 import { coreTools } from './core.ts';
+import { workspaceTools } from './workspace.ts';
+import { computerTools } from './computer.ts';
 import type { ToolDef } from './types.ts';
 
-export const allTools: ToolDef[] = [...coreTools, ...skillTools, ...constellationTools, ...browserTools, ...appTools];
+export const allTools: ToolDef[] = [...coreTools, ...skillTools, ...constellationTools, ...workspaceTools, ...computerTools, ...browserTools, ...appTools];
 const byName = new Map(allTools.map((t) => [t.name, t]));
 
 export const findTool = (name: string) => byName.get(name);
@@ -18,7 +20,7 @@ export const findTool = (name: string) => byName.get(name);
  * connected and, for a Star limited to some apps, allowed to it.
  */
 export function availableTools(scope: 'chat' | 'task', providers: Providers, star?: Star): ToolDef[] {
-  return allTools.filter((t) => (!t.scope || t.scope === scope)
+  return allTools.filter((t) => (!t.scope || t.scope === scope) && (!t.when || t.when(providers.store))
     && (!t.connection || (providers.isUsable(t.connection) && (!star?.connectionIds || star.connectionIds.includes(t.connection)))));
 }
 

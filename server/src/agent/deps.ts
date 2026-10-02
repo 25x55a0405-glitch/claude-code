@@ -8,6 +8,9 @@ import type { BrowserManager } from '../browser/browser.ts';
 import type { Vault } from '../vault.ts';
 import type { Triggers } from '../triggers.ts';
 import type { McpManager } from '../mcp.ts';
+import type { Workspaces } from '../workspace.ts';
+import type { Guard } from './guard.ts';
+import type { Companion } from '../companion.ts';
 
 /** Everything the agent pieces share. */
 export interface AgentDeps {
@@ -21,4 +24,7 @@ export interface AgentDeps {
   vault?: Vault;
   triggers?: Triggers;
   mcp?: McpManager;
+  workspaces?: Workspaces;
+  guard?: Guard;
+  companion?: Companion;
 }

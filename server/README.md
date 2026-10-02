@@ -58,6 +58,7 @@ through approvals, but it doesn't really think. It's what the tests use.
 | `PORT` | `8787` | |
 | `SKY_HOST` | `127.0.0.1` (`0.0.0.0` when a password is set) | |
 | `SKY_DATA_DIR` | `./data` | Where `sky.db` lives, and `secret.key` when `SKY_SECRET_KEY` isn't set (back it up) |
+| `SKY_SANDBOX` | | `none` turns the workspace sandbox off; every command then asks first. By default commands run in bubblewrap when it works |
 | `SKY_SECRET_KEY` | | Passphrase the secrets vault's key is made from. Without it a random key file is created |
 | `SKY_PASSWORD` | | Turns on sign-in. Visit `/login` once; the browser keeps a session cookie |
 | `SKY_API_TOKEN` | | Bearer token for scripts, accepted alongside the password |
@@ -86,10 +87,98 @@ Until they're set, "Connect" in the app explains which variables are missing.
 
 The older `SKYS_*` names still work.
 
+## Run it all the time (wave 3)
+
+The Stars' browser, their workspaces and the terminal need a machine that
+stays on and can run Chromium. Two free ways:
+
+**Your own computer (Linux, macOS or Windows).** Simplest, and the browser
+can use your normal sign-ins if you point `SKY_BROWSER_CHANNEL=chrome` at
+your installed Chrome. Sky only runs while the computer is on. On Linux,
+install bubblewrap (`sudo apt install bubblewrap`) so commands are
+sandboxed. On macOS and Windows there's no bubblewrap, so every command a
+Star wants to run asks you first.
+
+**A free cloud machine: Oracle Cloud Always Free.** An Ampere (Arm) VM runs
+Node, Chromium and bubblewrap. As of August 2026 Oracle's Always Free Ampere
+allowance is 2 OCPUs and 12 GB of memory in total (it used to be 4 and 24), with 200 GB
+of block storage. Oracle reclaims Always Free instances that look idle: under
+20% CPU, network and memory (memory counts on Ampere) for 7 days. A quiet Sky can look
+like that, so a smaller VM (1 OCPU, 6 GB) where Sky's memory use counts for
+more is the safer choice. Check Oracle's current terms before relying on it.
+
+On Ubuntu 24.04 (Arm or x86):
+
+```
+sudo apt update && sudo apt install -y git bubblewrap
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash - && sudo apt install -y nodejs
+git clone <your fork> sky && cd sky/server && npm install
+npx playwright install --with-deps chromium     # Chromium for the Stars' browser
+(cd ../web && npm install && VITE_SKYS_API_URL= npm run build)   # the app, served by Sky at /
+```
+
+Run it as a service so it restarts on its own (`/etc/systemd/system/sky.service`):
+
+```
+[Unit]
+Description=Sky
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/ubuntu/sky/server
+Environment=SKY_PASSWORD=pick-a-long-password
+Environment=SKY_PUBLIC_URL=https://sky.example.com
+Environment=SKY_DATA_DIR=/home/ubuntu/sky-data
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning src/main.ts
+Restart=always
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then `sudo systemctl enable --now sky`. Keep port 8787 closed in the cloud
+firewall and reach Sky through a Cloudflare Tunnel (free;
+`cloudflared tunnel --url http://localhost:8787` for a quick one, or a named
+tunnel for your own domain). A tunnel also gives webhooks a public address. Set
+`SKY_PUBLIC_URL` to the tunnel's address, because Sky refuses requests for
+host names it doesn't know. Back up `SKY_DATA_DIR`: it holds the database,
+the vault key, the workspaces and the browser profile.
+
+Check the sandbox with `GET /api/v1/workspace`: `"sandbox": "bwrap"` means
+commands are sandboxed. Some cloud images turn off user namespaces, which
+bubblewrap needs. If it says `none`, the
+`reason` says why. On Ubuntu 23.10 and later, AppArmor limits user namespaces:
+`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0` (add it to
+`/etc/sysctl.d/` to keep it). On older Debian, the switch is
+`kernel.unprivileged_userns_clone=1`. Until then every command asks you first.
+
+## Voice and your computer (wave 4)
+
+**Voice.** With nothing set up, the app talks through the browser's own
+speech recognition and synthesis (free). For better speech, add a provider
+that has OpenAI-style audio endpoints and pick it in the voice settings.
+Groq's free tier runs Whisper (`whisper-large-v3-turbo`) at 20 requests a
+minute and 2,000 a day; add it with base URL `https://api.groq.com/openai/v1`.
+A self-hosted faster-whisper or whisper.cpp server and Kokoro work too.
+
+**Your computer.** Copy `companion/sky-companion.mjs` to the computer you want
+Stars to use (it needs Node 22 and nothing else). In Sky, make a pairing code,
+then:
+
+```
+node sky-companion.mjs pair https://your-sky-address CODE
+node sky-companion.mjs allow-folder ~/Documents/Sky
+node sky-companion.mjs allow-command git
+node sky-companion.mjs            # run it: press o to switch on or off, q to quit
+```
+
+See `companion/README.md` for what Stars can and can't do there.
+
 ## Develop
 
 ```
-npm test           # 53 tests: API contract, agent behaviour, Stars, model fallback, real browser, schedules
+npm test           # API contract, agent behaviour, Stars, model fallback, real browser, schedules, waves 1 to 4
 npm run typecheck
 npm run dev        # restarts on change
 ```

@@ -9,17 +9,55 @@ import { ApiError, badRequest, firstLine, iso, sleep, uid } from './util.ts';
 
 type App = 'telegram' | 'slack';
 
+/** A pairing code and the wrong tries against it. */
+interface Pairing {
+  pairCode?: string;
+  pairIssuedAt?: string;
+  /** Wrong tries per sender (chat or user id). */
+  pairMisses?: Record<string, number>;
+  pairLocked?: boolean;
+}
+
 interface TelegramCreds {
   accessToken: string;
-  extra?: { chatId?: string; botUsername?: string; pairCode?: string };
+  extra?: { chatId?: string; botUsername?: string } & Pairing;
 }
 
 interface SlackCreds {
   accessToken: string;
-  extra?: { appToken?: string; botUserId?: string; team?: string; pairCode?: string; userId?: string; dmChannel?: string };
+  extra?: { appToken?: string; botUserId?: string; team?: string; userId?: string; dmChannel?: string } & Pairing;
 }
 
-const pairCode = () => String(randomInt(100_000, 1_000_000));
+const PAIR_MS = 10 * 60_000;
+/** Wrong codes one sender may send before it's ignored. */
+const PAIR_TRIES = 3;
+/** Wrong codes from everyone before pairing stops until the person makes a new code. */
+const PAIR_TOTAL = 20;
+
+export const newPairing = (): Pairing => ({ pairCode: String(randomInt(100_000, 1_000_000)), pairIssuedAt: iso(), pairMisses: {}, pairLocked: false });
+const pairExpiresAt = (x: Pairing) => (x.pairIssuedAt ? new Date(Date.parse(x.pairIssuedAt) + PAIR_MS).toISOString() : null);
+const pairLive = (x: Pairing) => Boolean(x.pairCode && !x.pairLocked && Date.parse(pairExpiresAt(x) ?? '') > Date.now());
+
+/**
+ * One message to the bot while it waits to pair. Only a message that is exactly the code counts (a list of
+ * codes is a wrong try); each sender gets a few tries; many wrong tries in all stop pairing; the code expires.
+ */
+function tryPair(x: Pairing, sender: string, text: string): { paired: boolean; next: Pairing | null } {
+  if (!pairLive(x)) return { paired: false, next: null };
+  const misses = x.pairMisses ?? {};
+  if ((misses[sender] ?? 0) >= PAIR_TRIES) return { paired: false, next: null };
+  // Exactly the code, or "pair <code>" / "/start <code>" (the t.me link).
+  if (text.trim().replace(/^(\/start|pair)\s+/i, '') === x.pairCode) return { paired: true, next: null };
+  const next = { ...misses, [sender]: (misses[sender] ?? 0) + 1 };
+  const total = Object.values(next).reduce((a, b) => a + b, 0);
+  return { paired: false, next: { ...x, pairMisses: next, pairLocked: total >= PAIR_TOTAL } };
+}
+
+const pairFields = (x: Pairing | undefined, paired: boolean) => ({
+  pairCode: !paired && x && pairLive(x) ? x.pairCode! : null,
+  pairExpiresAt: !paired && x && pairLive(x) ? pairExpiresAt(x) : null,
+  pairLocked: !paired && Boolean(x?.pairLocked),
+});
 
 /**
  * Talking to the Stars from Telegram and Slack, both ways, with no public URL
@@ -132,6 +170,17 @@ export class TelegramBridge {
     return this.m.providers.credentials('telegram') as TelegramCreds | undefined;
   }
 
+  /** A fresh pairing code (the last one expired, or too many wrong codes came in). */
+  newCode(): MessagingStatus {
+    const c = this.creds();
+    if (!c) throw badRequest('Telegram isn’t set up yet');
+    if (c.extra?.chatId) throw badRequest('Telegram is already paired');
+    this.m.store.db.setPrivate('connection', 'telegram', { ...c, extra: { ...c.extra, ...newPairing() } });
+    const s = this.status();
+    this.m.emit(s);
+    return s;
+  }
+
   /** Paired and able to send. */
   ready(): boolean {
     return Boolean(this.creds()?.extra?.chatId) && this.m.providers.isUsable('telegram');
@@ -139,13 +188,13 @@ export class TelegramBridge {
 
   status(): MessagingStatus {
     const c = this.creds();
-    const code = c?.extra?.pairCode ?? null;
     const bot = c?.extra?.botUsername ?? null;
+    const pair = pairFields(c?.extra, Boolean(c?.extra?.chatId));
     return {
       app: 'telegram',
       state: !c ? 'off' : this.error ? 'error' : c.extra?.chatId ? 'on' : 'pairing',
-      pairCode: c?.extra?.chatId ? null : code,
-      pairLink: !c?.extra?.chatId && code && bot ? `https://t.me/${bot}?start=${code}` : null,
+      ...pair,
+      pairLink: pair.pairCode && bot ? `https://t.me/${bot}?start=${pair.pairCode}` : null,
       botName: bot,
       error: this.error,
     };
@@ -172,7 +221,7 @@ export class TelegramBridge {
     }
     await this.stop();
     this.m.providers.disconnect('telegram');
-    this.m.store.db.setPrivate('connection', 'telegram', { accessToken: botToken, extra: { botUsername: me.username, pairCode: pairCode() } } satisfies TelegramCreds);
+    this.m.store.db.setPrivate('connection', 'telegram', { accessToken: botToken, extra: { botUsername: me.username, ...newPairing() } } satisfies TelegramCreds);
     this.m.store.db.setKv('tgOffset', undefined);
     this.error = null;
     this.start();
@@ -270,8 +319,13 @@ export class TelegramBridge {
 
     if (!chatId) {
       // Pairing: the code from the app, typed or sent through the t.me link (/start <code>).
-      const code = creds.extra?.pairCode;
-      if (code && msg.chat.type === 'private' && text.replace(/^\/start\s*/, '').trim() === code) {
+      if (msg.chat.type !== 'private' || !creds.extra) return;
+      const tried = tryPair(creds.extra, from, text);
+      if (tried.next) {
+        this.m.store.db.setPrivate('connection', 'telegram', { ...creds, extra: { ...creds.extra, ...tried.next } } satisfies TelegramCreds);
+        if (tried.next.pairLocked) this.m.emit(this.status());
+      }
+      if (tried.paired) {
         this.m.store.db.setPrivate('connection', 'telegram', { accessToken: creds.accessToken, extra: { botUsername: creds.extra?.botUsername, chatId: from } } satisfies TelegramCreds);
         this.m.providers.markConnected('telegram');
         this.m.emit(this.status());
@@ -339,6 +393,17 @@ export class SlackBridge {
     return this.m.providers.credentials('slack') as SlackCreds | undefined;
   }
 
+  /** A fresh pairing code (the last one expired, or too many wrong codes came in). */
+  newCode(): MessagingStatus {
+    const c = this.creds();
+    if (!c) throw badRequest('Slack isn’t set up yet');
+    if (c.extra?.userId) throw badRequest('Slack is already paired');
+    this.m.store.db.setPrivate('connection', 'slack', { ...c, extra: { ...c.extra, ...newPairing() } });
+    const s = this.status();
+    this.m.emit(s);
+    return s;
+  }
+
   /** Paired with the person's Slack user and able to DM them. */
   ready(): boolean {
     return Boolean(this.creds()?.extra?.dmChannel) && this.m.providers.isUsable('slack');
@@ -350,7 +415,7 @@ export class SlackBridge {
     return {
       app: 'slack',
       state: !two ? 'off' : this.error ? 'error' : c?.extra?.userId ? 'on' : 'pairing',
-      pairCode: two && !c?.extra?.userId ? c?.extra?.pairCode ?? null : null,
+      ...pairFields(two ? c?.extra : undefined, Boolean(c?.extra?.userId)),
       pairLink: null,
       botName: c?.extra?.team ?? null,
       error: this.error,
@@ -378,7 +443,7 @@ export class SlackBridge {
       throw new ApiError(400, 'bad_token', `Slack didn’t accept those tokens: ${err instanceof Error ? err.message : String(err)}`);
     }
     await this.stop();
-    this.m.store.db.setPrivate('connection', 'slack', { accessToken: botToken, extra: { appToken, botUserId: who.user_id, team: who.team, pairCode: pairCode() } } satisfies SlackCreds);
+    this.m.store.db.setPrivate('connection', 'slack', { accessToken: botToken, extra: { appToken, botUserId: who.user_id, team: who.team, ...newPairing() } } satisfies SlackCreds);
     this.m.providers.markConnected('slack');
     this.error = null;
     this.start();
@@ -486,8 +551,13 @@ export class SlackBridge {
 
     if (e.channel_type === 'im') {
       if (!x.userId) {
-        if (x.pairCode && e.text.includes(x.pairCode)) {
-          this.m.store.db.setPrivate('connection', 'slack', { ...creds, extra: { ...x, userId: e.user, dmChannel: e.channel, pairCode: undefined } });
+        const tried = tryPair(x, String(e.user), String(e.text));
+        if (tried.next) {
+          this.m.store.db.setPrivate('connection', 'slack', { ...creds, extra: { ...x, ...tried.next } });
+          if (tried.next.pairLocked) this.m.emit(this.status());
+        }
+        if (tried.paired) {
+          this.m.store.db.setPrivate('connection', 'slack', { ...creds, extra: { ...x, userId: e.user, dmChannel: e.channel, pairCode: undefined, pairMisses: undefined } });
           this.m.emit(this.status());
           await this.send('Paired. Write to me here like you would in the app. Start with a Star’s name to pick one.');
         }

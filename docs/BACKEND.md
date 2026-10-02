@@ -287,6 +287,13 @@ Free-tier notes:
     the 6-digit pairing code. Telegram also gets a `t.me` link with the
     code filled in. After that only that Telegram chat, or that Slack user,
     reaches the Stars; everyone else is ignored.
+    - The message must be exactly the code (or `pair <code>`, or the
+      link's `/start <code>`); a message holding a list of codes is a wrong
+      try.
+    - The code works for 10 minutes. Each chat or Slack user gets 3 wrong
+      tries, then it's ignored. After 20 wrong tries in all, pairing stops
+      (`pairLocked`) until the person makes a new code
+      (`POST /messaging/:app/code`).
   - **Talking to Stars.** "Scout: …" or "@Scout …" picks a Star; otherwise
     the last Star used there answers. `/stars` lists them.
   - **In the app.** Messages show in the Star's chat with `via: 'telegram'`
@@ -308,6 +315,14 @@ Free-tier notes:
   - **Who it's from matters.** From the person, it's their request. From
     anyone else, it's content: the Star summarises or drafts and asks
     before acting.
+    - "From the person" means the address inside the From line's `<…>` is
+      exactly theirs, and Gmail vouches for it: the mail is in their Sent
+      mail, or Gmail's `Authentication-Results` show DKIM passing for their
+      domain or SPF passing for their exact address. A display name or a
+      look-alike address never counts.
+    - The sender's From, Subject and preview go in the brief inside an
+      escaped `<email>…</email>` block, one line each, with Sky's own
+      guidance after it.
   - **The address stays.** The part after `+` is fixed when first given
     out, so renaming the Star keeps the address.
   - **A real `@yourdomain` address** would need a domain (about $10 a
@@ -319,12 +334,20 @@ Free-tier notes:
   - **Keeping keys safe.** Environment variables and headers stay on the
     server; the API shows only their names. Values can be
     `{{secret:NAME}}`, filled from the vault when connecting.
-  - **Effects.** Each tool gets an effect from the server's hints:
-    read-only is `read`, destructive is `delete`, and anything else is
-    `write`. The person can override it per tool (`toolEffects`), and the
-    policy decides approvals from it as for any tool. In chat, a Star only
-    gets an MCP tool whose effect is `read`.
-  - **Tool names.** Tools appear to Stars as `mcp_<server>_<tool>`.
+  - **Effects.** The person sets each tool's effect (`toolEffects`), and
+    the policy decides approvals from it as for any tool. In chat, a Star
+    only gets an MCP tool the person set to `read`.
+    - The server's own hints (read-only is `read`, destructive is `delete`,
+      anything else `write`) are only a suggestion, since a server can say
+      anything about itself. Until the person sets a tool's effect
+      (`confirmed: false`), every call asks first whatever the autonomy,
+      and a tool the server calls read-only counts as a write (so it isn't
+      offered in chat).
+  - **Tool names.** Tools appear to Stars as `mcp_<server>_<tool>`. If two
+    servers' names start the same (the first 20 characters), the one added
+    later gets a short tag from its id, like `mcp_company_notes_f_a1b2c_…`.
+  - **Errors.** A server's error message never carries its filled-in
+    header or env values or a vault secret (some servers repeat the key).
   - **Which Stars.** `Star.mcpServerIds` limits which servers a Star gets
     (null means all of them). Fewer tools help small free models.
 - **Group chats.** A conversation with `starIds` (two or more) is a group
@@ -344,6 +367,14 @@ Free-tier notes:
   memory, chats or secrets.
   - **Importing.** This makes a new Star, with a unique name. Apps that
     don't exist here are skipped and listed.
+  - **A template can't loosen approvals.** It comes from outside, so:
+    - its autonomy is used only when it's stricter than the person's own
+      (`ask`); otherwise the Star follows the person's setting;
+    - its rules are kept with `askOnly: true`: they can make the Star ask
+      or stop, never let it skip asking. Rewording a rule makes it the
+      person's own.
+    - `POST /templates/preview` shows what a template asks for and what
+      the Star would get, for a confirm screen before importing.
   - **Built in.** Three templates ship with Sky: Scout, Inbox and Builder.
   - **The gallery** is free: a public GitHub repo (`templateGallery:
     "owner/repo"`) with an `index.json` listing template files, read from
@@ -363,6 +394,190 @@ Free-tier notes for wave 2:
   so Telegram, Slack and Gmail were tested against faithful fakes (Slack
   through a real WebSocket server), not the live services. MCP was tested
   with a real MCP server over stdio.
+
+## Wave 3: the Star's own computer
+
+Each Star now has a computer of its own: a folder, a terminal and the browser.
+The person can step into the browser at any time, and a guard checks every
+action that reaches outside.
+
+**Workspace (#1).** Each Star gets a folder, `DATA_DIR/workspaces/<starId>`,
+that keeps its files between tasks. The person can browse, upload, download
+and delete files through the API. Stars use the tools `files_list`,
+`file_read`, `file_write`, `file_delete` and `run_command`. Commands run in
+[bubblewrap](https://github.com/containers/bubblewrap) when it's installed and
+user namespaces are on:
+- The Star's folder is mounted at `/workspace` and is the only place it can write.
+- The system's programs and libraries are read-only.
+- `/home`, `/root`, `/var`, `/run`, `/mnt` and the server's data folder aren't
+  there at all, and `/etc/shadow` is masked.
+- No environment variables are passed through, so the server's keys never
+  reach a command.
+- There's no network unless the call asks for it. A call with network counts
+  as a send, so it asks first under balanced autonomy.
+- Commands run as uid 1000, with a 2 GB memory limit, a 1 GB file limit and a
+  timeout (60 seconds by default, 600 at most).
+- Output is cut to the last 8,000 characters. It goes to the model, and to
+  the task timeline as the step's detail.
+
+Without bubblewrap (macOS, Windows, a host that blocks user namespaces, or
+`SKY_SANDBOX=none`), commands run in the folder with a clean environment but
+no sandbox. Every command then asks, whatever the autonomy, at high risk.
+Writing and deleting files inside the folder count as writes, because nothing
+outside changes. Downloads are served as text, images or PDFs with `nosniff`
+and a `sandbox` CSP, so an HTML file a Star made never runs on Sky's own
+address.
+
+**Take over and hand back (#5).** The person can take a Star's browser tab
+(`POST /browser/:starId/takeover`) and hand it back (`.../handback`, with an
+optional note). Using the live view (`/input`) takes control too. That
+take-over hands back on its own after 2 minutes without input; an explicit
+one lasts 30 minutes. While the person has the tab, a task that calls a
+browser tool waits ("Waiting for you to hand the browser back"), and the call
+isn't run behind their back. After the hand-back the Star is told what
+happened and takes a fresh snapshot. A Star can ask for help itself with
+`browser_ask_person` ("Sign in to your bank"): the person gets a "needs you"
+message, and the task carries on with their note when they hand back. That
+is how sign-ins, captchas and two-factor codes work without passwords.
+
+**Teach a task (#3).** `POST /browser/:starId/record` takes over the tab
+(optionally opening a URL) and records what the person does: pages opened,
+clicks (labelled with what was clicked), typing (grouped per field), keys,
+scrolls and going back. Typing into a password field is stored as
+`[password]` and never kept. A recording ends after 10 minutes, at 300 steps,
+when the person stops it, or when they hand back. When it ends, a model
+drafts a skill (name, when to use it, general steps with placeholders). When
+no model is available, the draft is the steps as recorded. The person reviews
+the draft and saves it with `POST /recordings/:id/skill`. The skill gets
+`source: "taught"`. The save can also take a `schedule`, which sets up a
+recurring task that uses the skill.
+
+**The guard (#20).** A second check, separate from the Star doing the work,
+runs before the policy on every action that changes something
+(write/send/delete/spend). It can only make things stricter:
+- **Quick checks** (no model). These block dangerous shell commands (`rm -rf /`, fork
+  bombs, writing to disks, remote shells). They ask about piping a download
+  into a shell, `sudo`, and background services. They also ask about content
+  that tries to instruct an assistant ("ignore previous instructions"), and
+  about long encoded blobs leaving in a send.
+- **Model review** (`settings.guard: "model"`, the default). Sends, deletes,
+  spending, commands with internet and MCP writes are shown to the small
+  model chain, with only the person's request and the action. It never sees
+  the pages, mail or messages the Star read, so instructions hidden in those
+  can't argue with it. It answers ok, ask or block. If it can't be reached or
+  its answer is unclear, the guard asks.
+
+A guard "block" is refused like a forbidden rule, and an "ask" becomes a
+high-risk approval even under autonomous mode. Both are logged in Activity
+with `kind: "guard"`. `guard: "rules"` keeps only the quick checks (no model
+calls); `"off"` turns it off.
+
+**Password fill (#17), off by default.** The person saves logins (site,
+username, password; encrypted like secrets, never returned). With
+`settings.passwordFill` on, Stars get `browser_fill_login`. It fills the
+username and password straight into the page; the model, the timeline and
+the logs never see the password, and saved passwords are redacted like
+secrets wherever they appear. Turning it on relaxes the built-in rule
+"Never change passwords or security settings" in exactly one way: a Star may
+sign in with a saved login. Everything else stays:
+- It only fills on the exact origin the login was saved for, so a look-alike
+  site gets nothing.
+- It only fills over https (or on this machine).
+- It refuses pages with a new-password field or more than one password field,
+  which are sign-up and change-password forms.
+- Each fill asks first, at high risk, unless the person marks that login
+  `autoFill`.
+- `browser_type` still refuses password fields.
+- Logins can be limited to some Stars.
+
+**Hosting.** Waves 1 and 2 run anywhere. This wave needs an always-on
+machine that can run Chromium and bubblewrap: the person's own computer, or
+a free cloud VM. `server/README.md` has the steps for Oracle Cloud Always
+Free, with its current limits.
+
+## Wave 4: voice, your computer, checkout
+
+- **Voice.** Talking to a Star live, with the Star's character as its face
+  (the UI animates the character while it listens and speaks).
+  - **Free by default.** With nothing set up, the app uses the browser's own
+    speech recognition and speech synthesis: free, no server involved. The
+    server's voice endpoints answer `503 voice_unavailable` so the app knows
+    to do that.
+  - **Better speech through the providers.** Speech to text goes to any
+    OpenAI-compatible `/audio/transcriptions` and text to speech to
+    `/audio/speech`, on the person's own model providers (same base URL and
+    key). Each direction has its own ordered list; a provider that fails is
+    skipped for 2 minutes and the next one is tried.
+    - **Free options.** Groq's free tier runs `whisper-large-v3-turbo`
+      (20 requests a minute, 2,000 a day, 7,200 audio seconds an hour,
+      28,800 a day, checked 2026-10-02). A self-hosted faster-whisper or
+      whisper.cpp server works too, and Kokoro or openedai-speech for speech
+      out.
+  - **A voice turn.** The app records, sends the audio to
+    `POST /conversations/:id/voice`, and gets back what was heard and the
+    Star's reply. The message is saved with `via: 'voice'`, and the Star is
+    told it's spoken, so it answers briefly and in plain sentences. The app
+    then plays the reply with `POST /voice/speak`.
+  - **Each Star's voice.** `Star.voice` is a voice name (like `nova`);
+    without one the default in the voice settings is used.
+- **Your computer (the Sky companion).** A small program,
+  `companion/sky-companion.mjs`, the person runs on their own computer.
+  Node 22, no packages.
+  - **How it connects.** It dials out to Sky over a WebSocket, so the
+    computer needs no open port. It pairs once with a one-time code (10
+    minutes, five wrong guesses use it up) and then keeps a token. A browser
+    page can't dial in: a request with an `Origin` header is refused.
+  - **What Stars can do there.** Open a web page, list a folder, read a text
+    file, write a text file, run a program. Tools are `computer_open`,
+    `computer_list_files`, `computer_read_file`, `computer_write_file` and
+    `computer_run`, on the `computer` connection ("Your computer").
+  - **Limited four ways.**
+    1. **An allowlist the person sets on the computer itself:** folders
+       (checked on the real path, after `..` and links are followed),
+       programs by name (run with no shell, so `;` and `$()` are only text),
+       and whether web pages may be opened. Nothing is allowed until it's
+       added. Sky can't change it.
+    2. **A switch in the app** (`enabled`) and **a switch in the companion**
+       (press `o`; the status line shows ON or OFF in colour). Off in either
+       place means nothing runs, and the tools aren't offered to Stars.
+    3. **An approval in Sky for every action,** whatever the Star's autonomy,
+       even for reading. The preview names the computer and shows what will
+       be done.
+    4. **A question on the computer too** (on unless turned off with
+       `confirm off`): "Scout wants to read the file … Allow? [y/N]". With no
+       keyboard the answer is no.
+  - **The guard** also looks at `computer_run`, and blocks things like
+    deleting everything.
+  - **Experimental.** Controlling the screen (clicks and typing in other
+    programs) isn't built; the browser tools remain the way Stars use sites.
+- **Checkout handover.** A Star can fill in a shop's checkout up to payment
+  (address, size, delivery) and then call `browser_checkout_handover` with
+  the total.
+  - **Never card details.** `browser_type` refuses payment fields (card
+    number, expiry, security code, cardholder) and any text that looks like a
+    card number, even in another field.
+  - **The approval.** "Pay €42.50 at Corner Shop", risk high, with what's
+    being bought and the page. It always asks, even for an autonomous Star.
+  - **Accepted.** The person gets the browser (as in take over), pays
+    themselves, and hands it back. The Star is told not to assume it was
+    paid and to check the page.
+  - **Declined.** The Star keeps the browser, and nothing is learned from
+    the decline.
+
+Free-tier notes for wave 4:
+
+- **Voice costs nothing** with the browser's own speech. Groq's free
+  Whisper has the limits above; with several providers in the list, the
+  next one takes over when one is rate limited.
+- **The companion needs no server.** It connects out. Through a Cloudflare
+  Tunnel (free) the WebSocket works like any other request.
+- **Not checked live.** Real providers weren't reachable here, so voice was
+  tested against a stand-in with the same endpoints. The companion was tested
+  as the real program against the real server, on Linux only: opening a page
+  (`xdg-open`, `open`, Windows' URL handler) and the Windows and macOS paths
+  weren't run. The keyboard switch (`o`) needs a terminal and was tested only
+  through the no-keyboard `on`/`off` lines. Checkout was tested on a local
+  shop page, not a real shop.
 
 ## Ideas
 
@@ -674,7 +889,33 @@ wrote it, and replies stream one after another as usual (`message.delta`,
 
 Events: `mcp.updated` (`McpServer`), `mcp.deleted` (`{ id }`),
 `messaging.updated` (`MessagingStatus`). Triggered runs show up through the
-usual `task.updated` and `task.step` ("Triggered: …").
+usual `task.updated` and `task.step` ("Triggered by webhook"; what the
+sender wrote, like a JSON title or an email subject, is the step's `detail`,
+so it stays out of the next run's brief).
+
+Round 4 fixes (testing thread, bugs 19 to 27), changes to the shapes above:
+
+```ts
+interface MessagingStatus { /* … */ pairExpiresAt: string | null; pairLocked: boolean }
+// pairCode is null once it expired or pairLocked; offer "Make a new code" (POST /messaging/:app/code).
+interface McpToolInfo { name; toolName; description; effect; hint: McpEffect; confirmed: boolean }
+// effect: the person's choice, or the server's hint while confirmed is false. Show unconfirmed tools as
+// "Asks every time until you choose", with the hint as the suggestion.
+// Rule gains askOnly?: boolean (came with a template: can only make a Star ask or stop).
+interface TemplatePreview {
+  template: StarTemplate;
+  wants: { autonomy: Autonomy | null; apps: string[] | null; rules: string[]; skills: string[] };
+  gets: { autonomy: Autonomy | null; connectionIds: string[] | null; rulesAskOnly: boolean };
+  skipped: string[];
+}
+```
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/messaging/telegram/code`, `/messaging/slack/code` | A fresh pairing code → `MessagingStatus`. `400` when already paired |
+| POST | `/templates/preview` | Same body as import → `TemplatePreview`. Makes nothing |
+
+Changing `mailPollMinutes` now takes effect straight away.
 
 Round 3 fixes (testing thread): see Safety above for cross-site requests,
 key scrubbing, short secrets and timeouts. A provider is benched for 6 hours
@@ -689,6 +930,143 @@ browser can't start, `GET /browser` says why (`ok: false` and a `reason`),
 and the input endpoints return `503` with the same message. A correction as
 the very first chat message ("Actually, always reply in English") now
 becomes a lesson too.
+
+### Wave 3 (for the UI to build on)
+
+Types (in `server/src/types.ts`): `BrowserSession` gains `control:
+'star'|'person'`, `controlNote`, `waitingTaskId` and `recordingId`.
+`Recording`, `RecordedStep`, `WorkspaceFile`, `WorkspaceStatus`, `SavedLogin`
+and `GuardDecision` are new. `Skill.source` can be `'taught'`. Settings gain
+`guard?: 'model'|'rules'|'off'` (default `model`) and `passwordFill?: boolean`
+(default `false`). The new activity kinds are `guard` and `browser` (taken
+over or handed back); the server's `ServerActivityKind` adds them to
+`ActivityKind`.
+
+Browser:
+- `POST /browser/:starId/takeover` `{ note? }` → `BrowserSession` with `control: "person"`.
+- `POST /browser/:starId/handback` `{ note? }` → `BrowserSession` with
+  `control: "star"`. A task waiting on it carries on with the note. `409` if
+  the tab isn't open.
+- `POST /browser/:starId/input` now takes control for the person if the Star
+  had it (it goes back after 2 idle minutes). A page that won't load is `400 page_failed`.
+- The live view should show "Take over / Hand back" from `control`, and the
+  `controlNote` (what the Star asked for) while `waitingTaskId` is set.
+
+Teach a task:
+- `POST /browser/:starId/record` `{ title?, url? }` → `Recording`
+  (`status: "recording"`). `409` while one is already recording for that Star.
+- `POST /browser/:starId/record/stop` → `Recording` (`status: "done"`, with
+  `draft: { name, whenToUse, steps }` or `null` if nothing was recorded).
+  Handing back also stops it; the draft then arrives as `recording.updated`.
+- `GET /recordings?starId=`, `GET /recordings/:id`, `DELETE /recordings/:id`.
+- `POST /recordings/:id/skill` `{ name?, whenToUse?, steps?, shared?, schedule? }`
+  → `{ recording, skill, task }`. Missing fields come from the draft.
+  `shared: true` gives the skill to every Star. `task` is the recurring task,
+  or `null`. `409` if the recording is already a skill.
+
+Workspace:
+- `GET /workspace` → `WorkspaceStatus` (`sandbox: "bwrap"|"none"`, `reason`, `root`).
+- `GET /stars/:id/files?path=&recursive=1` → `{ files: WorkspaceFile[], usage }` (bytes).
+- `GET /stars/:id/files/content?path=` downloads a file (`&download=1` for
+  an attachment). Text and code come back as `text/plain`.
+- `PUT /stars/:id/files/content?path=` uploads a file: the raw file is the
+  body, with its own content type (not `text/plain` or form types), up to
+  10 MB. Returns the `WorkspaceFile`.
+- `DELETE /stars/:id/files?path=` deletes a file or folder.
+- A path outside the folder, including through a symlink, is a `400`.
+- Commands show as task steps: "Ran \`…\` (exit 0)", with the output in `detail`.
+
+Saved logins:
+- `GET /logins` → `{ enabled, logins: SavedLogin[] }`.
+- `POST /logins` `{ origin, username, password, starIds?, autoFill? }`. The
+  origin must be https (`http://localhost` is fine for trying it out); `409`
+  for a duplicate.
+- `PATCH /logins/:id` `{ username?, password?, starIds?, autoFill? }`, `DELETE /logins/:id`.
+- The opt-in switch is `PATCH /settings { passwordFill: true }`. The UI
+  should say what turning it on relaxes (see Wave 3 above).
+
+Guard: `PATCH /settings { guard: "model" | "rules" | "off" }`. Its decisions
+appear in Activity (`kind: "guard"`), as a task step ("The guard wants your
+OK: …") and in the approval's `reason`.
+
+Events: `browser.control` (`BrowserSession`), `recording.updated`
+(`Recording`), `workspace.changed` (`{ starId, path }`).
+
+### Wave 4 (for the UI to build on)
+
+Types (in `server/src/types.ts`): `VoiceSettings`, `VoiceStatus`,
+`CheckoutHandover`, `CompanionAllow`, `CompanionDevice` and `CompanionPairing`
+are new. `Message.via` can be `'voice'`. `Star` gains `voice?: string | null`.
+`BrowserSession` gains `checkout: CheckoutHandover | null`. A new connection
+`computer` ("Your computer") appears in `GET /connections`.
+
+```ts
+interface VoiceSettings { sttProviderIds: string[]; sttModel: string; ttsProviderIds: string[]; ttsModel: string; ttsVoice: string }
+interface VoiceStatus {
+  speechToText: { id: string; name: string }[]; textToSpeech: { id: string; name: string }[];
+  serverSpeechToText: boolean; serverTextToSpeech: boolean;   // false: use the browser's own speech
+  settings: VoiceSettings;
+}
+interface CheckoutHandover { taskId: string; total: string; merchant: string; summary: string; url: string; stage: 'waiting_ok' | 'paying' }
+interface CompanionDevice {
+  id: string; name: string; platform: string;
+  enabled: boolean;        // the switch in the app
+  localEnabled: boolean;   // the switch in the companion (press o)
+  connected: boolean;
+  allow: { folders: string[]; commands: string[]; openUrls: boolean };   // set on the computer, shown read-only
+  confirmLocally: boolean; pairedAt: string; lastSeenAt: string | null;
+}
+interface CompanionPairing { code: string; expiresAt: string; command: string }
+```
+
+Voice:
+- `GET /voice` → `VoiceStatus`. If `serverSpeechToText` is false, record
+  with the browser's speech recognition and send text as usual; if
+  `serverTextToSpeech` is false, use `speechSynthesis`.
+- `PUT /voice` `{ sttProviderIds?, sttModel?, ttsProviderIds?, ttsModel?, ttsVoice? }`
+  → `VoiceStatus`. Providers must be OpenAI-compatible ones from `/providers`
+  (`400` otherwise). Suggest Groq (`https://api.groq.com/openai/v1`,
+  `whisper-large-v3-turbo`) for speech to text.
+- `POST /voice/transcribe` with the recording as the body (`Content-Type:
+  audio/webm`, `audio/wav`, `audio/mpeg`, `audio/mp4`, `audio/ogg`; up to
+  25 MB; `?language=en` optional) → `{ text, provider }`.
+- `POST /conversations/:id/voice`, same body → `{ heard, provider, message, reply }`.
+  `message` is the saved message (`via: 'voice'`), `reply` the Star's answer
+  (or `null` if it hasn't one yet). Streaming events arrive as usual.
+  `422 nothing_heard` for silence.
+- `POST /voice/speak` `{ text, starId? }` → `audio/mpeg` (the Star's `voice`
+  when set). Play it, and animate the Star's character while it plays.
+- `POST /conversations/:id/messages` also takes `via: 'voice'` (for text the
+  browser transcribed itself).
+- Errors: `415 audio_only`, `413` over 25 MB, `503 voice_unavailable` (use
+  the browser's speech), `502 voice_failed` (every provider failed; the
+  message says why, with no keys).
+- `PATCH /stars/:id` takes `voice` (a voice name, or `null` for the default).
+
+Checkout:
+- The live view shows `BrowserSession.checkout` while it's set: `waiting_ok`
+  is "waiting for you to OK the payment" and `paying` is "your turn: pay,
+  then hand back". The approval is a normal one: `action` is "Pay €42.50 at
+  Corner Shop", `risk: 'high'`, and `preview` has the summary, total and page.
+- Accepting an approval whose action starts with "Pay" gives the person the
+  browser (`control: 'person'`). The UI should say "Pay, then press Hand back".
+- `browser.control` events carry the session, so `checkout` updates live.
+
+Your computer:
+- `GET /companion` → `{ devices: CompanionDevice[], socketPath, download }`.
+  `download` is the path of the companion program in the repository.
+- `POST /companion/pair` → `CompanionPairing`. Show `command` for the person
+  to run on their computer. The device appears in `devices` once it's paired.
+- `PATCH /companion/devices/:id` `{ enabled?, name? }` → `CompanionDevice`.
+  `enabled: false` is the app's visible off switch.
+- `DELETE /companion/devices/:id` unpairs it (the companion forgets its token).
+- `POST /connections/computer/disconnect` switches every paired computer off in
+  Sky; `connect` switches them back on (or, with none paired, answers `400
+  use_companion`).
+- The allowlist is never changed from Sky. Show it read-only with "Change it
+  on the computer: `node sky-companion.mjs allow-folder <path>`".
+- Events: `companion.updated` (`CompanionDevice`), `companion.deleted` (`{ id }`).
+- Approvals for computer actions name the computer in `target`.
 
 ### Server-side additions
 

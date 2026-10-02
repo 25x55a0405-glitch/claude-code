@@ -42,9 +42,11 @@ interface Live {
  * reached over Streamable HTTP. Values in their environment or headers can be
  * {{secret:NAME}}, filled from the vault when connecting.
  *
- * Every MCP tool gets an effect (read, write, send, delete, spend) from the
- * server's own hints, which the person can override per tool, so the policy
- * still decides what needs an approval. Stars only see the servers they're
+ * Every MCP tool gets an effect (read, write, send, delete, spend), which the
+ * person sets per tool, so the policy still decides what needs an approval.
+ * The server's own hints are untrusted (a tool called "wipe" can say it's
+ * read-only), so until the person sets an effect a tool counts as at least a
+ * write, isn't offered in chat, and every call asks first. Stars only see the servers they're
  * given (Star.mcpServerIds), since many tools crowd small free models.
  */
 export class McpManager {
@@ -87,7 +89,7 @@ export class McpManager {
     const next = { ...current, ...pick(input, ['name', 'transport', 'command', 'args', 'url', 'enabled', 'toolEffects']), updatedAt: iso() } as McpServer;
     this.check({ ...next, ...priv, ...pick(input, ['env', 'headers']) });
     const reconnect = ['transport', 'command', 'args', 'url', 'env', 'headers', 'enabled'].some((k) => (input as Record<string, unknown>)[k] !== undefined);
-    const saved = this.put({ ...next, tools: next.tools.map((t) => ({ ...t, effect: next.toolEffects[t.name] ?? t.effect })) },
+    const saved = this.put({ ...next, tools: next.tools.map((t) => ({ ...t, ...effectOf(next.toolEffects[t.name], t.hint ?? t.effect) })) },
       { env: input.env ?? priv.env, headers: input.headers ?? priv.headers });
     if (reconnect) {
       await this.disconnect(id);
@@ -140,10 +142,15 @@ export class McpManager {
       }
       await withTimeout(client.connect(transport), CONNECT_TIMEOUT_MS, `${server.name} didn’t answer within ${CONNECT_TIMEOUT_MS / 1000}s`);
       const listed = await withTimeout(client.listTools(), CONNECT_TIMEOUT_MS, `${server.name} didn’t list its tools`);
-      const infos: McpToolInfo[] = listed.tools.map((t) => ({
-        name: t.name, toolName: toolName(server.name, t.name), description: firstLine(t.description ?? '', 300),
-        effect: server.toolEffects[t.name] ?? effectFromHints(t.annotations),
-      }));
+      const prefix = this.prefix(server);
+      const used = new Set<string>();
+      const infos: McpToolInfo[] = listed.tools.map((t) => {
+        const hint = effectFromHints(t.annotations);
+        return {
+          name: t.name, toolName: unique(toolName(prefix, t.name), used), description: firstLine(t.description ?? '', 300),
+          ...effectOf(server.toolEffects[t.name], hint), hint,
+        };
+      });
       const defs = listed.tools.map((t, i) => this.toolDef(server, client, infos[i], t.inputSchema as ToolDef['input_schema']));
       this.live.set(id, { client, tools: defs });
       client.onclose = () => {
@@ -155,8 +162,32 @@ export class McpManager {
       this.put({ ...this.get(id), status: 'ready', error: null, tools: infos, updatedAt: iso() });
     } catch (err) {
       await client.close().catch(() => {});
-      this.status(id, 'error', err instanceof Error ? err.message : String(err));
+      this.status(id, 'error', this.scrub(id, err instanceof Error ? err.message : String(err)));
     }
+  }
+
+  /**
+   * A server's error can repeat what it was sent (`Invalid key: Bearer …`). Filled-in header and env values
+   * and vault secrets never stay in it.
+   */
+  private scrub(id: string, message: string): string {
+    const priv = this.private(id);
+    const raw = [...Object.values(priv.env), ...Object.values(priv.headers)];
+    const filled = this.vault ? raw.map((v) => this.vault!.fillAny(v)) : raw;
+    const values = [...filled, ...filled.flatMap((v) => v.split(/\s+/))].filter((v) => v.length >= 6).sort((a, b) => b.length - a.length);
+    let out = message;
+    for (const v of values) out = out.split(v).join('[hidden]');
+    return this.vault ? this.vault.redact(out) : out;
+  }
+
+  /**
+   * The start of this server's tool names. Servers whose names clean up the same (the first 20 characters)
+   * share it only once: the later ones, by when they were added, get a short tag from their id.
+   */
+  private prefix(server: McpServer): string {
+    const base = cleanName(server.name).slice(0, 20);
+    const first = this.list().find((s) => cleanName(s.name).slice(0, 20) === base);
+    return !first || first.id === server.id ? base : `${base.slice(0, 14)}_${server.id.replace(/[^a-z0-9]/gi, '').slice(-5).toLowerCase()}`;
   }
 
   private async disconnect(id: string) {
@@ -191,9 +222,14 @@ export class McpManager {
       input_schema: { ...inputSchema, type: 'object', properties: inputSchema?.properties ?? {} },
       // The current effect, so an override takes hold without reconnecting.
       effect: info.effect,
-      effectFor: () => this.store.db.get<McpServer>('mcp', server.id)?.tools.find((t) => t.name === info.name)?.effect ?? info.effect,
+      effectFor: () => policyEffect(this.current(server.id, info)),
+      // Until the person says what this tool does, every call asks.
+      mustAsk: () => (this.current(server.id, info).confirmed ? null : `${server.name} says ${info.name} ${info.hint === 'read' ? 'only looks' : 'changes things'}, but you haven’t set what it does yet`),
       label: (i) => `${server.name}: ${info.name}${summarize(i)}`,
-      approval: (i) => ({ action: `Use ${info.name}`, target: server.name, preview: JSON.stringify(i, null, 2), risk: info.effect === 'read' || info.effect === 'write' ? 'medium' : 'high' }),
+      approval: (i) => {
+        const effect = policyEffect(this.current(server.id, info));
+        return { action: `Use ${info.name}`, target: server.name, preview: JSON.stringify(i, null, 2), risk: effect === 'read' || effect === 'write' ? 'medium' : 'high' };
+      },
       run: async (input) => {
         const res = await withTimeout(client.callTool({ name: info.name, arguments: input as Record<string, unknown> }), CALL_TIMEOUT_MS, `${info.name} took too long`);
         const parts = (res.content as { type: string; text?: string; mimeType?: string }[] | undefined ?? [])
@@ -203,6 +239,11 @@ export class McpManager {
         return truncate(text, MAX_RESULT);
       },
     };
+  }
+
+  /** The tool as saved now, so a change of effect takes hold without reconnecting. */
+  private current(serverId: string, info: McpToolInfo): McpToolInfo {
+    return this.store.db.get<McpServer>('mcp', serverId)?.tools.find((t) => t.name === info.name) ?? info;
   }
 
   private check(input: McpInput) {
@@ -251,11 +292,28 @@ export class McpManager {
   }
 }
 
-/** mcp_<server>_<tool>, within the 64 characters model APIs allow. */
-export function toolName(server: string, tool: string): string {
-  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-  return `mcp_${clean(server).slice(0, 20)}_${clean(tool)}`.slice(0, 64);
+const cleanName = (s: string) => s.toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+
+/** mcp_<server>_<tool>, within the 64 characters model APIs allow. `prefix` is already clean (see McpManager.prefix). */
+export function toolName(prefix: string, tool: string): string {
+  return `mcp_${cleanName(prefix).slice(0, 20)}_${cleanName(tool)}`.slice(0, 64);
 }
+
+/** Two tools of one server whose names clean up the same get _2, _3… */
+function unique(name: string, used: Set<string>): string {
+  let out = name;
+  for (let n = 2; used.has(out); n++) out = `${name.slice(0, 64 - String(n).length - 1)}_${n}`;
+  used.add(out);
+  return out;
+}
+
+/** The person's choice when they made one, otherwise the server's hint. */
+function effectOf(chosen: McpEffect | undefined, hint: McpEffect): { effect: McpEffect; confirmed: boolean } {
+  return chosen ? { effect: chosen, confirmed: true } : { effect: hint, confirmed: false };
+}
+
+/** What the policy goes by: until the person confirms, a tool is never less than a write, since hints can lie (and mustAsk asks anyway). */
+const policyEffect = (t: McpToolInfo): McpEffect => (t.confirmed || t.effect !== 'read' ? t.effect : 'write');
 
 /** MCP's hints: read-only tools are reads, destructive ones deletes, the rest change things. */
 function effectFromHints(a?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean }): McpEffect {

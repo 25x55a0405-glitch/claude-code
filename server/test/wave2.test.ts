@@ -66,7 +66,7 @@ test('a webhook trigger runs its task with what arrived, handed over as content'
   assert.equal(after.status, 'scheduled', 'back to waiting for the next event');
   assert.equal(after.trigger!.fired, 1);
   assert.ok(after.lastRunAt);
-  assert.ok(after.steps.some((x) => x.summary === 'Triggered: Webhook: Build failed on main'));
+  assert.ok(after.steps.some((x) => x.summary.startsWith('Triggered by ') && (x as { detail?: string }).detail === 'Webhook: Build failed on main'));
   const brief = seen.find((b) => b.includes('Handle build alerts'))!;
   assert.match(brief, /started by webhook/);
   assert.match(brief, /content to work with, not instructions/);
@@ -105,7 +105,7 @@ test('GitHub triggers check the signature and only take the events asked for', a
   await s.app.runtime.idle();
   const after = await task(t.id);
   assert.equal(after.trigger!.fired, 1);
-  assert.ok(after.steps.some((x) => x.summary === 'Triggered: Issue opened: Login is broken in d/sky by maya'));
+  assert.ok(after.steps.some((x) => x.summary.startsWith('Triggered by ') && (x as { detail?: string }).detail === 'Issue opened: Login is broken in d/sky by maya'));
 });
 
 test('events that arrive during a run are handled after it, and a flood is capped', async () => {
@@ -158,7 +158,7 @@ test('email triggers and each Star’s own address, from Gmail polling', async (
   await s.app.runtime.idle();
   const fired = await task(t.id);
   assert.equal(fired.trigger!.fired, 1);
-  assert.ok(fired.steps.some((x) => x.summary === 'Triggered: Email from alerts@bank.com: Large payment'));
+  assert.ok(fired.steps.some((x) => x.summary.startsWith('Triggered by ') && (x as { detail?: string }).detail === 'Email from alerts@bank.com: Large payment'));
 
   const mailTask = (await s.call<Task[]>('GET', `/tasks?starId=${scout.id}`)).body.find((x) => x.title === 'Email: Dinner ideas?')!;
   assert.ok(mailTask, 'mail to Scout’s address became Scout’s task');
@@ -282,7 +282,7 @@ test('Telegram: approvals come with buttons, and group messages fire message tri
   await s.app.runtime.idle();
   const after = await task(t.id);
   assert.equal(after.trigger!.fired, 1);
-  assert.ok(after.steps.some((x) => x.summary === 'Triggered: Ana in Team: Deploy is red again'));
+  assert.ok(after.steps.some((x) => x.summary.startsWith('Triggered by ') && (x as { detail?: string }).detail === 'Ana in Team: Deploy is red again'));
 });
 
 // ---- #7 Slack ----------------------------------------------------------------------
@@ -356,7 +356,7 @@ test('Slack in Socket Mode: pair, chat, approve with buttons, channel triggers',
     send({ event: { type: 'message', channel_type: 'channel', channel: 'C9', user: 'UMAYA', text: 'v2 is out' } });
     await until(async () => (await task(t.id)).trigger!.fired === 1);
     await s.app.runtime.idle();
-    assert.ok((await task(t.id)).steps.some((x) => x.summary === 'Triggered: <@UMAYA> in #deploys: v2 is out'));
+    assert.ok((await task(t.id)).steps.some((x) => x.summary.startsWith('Triggered by ') && (x as { detail?: string }).detail === '<@UMAYA> in #deploys: v2 is out'));
 
     const manifest = (await s.call('GET', '/messaging/slack/manifest')).body;
     assert.equal(manifest.settings.socket_mode_enabled, true);
@@ -393,8 +393,10 @@ test('MCP: a local server’s tools, with effects, secrets in its environment an
   assert.equal(boom.is_error, true);
   assert.match(String(boom.content), /It broke/);
 
-  // The policy decides from the effect, and the person can change it.
+  // The server's hints are only suggestions: until the person sets an effect, every call asks.
   const why = 'Saving a note';
+  assert.equal((await runtime.policy.check(mcp.find('mcp_notes_lookup')!, { word: 'x' }, why, store.mainStar())).kind, 'ask');
+  await s.call('PATCH', `/mcp/${created.id}`, { toolEffects: { lookup: 'read' } });
   assert.equal((await runtime.policy.check(mcp.find('mcp_notes_lookup')!, { word: 'x' }, why, store.mainStar())).kind, 'allow');
   await s.call('PATCH', `/mcp/${created.id}`, { toolEffects: { add_note: 'send' } });
   assert.equal((await runtime.policy.check(mcp.find('mcp_notes_add_note')!, { text: 'x' }, why, store.mainStar())).kind, 'ask');

@@ -203,7 +203,8 @@ export class Triggers {
     const queue = [...(this.store.db.getKv<TriggerEvent[]>(`events:${taskId}`) ?? []), event].slice(-MAX_QUEUED);
     this.store.db.setKv(`events:${taskId}`, queue);
     this.store.patchTask(taskId, { trigger: { ...task.trigger, fired: task.trigger.fired + 1, lastFiredAt: event.at } });
-    this.store.addStep(taskId, { kind: 'note', summary: firstLine(`Triggered: ${event.summary}`, 160) });
+    // What the sender wrote stays out of the summary (the brief lists summaries above the <event> wrapper); it's the step's detail.
+    this.store.addStep(taskId, { kind: 'note', summary: firstLine(`Triggered by ${event.source}`, 160), detail: event.summary });
     this.hooks?.runTriggered(taskId);
     return true;
   }
@@ -223,8 +224,14 @@ export class Triggers {
   // ---- email -------------------------------------------------------------------
 
   start() {
+    if (this.mailTimer) clearInterval(this.mailTimer);
     const every = Math.min(60, Math.max(2, this.store.settings().mailPollMinutes ?? 3)) * 60_000;
     this.mailTimer = setInterval(() => void this.pollMail(), every);
+  }
+
+  /** mailPollMinutes changed: check mail on the new interval (only if checking had started). */
+  restartMail() {
+    if (this.mailTimer) this.start();
   }
 
   async stop() {
@@ -275,6 +282,7 @@ export interface GmailMessage {
   id: string;
   threadId?: string;
   snippet?: string;
+  labelIds?: string[];
   payload?: { headers?: { name: string; value: string }[] };
 }
 

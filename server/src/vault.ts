@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import type { Config } from './config.ts';
 import type { Store } from './store.ts';
-import type { Secret } from './types.ts';
+import type { SavedLogin, Secret } from './types.ts';
 import { ApiError, badRequest, iso, notFound, uid } from './util.ts';
 
 const REF = /\{\{\s*secret:([A-Za-z0-9_]+)\s*\}\}/g;
@@ -135,14 +135,83 @@ export class Vault {
     })) as T;
   }
 
-  /** Replaces any secret value in text with [secret:NAME]. */
+  /** Replaces any secret value in text with [secret:NAME], and any saved password with [password]. */
   redact(text: string): string {
     let out = text;
     for (const s of this.store.db.all<Secret>('secret')) {
       const value = this.open(s.id);
       if (value.length >= MIN_VALUE && out.includes(value)) out = out.split(value).join(`[secret:${s.name}]`);
     }
+    for (const l of this.store.db.all<SavedLogin>('login')) {
+      const value = this.open(l.id, 'login');
+      if (value.length >= MIN_VALUE && out.includes(value)) out = out.split(value).join('[password]');
+    }
     return out;
+  }
+
+  // ---- saved logins (password fill) ---------------------------------------
+
+  listLogins(): SavedLogin[] {
+    return this.store.db.all<SavedLogin>('login').sort((a, b) => a.origin.localeCompare(b.origin) || a.username.localeCompare(b.username));
+  }
+
+  getLogin(id: string): SavedLogin {
+    const l = this.store.db.get<SavedLogin>('login', id);
+    if (!l) throw notFound('Login', id);
+    return l;
+  }
+
+  createLogin(input: { origin: unknown; username: unknown; password: unknown; starIds?: string[] | null; autoFill?: boolean }): SavedLogin {
+    const origin = loginOrigin(input.origin);
+    if (typeof input.username !== 'string' || !input.username.trim()) throw badRequest('username is required');
+    if (typeof input.password !== 'string' || !input.password) throw badRequest('password is required');
+    const username = input.username.trim();
+    if (this.listLogins().some((l) => l.origin === origin && l.username === username)) throw new ApiError(409, 'conflict', `There’s already a login for ${username} on ${origin}`);
+    const now = iso();
+    const l = this.store.db.put<SavedLogin>('login', {
+      id: uid('login'), origin, username, starIds: input.starIds ?? null, autoFill: Boolean(input.autoFill), lastUsedAt: null, createdAt: now, updatedAt: now,
+    });
+    this.store.db.setPrivate('login', l.id, this.seal(input.password));
+    return l;
+  }
+
+  patchLogin(id: string, input: { username?: unknown; password?: unknown; starIds?: string[] | null; autoFill?: unknown }): SavedLogin {
+    const l = this.getLogin(id);
+    if (input.password !== undefined) {
+      if (typeof input.password !== 'string' || !input.password) throw badRequest('password can’t be empty');
+      this.store.db.setPrivate('login', l.id, this.seal(input.password));
+    }
+    if (input.username !== undefined && (typeof input.username !== 'string' || !input.username.trim())) throw badRequest('username can’t be empty');
+    if (input.autoFill !== undefined && typeof input.autoFill !== 'boolean') throw badRequest('autoFill must be true or false');
+    return this.store.db.put<SavedLogin>('login', {
+      ...l,
+      ...(input.username !== undefined ? { username: String(input.username).trim() } : {}),
+      ...(input.starIds !== undefined ? { starIds: input.starIds } : {}),
+      ...(input.autoFill !== undefined ? { autoFill: input.autoFill as boolean } : {}),
+      updatedAt: iso(),
+    });
+  }
+
+  deleteLogin(id: string) {
+    this.store.db.delete('login', this.getLogin(id).id);
+  }
+
+  /** The login a Star may use on a page from `origin`: the one with this username, or the only one for the site. */
+  loginFor(starId: string, origin: string | null, username?: string): SavedLogin | null {
+    if (!origin) return null;
+    const mine = this.listLogins().filter((l) => l.origin === origin && (!l.starIds || l.starIds.includes(starId)));
+    if (username) return mine.find((l) => l.username.toLowerCase() === username.trim().toLowerCase()) ?? null;
+    return mine.length === 1 ? mine[0] : null;
+  }
+
+  /** Only for filling into a page; never returned by the API or shown to a model. */
+  loginPassword(id: string): string {
+    return this.open(id, 'login');
+  }
+
+  touchLogin(id: string) {
+    const l = this.store.db.get<SavedLogin>('login', id);
+    if (l) this.store.db.put('login', { ...l, lastUsedAt: iso() });
   }
 
   private seal(value: string): Sealed {
@@ -152,8 +221,8 @@ export class Vault {
     return { iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), data: data.toString('base64') };
   }
 
-  private open(id: string): string {
-    const sealed = this.store.db.getPrivate<Sealed>('secret', id);
+  private open(id: string, kind: 'secret' | 'login' = 'secret'): string {
+    const sealed = this.store.db.getPrivate<Sealed>(kind, id);
     if (!sealed) return '';
     try {
       const decipher = createDecipheriv('aes-256-gcm', this.key, Buffer.from(sealed.iv, 'base64'));
@@ -171,4 +240,18 @@ function walk(v: unknown, f: (s: string) => string): unknown {
   if (Array.isArray(v)) return v.map((x) => walk(x, f));
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, f)]));
   return v;
+}
+
+/** A login's site, as an origin. https only, except this machine (for trying it out). */
+function loginOrigin(raw: unknown): string {
+  if (typeof raw !== 'string') throw badRequest('origin is required, like https://github.com');
+  let u: URL;
+  try {
+    u = new URL(/^[a-z]+:\/\//i.test(raw.trim()) ? raw.trim() : `https://${raw.trim()}`);
+  } catch {
+    throw badRequest(`“${raw}” isn’t a web address`);
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
+  if (u.protocol !== 'https:' && !(local && u.protocol === 'http:')) throw badRequest('Logins are only for https sites');
+  return u.origin;
 }

@@ -25,6 +25,9 @@ import type { PushMessage } from '../push.ts';
 import type { Triggers } from '../triggers.ts';
 import type { McpManager } from '../mcp.ts';
 import type { Messaging } from '../messaging.ts';
+import type { Workspaces } from '../workspace.ts';
+import type { Companion } from '../companion.ts';
+import { Guard } from './guard.ts';
 
 const WATCH_DEFAULT = 'every 3 hours';
 
@@ -68,7 +71,7 @@ export class Runtime implements RuntimeHooks {
   /** Work started in the background (reflections, pushes) that idle() waits for. */
   private background = new Set<Promise<unknown>>();
 
-  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager, extras: { vault?: Vault; push?: Push; triggers?: Triggers; mcp?: McpManager } = {}) {
+  constructor(store: Store, config: Config, brain: Brain, providers: Providers, browser?: BrowserManager, extras: { vault?: Vault; push?: Push; triggers?: Triggers; mcp?: McpManager; workspaces?: Workspaces; companion?: Companion } = {}) {
     this.store = store;
     this.config = config;
     this.brain = brain;
@@ -82,10 +85,21 @@ export class Runtime implements RuntimeHooks {
     this.policy = new Policy(store, brain);
     this.policy.browser = browser;
     this.policy.vault = extras.vault;
-    const deps: AgentDeps = { store, config, brain, providers, policy: this.policy, hooks: this, browser, vault: extras.vault, triggers: extras.triggers, mcp: extras.mcp };
+    this.policy.workspaces = extras.workspaces;
+    this.policy.companion = extras.companion;
+    const deps: AgentDeps = {
+      store, config, brain, providers, policy: this.policy, hooks: this, browser, vault: extras.vault, triggers: extras.triggers, mcp: extras.mcp,
+      workspaces: extras.workspaces, guard: new Guard(store, brain), companion: extras.companion,
+    };
     this.deps = deps;
     this.runner = new TaskRunner(deps);
     this.chat = new ChatAgent(deps);
+    // The person handed the browser back: tasks waiting for it carry on.
+    if (browser) {
+      browser.onHandBack = (_starId, taskIds, note) => {
+        for (const id of taskIds) if (this.runner.recordHandBack(id, note)) this.wake(id);
+      };
+    }
     this.lastResearch = store.db.getKv<number>('lastResearch') ?? Date.now();
   }
 
@@ -301,7 +315,7 @@ export class Runtime implements RuntimeHooks {
     const saveNote = () => {
       if (note) this.store.addMemory('preference', note, `Your note on “${firstLine(a.action, 40)}”`, true, a.taskId);
     };
-    if ((a.status === 'rejected' || edited) && this.store.settings().learnFromCorrections !== false) {
+    if ((a.status === 'rejected' || edited) && this.store.settings().learnFromCorrections !== false && !this.runner.isCheckout(a)) {
       // A decline or an edit is a correction: the Star works out what to do differently (the note, if any, is the best clue).
       const what = `${a.action} to ${a.target}`;
       const situation = a.status === 'rejected'
